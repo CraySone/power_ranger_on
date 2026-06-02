@@ -56,6 +56,7 @@ local defaults = {
     nuziUiCompatMode = "auto",
     compactModelLeftOffset = 45,
     overlayTextShadow = true,
+    overlayTextStyle = "shadow",
     uiScaleLevel = 0,
     targetWindowScaleLevel = 0,
     selfScaleLevel = 0,
@@ -94,6 +95,9 @@ local defaults = {
         range = {1, 0.84, 0, 1},
         class = {0.82, 0.90, 1, 1},
         gearscore = {0.38, 0.95, 0.44, 1},
+        modelRange = {1, 0.84, 0, 1},
+        modelClass = {0.82, 0.90, 1, 1},
+        modelGearscore = {1, 1, 1, 1},
         guild = {0.62, 0.82, 1, 1},
         family = {1, 0.78, 0.52, 1},
         pdef = {1, 1, 1, 1},
@@ -516,6 +520,8 @@ local function loadSettings()
     if settings.compactTargetWindow and settings.testTargetWindow then
         settings.compactTargetWindow = false
     end
+    if settings.overlayTextStyle ~= "outline" then settings.overlayTextStyle = "shadow" end
+    settings.overlayTextShadow = settings.overlayTextStyle == "shadow"
     settings.compactModelLeftOffset = math.max(20, math.min(140, tonumber(settings.compactModelLeftOffset) or CONFIG.compactModelLeftOffset))
     settings.overlayShadowSize = nil
     settings.simpleColumnGap = math.max(0, math.min(73, tonumber(settings.simpleColumnGap) or 0))
@@ -556,6 +562,17 @@ end
 local function settingColor(key)
     local color = settings and settings.targetInfoColors and settings.targetInfoColors[key]
     return type(color) == "table" and color or COLORS.white
+end
+
+function TargetOverlay.useOutlineText()
+    return settings and settings.overlayTextStyle == "outline"
+end
+
+function TargetOverlay.applyReadableTextStyle(widget, enabled)
+    if not widget or not widget.style then return end
+    enabled = enabled ~= false
+    if widget.style.SetShadow then widget.style:SetShadow(enabled and not TargetOverlay.useOutlineText()) end
+    if widget.style.SetOutline then widget.style:SetOutline(enabled and TargetOverlay.useOutlineText()) end
 end
 
 local function cycleSettingColor(key)
@@ -1314,6 +1331,60 @@ local function hideModelRange()
     end
 end
 
+function TargetOverlay.fitTextToWidth(widget, text, maxWidth, minChars)
+    text = tostring(text or "")
+    if text == "" or not widget or not widget.style or not widget.style.GetTextWidth then return text end
+    maxWidth = tonumber(maxWidth) or 0
+    minChars = tonumber(minChars) or 4
+    if widget.style:GetTextWidth(text) <= maxWidth then return text end
+    local limit = #text
+    while limit > minChars do
+        limit = limit - 1
+        local fitted = OverlayUtils.shortText(text, limit)
+        if widget.style:GetTextWidth(fitted) <= maxWidth then return fitted end
+    end
+    return OverlayUtils.shortText(text, minChars)
+end
+
+function TargetOverlay.compactSummaryText(parts, guildLimit, familyLimit)
+    local out = {}
+    for _, part in ipairs(parts or {}) do
+        local text = part.text or ""
+        if part.key == "guild" and guildLimit then
+            text = OverlayUtils.shortText(text, guildLimit)
+        elseif (part.key == "family" or part.key == "owner" or part.key == "destination") and familyLimit then
+            text = OverlayUtils.shortText(text, familyLimit)
+        end
+        if text ~= "" then table.insert(out, text) end
+    end
+    return table.concat(out, " | ")
+end
+
+function TargetOverlay.fitCompactSummaryParts(widget, parts, maxWidth)
+    local fullText = TargetOverlay.compactSummaryText(parts)
+    if not parts or #parts == 0 then return "" end
+    if widget and widget.style and widget.style.GetTextWidth and widget.style:GetTextWidth(fullText) <= maxWidth then
+        return fullText
+    end
+    local hasFamily = false
+    for _, part in ipairs(parts) do
+        if part.key == "family" or part.key == "owner" or part.key == "destination" then
+            hasFamily = true
+            break
+        end
+    end
+    if not hasFamily then return TargetOverlay.fitTextToWidth(widget, fullText, maxWidth, 6) end
+    for familyLimit = 12, 4, -1 do
+        local text = TargetOverlay.compactSummaryText(parts, nil, familyLimit)
+        if widget.style:GetTextWidth(text) <= maxWidth then return text end
+    end
+    for guildLimit = 32, 8, -1 do
+        local text = TargetOverlay.compactSummaryText(parts, guildLimit, 4)
+        if widget.style:GetTextWidth(text) <= maxWidth then return text end
+    end
+    return TargetOverlay.fitTextToWidth(widget, TargetOverlay.compactSummaryText(parts, 8, 4), maxWidth, 6)
+end
+
 local function buildInfoRows(targetInfo, className, gearscore, pdef, mdef, pdefPct, mdefPct, extraStats, ownershipOnly)
     local identity = {}
     local defense = {}
@@ -1326,34 +1397,38 @@ local function buildInfoRows(targetInfo, className, gearscore, pdef, mdef, pdefP
             table.insert(list, { key = key, text = text, color = settingColor(key), forceCol = forceCol })
         end
     end
-    local function addSummary(text)
+    local function addSummary(text, key)
         if text and text ~= "" then
-            table.insert(settings.testTargetWindow and simpleMeta or compactSummary, text)
+            if settings.testTargetWindow then
+                table.insert(simpleMeta, text)
+            else
+                table.insert(compactSummary, { text = text, key = key })
+            end
         end
     end
     if compact and not settings.testTargetWindow and settings.showInfoRange then
         local range = TargetOverlay.getDistance("target")
-        if range then addSummary(tostring(range) .. "m") end
+        if range then addSummary(tostring(range) .. "m", "range") end
     end
-    if compact and settings.showInfoGearscore and gearscore then addSummary(tostring(gearscore)) end
-    if compact and settings.showInfoClass and className then addSummary(OverlayUtils.shortText(className, 16)) end
+    if compact and settings.showInfoGearscore and gearscore then addSummary(tostring(gearscore), "gearscore") end
+    if compact and settings.showInfoClass and className then addSummary(OverlayUtils.shortText(className, 16), "class") end
     if ownershipOnly and (targetInfo.is_portal or targetInfo.isPortal) then
         local portalOwner = TargetOverlay.ownershipField(targetInfo, {"portal_owner", "portalOwner", "owner_name", "ownerName", "owner"})
         local destination = TargetOverlay.ownershipField(targetInfo, {"name", "targetName", "destination"})
         if portalOwner then
             if settings.testTargetWindow then simpleGuild = OverlayUtils.shortText(portalOwner, 34)
-            elseif compact then addSummary(OverlayUtils.shortText(portalOwner, 14))
+            elseif compact then addSummary(portalOwner, "guild")
             else addRow(identity, "guild", "Owner: " .. OverlayUtils.shortText(portalOwner, 21)) end
         end
         if destination then
-            if compact then addSummary(OverlayUtils.shortText(destination, 14))
+            if compact then addSummary(destination, "destination")
             else addRow(identity, "family", "Portal: " .. OverlayUtils.shortText(destination, 20)) end
         end
     elseif settings.showInfoGuild or ownershipOnly then
         local guild = TargetOverlay.ownershipField(targetInfo, {"expeditionName", "expedition", "guildName", "guild"})
         if guild then
             if settings.testTargetWindow then simpleGuild = OverlayUtils.shortText(guild, 34)
-            elseif compact then addSummary(OverlayUtils.shortText(guild, 14))
+            elseif compact then addSummary(guild, "guild")
             else addRow(identity, "guild", "Guild: " .. OverlayUtils.shortText(guild, 21)) end
         end
     end
@@ -1362,12 +1437,12 @@ local function buildInfoRows(targetInfo, className, gearscore, pdef, mdef, pdefP
         local owner = ownershipOnly and TargetOverlay.ownershipField(targetInfo, {"owner_name", "ownerName", "owner"}) or nil
         if family then
             if compact then
-                addSummary(OverlayUtils.shortText(family, 14))
+                addSummary(family, "family")
             else addRow(identity, "family", "Family: " .. OverlayUtils.shortText(family, 20)) end
         end
         if owner and owner ~= family then
             if compact then
-                addSummary(OverlayUtils.shortText(owner, 14))
+                addSummary(owner, "owner")
             else addRow(identity, "family", "Owner: " .. OverlayUtils.shortText(owner, 20)) end
         end
     end
@@ -1377,7 +1452,7 @@ local function buildInfoRows(targetInfo, className, gearscore, pdef, mdef, pdefP
             table.insert(rows, { header = true, text = "Ownership" })
             for _, row in ipairs(identity) do table.insert(rows, row) end
         end
-        return rows, table.concat(compactSummary, "  |  "), simpleGuild or "", table.concat(simpleMeta, "  |  ")
+        return rows, TargetOverlay.compactSummaryText(compactSummary), simpleGuild or "", table.concat(simpleMeta, "  |  "), compactSummary
     end
     if not compact and settings.showInfoClass and className then addRow(identity, "class", "Class: " .. OverlayUtils.shortText(className, 22)) end
     if not compact and settings.showInfoGearscore and gearscore then addRow(identity, "gearscore", "GS: " .. tostring(gearscore)) end
@@ -1444,7 +1519,7 @@ local function buildInfoRows(targetInfo, className, gearscore, pdef, mdef, pdefP
             for _, row in ipairs(defense) do table.insert(rows, row) end
         end
     end
-    return rows, table.concat(compactSummary, "  |  "), simpleGuild or "", table.concat(simpleMeta, "  |  ")
+    return rows, TargetOverlay.compactSummaryText(compactSummary), simpleGuild or "", table.concat(simpleMeta, "  |  "), compactSummary
 end
 
 local function createTargetInfoWindow()
@@ -1493,10 +1568,8 @@ local function createOwnershipWindow()
     ownershipWnd.title:Clickable(false)
     ownershipWnd.meta = label(ownershipWnd, "power_ranger_ownership_meta", "", 4, 20, 352, 16, 11, COLORS.white, ALIGN.LEFT)
     ownershipWnd.meta:Clickable(false)
-    if ownershipWnd.title.style.SetOutline then ownershipWnd.title.style:SetOutline(false) end
-    if ownershipWnd.meta.style.SetOutline then ownershipWnd.meta.style:SetOutline(false) end
-    if ownershipWnd.title.style.SetShadow then ownershipWnd.title.style:SetShadow(settings.overlayTextShadow ~= false) end
-    if ownershipWnd.meta.style.SetShadow then ownershipWnd.meta.style:SetShadow(settings.overlayTextShadow ~= false) end
+    TargetOverlay.applyReadableTextStyle(ownershipWnd.title, true)
+    TargetOverlay.applyReadableTextStyle(ownershipWnd.meta, true)
     local dragHandle = ownershipWnd:CreateChildWidget("emptywidget", "power_ranger_ownership_drag", 0, true)
     dragHandle:SetExtent(360, 42)
     dragHandle:AddAnchor("TOPLEFT", ownershipWnd, 0, 0)
@@ -1511,25 +1584,24 @@ local function hideOwnershipWindow()
 end
 
 function TargetOverlay.applyTextShadow()
-    local enabled = settings and settings.overlayTextShadow ~= false or false
     local modelLabels = {
         targetPdefTitleLabel, targetPdefValueLabel, targetMdefTitleLabel, targetMdefValueLabel,
         targetGearscoreLabel, targetClassLabel, targetRangeLabel
     }
     for _, widget in ipairs(modelLabels) do
-        if widget and widget.style.SetShadow then widget.style:SetShadow(enabled) end
+        TargetOverlay.applyReadableTextStyle(widget, true)
     end
     if ownershipWnd then
-        if ownershipWnd.title.style.SetShadow then ownershipWnd.title.style:SetShadow(enabled) end
-        if ownershipWnd.meta.style.SetShadow then ownershipWnd.meta.style:SetShadow(enabled) end
+        TargetOverlay.applyReadableTextStyle(ownershipWnd.title, true)
+        TargetOverlay.applyReadableTextStyle(ownershipWnd.meta, true)
     end
     if targetInfoWnd then
-        local simpleShadow = enabled and settings.testTargetWindow == true
-        if targetInfoWnd.title.style.SetShadow then targetInfoWnd.title.style:SetShadow(simpleShadow) end
-        if targetInfoWnd.simpleMeta.style.SetShadow then targetInfoWnd.simpleMeta.style:SetShadow(simpleShadow) end
+        local simpleEnabled = settings.testTargetWindow == true
+        TargetOverlay.applyReadableTextStyle(targetInfoWnd.title, simpleEnabled)
+        TargetOverlay.applyReadableTextStyle(targetInfoWnd.simpleMeta, simpleEnabled)
         for i = 1, 16 do
-            if targetInfoWnd.rows[i].style.SetShadow then targetInfoWnd.rows[i].style:SetShadow(simpleShadow) end
-            if targetInfoWnd.simpleValues[i].style.SetShadow then targetInfoWnd.simpleValues[i].style:SetShadow(simpleShadow) end
+            TargetOverlay.applyReadableTextStyle(targetInfoWnd.rows[i], simpleEnabled)
+            TargetOverlay.applyReadableTextStyle(targetInfoWnd.simpleValues[i], simpleEnabled)
         end
     end
 end
@@ -1591,7 +1663,7 @@ local function refreshTargetInfoWindow(targetInfo, className, gearscore, pdef, m
         targetInfoWnd:Show(false)
         return
     end
-    local rows, compactSummary, simpleGuild, simpleMeta = buildInfoRows(targetInfo, className, gearscore, pdef, mdef, pdefPct, mdefPct, extraStats, ownershipOnly)
+    local rows, compactSummary, simpleGuild, simpleMeta, compactParts = buildInfoRows(targetInfo, className, gearscore, pdef, mdef, pdefPct, mdefPct, extraStats, ownershipOnly)
     local compact = settings.compactTargetWindow or settings.testTargetWindow
     local testLayout = settings.testTargetWindow == true
     local summaryVisible = testLayout and (simpleGuild ~= "" or simpleMeta ~= "") or compactSummary ~= ""
@@ -1618,10 +1690,8 @@ local function refreshTargetInfoWindow(targetInfo, className, gearscore, pdef, m
     targetInfoWnd.bg:Show(not testLayout)
     targetInfoWnd.header:Show(not testLayout)
     setTextColor(targetInfoWnd.title, testLayout and COLORS.white or COLORS.gold)
-    if targetInfoWnd.title.style.SetOutline then targetInfoWnd.title.style:SetOutline(false) end
-    if targetInfoWnd.simpleMeta.style.SetOutline then targetInfoWnd.simpleMeta.style:SetOutline(false) end
-    if targetInfoWnd.title.style.SetShadow then targetInfoWnd.title.style:SetShadow(testLayout and settings.overlayTextShadow ~= false) end
-    if targetInfoWnd.simpleMeta.style.SetShadow then targetInfoWnd.simpleMeta.style:SetShadow(testLayout and settings.overlayTextShadow ~= false) end
+    TargetOverlay.applyReadableTextStyle(targetInfoWnd.title, testLayout)
+    TargetOverlay.applyReadableTextStyle(targetInfoWnd.simpleMeta, testLayout)
     local headerHeight = math.floor(((compact and 18 or 22) * scale) + 0.5)
     local sideMargin = math.floor(((testLayout and 4 or compact and 6 or 12) * scale) + 0.5)
     local simpleColumnGap = math.max(0, math.min(73, tonumber(settings.simpleColumnGap) or 0)) - 43
@@ -1635,15 +1705,13 @@ local function refreshTargetInfoWindow(targetInfo, className, gearscore, pdef, m
     for i = 1, 16 do
         targetInfoWnd.rows[i].style:SetFontSize(math.floor((12 * scale) + 0.5))
         targetInfoWnd.simpleValues[i].style:SetFontSize(math.floor((12 * scale) + 0.5))
-        if targetInfoWnd.rows[i].style.SetOutline then targetInfoWnd.rows[i].style:SetOutline(false) end
-        if targetInfoWnd.simpleValues[i].style.SetOutline then targetInfoWnd.simpleValues[i].style:SetOutline(false) end
-        if targetInfoWnd.rows[i].style.SetShadow then targetInfoWnd.rows[i].style:SetShadow(testLayout and settings.overlayTextShadow ~= false) end
-        if targetInfoWnd.simpleValues[i].style.SetShadow then targetInfoWnd.simpleValues[i].style:SetShadow(testLayout and settings.overlayTextShadow ~= false) end
+        TargetOverlay.applyReadableTextStyle(targetInfoWnd.rows[i], testLayout)
+        TargetOverlay.applyReadableTextStyle(targetInfoWnd.simpleValues[i], testLayout)
         setInfoCell(targetInfoWnd.simpleValues[i], nil)
     end
     simpleValueOffset = math.ceil(targetInfoWnd.rows[1].style:GetTextWidth("Tough:")) + math.floor((2 * scale) + 0.5)
     if compact then
-        local summaryWidth = targetInfoWnd.title.style:GetTextWidth(testLayout and simpleGuild or compactSummary)
+        local summaryWidth = testLayout and targetInfoWnd.title.style:GetTextWidth(simpleGuild) or 0
         if testLayout then summaryWidth = math.max(summaryWidth, targetInfoWnd.simpleMeta.style:GetTextWidth(simpleMeta)) end
         local widestCell = 0
         local gridCols = 0
@@ -1655,11 +1723,14 @@ local function refreshTargetInfoWindow(targetInfo, className, gearscore, pdef, m
                 end
             end
         end
+        local statsWidth = 0
         if gridCols > 0 then
             widestCell = math.max(widestCell + outlinePad, minCellWidth)
-            wantedWidth = math.ceil(math.max(summaryWidth + (titleMargin * 2) + outlinePad, (widestCell * gridCols) + (colGap * math.max(0, gridCols - 1)) + (sideMargin * 2)))
+            statsWidth = (widestCell * gridCols) + (colGap * math.max(0, gridCols - 1)) + (sideMargin * 2)
+            wantedWidth = math.ceil(testLayout and math.max(summaryWidth + (titleMargin * 2) + outlinePad, statsWidth) or statsWidth)
         else
-            wantedWidth = math.ceil(math.max(summaryWidth + (titleMargin * 2) + outlinePad, (widestCell * 2) + (sideMargin * 2) + colGap))
+            statsWidth = math.floor((150 * scale) + 0.5)
+            wantedWidth = math.ceil(testLayout and math.max(summaryWidth + (titleMargin * 2) + outlinePad, statsWidth) or statsWidth)
         end
     end
     local cellWidth = compact and math.floor((wantedWidth - (sideMargin * 2) - colGap) / 2) or 198
@@ -1687,6 +1758,15 @@ local function refreshTargetInfoWindow(targetInfo, className, gearscore, pdef, m
     targetInfoWnd.simpleMeta:RemoveAllAnchors()
     targetInfoWnd.simpleMeta:AddAnchor("TOPLEFT", targetInfoWnd, titleMargin, math.floor((18 * scale) + 0.5))
     targetInfoWnd.simpleMeta:SetExtent(wantedWidth - (titleMargin * 2), math.floor((14 * scale) + 0.5))
+    if compact then
+        local titleWidth = wantedWidth - (titleMargin * 2)
+        if testLayout then
+            targetInfoWnd.title:SetText(TargetOverlay.fitTextToWidth(targetInfoWnd.title, simpleGuild, titleWidth, 8))
+            targetInfoWnd.simpleMeta:SetText(TargetOverlay.fitTextToWidth(targetInfoWnd.simpleMeta, simpleMeta, titleWidth, 8))
+        else
+            targetInfoWnd.title:SetText(TargetOverlay.fitCompactSummaryParts(targetInfoWnd.title, compactParts, titleWidth))
+        end
+    end
     local widgetIndex = 1
     local y = math.floor(((testLayout and 36 or compact and 20 or 29) * scale) + 0.5)
     local col = 0
@@ -3194,7 +3274,10 @@ function refreshSettingsButtons()
     setToggleButton(settingsWnd.modelRangeBtn, settings.showModelRange, "Range")
     setToggleButton(settingsWnd.modelDefBtn, settings.showModelDefense, "Defense")
     setToggleButton(settingsWnd.modelCompactBtn, settings.compactModelOverlay, "Compact")
-    setToggleButton(settingsWnd.shadowBtn, settings.overlayTextShadow, "Shadow")
+    if settingsWnd.shadowBtn then
+        settingsWnd.shadowBtn:SetCleanText(settings.overlayTextStyle == "outline" and "Text Border" or "Text Shadow")
+        settingsWnd.shadowBtn:SetTone(COLORS.active)
+    end
     setToggleButton(settingsWnd.targetWindowBtn, settings.showTargetWindow, "Intel window")
     setToggleButton(settingsWnd.compactWindowBtn, settings.compactTargetWindow, "Compact")
     setToggleButton(settingsWnd.testWindowBtn, settings.testTargetWindow, "Compact/Simple")
@@ -3250,6 +3333,15 @@ local function cycleCompatMode()
     refreshSettingsButtons()
 end
 
+function TargetOverlay.cycleOverlayTextStyle()
+    settings.overlayTextStyle = settings.overlayTextStyle == "outline" and "shadow" or "outline"
+    settings.overlayTextShadow = settings.overlayTextStyle == "shadow"
+    if mainCanvas then mainCanvas._layoutTextStyle = nil end
+    TargetOverlay.applyTextShadow()
+    saveSettings()
+    refreshSettingsButtons()
+end
+
 local function toggleSetting(key)
     settings[key] = not settings[key]
     if settings[key] then
@@ -3259,7 +3351,11 @@ local function toggleSetting(key)
             settings.compactTargetWindow = false
         end
     end
-    if key == "overlayTextShadow" then TargetOverlay.applyTextShadow() end
+    if key == "overlayTextShadow" then
+        settings.overlayTextStyle = settings.overlayTextShadow and "shadow" or "outline"
+        if mainCanvas then mainCanvas._layoutTextStyle = nil end
+        TargetOverlay.applyTextShadow()
+    end
     if key == "showOwnershipLabels" and settings.showOwnershipLabels == false then hideOwnershipWindow() end
     if key == "importNuziCooldowns" then
         refreshNuziCooldownRows(true)
@@ -3335,8 +3431,8 @@ end
 
 local function createSettingsWindow()
     settingsWnd = api.Interface:CreateEmptyWindow("PowerRangerSettings", "UIParent")
-    settingsWnd:SetExtent(620, 755)
-    local x, y = TargetOverlay.safeWindowPosition(settings.settingsX, settings.settingsY, 620, 755)
+    settingsWnd:SetExtent(620, 783)
+    local x, y = TargetOverlay.safeWindowPosition(settings.settingsX, settings.settingsY, 620, 783)
     settingsWnd:AddAnchor("TOPLEFT", "UIParent", x, y)
     addBg(settingsWnd, 0, 0, 0, 0.96)
     local body = settingsWnd:CreateColorDrawable(COLORS.dark[1], COLORS.dark[2], COLORS.dark[3], COLORS.dark[4], "background")
@@ -3351,8 +3447,9 @@ local function createSettingsWindow()
     applyDrag(settingsWnd, title, "settingsX", "settingsY", true)
     settingsWnd.compatModeBtn = flatButton(settingsWnd, "power_ranger_compat_mode", "", 414, 7, 160, 22, COLORS.blue, cycleCompatMode)
     flatButton(settingsWnd, "power_ranger_close", "X", 584, 7, 22, 22, COLORS.button, function() settingsWnd:Show(false) end)
+    settingsWnd.colorCubes = {}
 
-    local p1 = sectionPanel(settingsWnd, "power_ranger_model_panel", 18, 52, 584, 112, "Target Overhead")
+    local p1 = sectionPanel(settingsWnd, "power_ranger_model_panel", 18, 52, 584, 140, "Target Overhead")
     settingsWnd.modelCompactBtn = flatButton(p1, "power_ranger_toggle_model_compact", "", 16, 32, 116, 20, COLORS.active, function() toggleSetting("compactModelOverlay") end)
     label(p1, "power_ranger_scale_label", "Scale", 144, 35, 36, 14, 10, COLORS.muted, ALIGN.LEFT)
     flatButton(p1, "power_ranger_scale_down", "-", 182, 32, 22, 20, COLORS.button, function() shiftUiScale(-1) end)
@@ -3362,7 +3459,7 @@ local function createSettingsWindow()
     flatButton(p1, "power_ranger_model_left_down", "-", 296, 32, 22, 20, COLORS.button, function() TargetOverlay.shiftCompactModelLeft(-1) end)
     settingsWnd.modelLeftValue = label(p1, "power_ranger_model_left_value", "45", 320, 35, 26, 14, 10, COLORS.white, ALIGN.CENTER)
     flatButton(p1, "power_ranger_model_left_up", "+", 348, 32, 22, 20, COLORS.button, function() TargetOverlay.shiftCompactModelLeft(1) end)
-    settingsWnd.shadowBtn = flatButton(p1, "power_ranger_toggle_shadow", "", 388, 32, 154, 20, COLORS.active, function() toggleSetting("overlayTextShadow") end)
+    settingsWnd.shadowBtn = flatButton(p1, "power_ranger_toggle_text_style", "", 388, 32, 154, 20, COLORS.active, TargetOverlay.cycleOverlayTextStyle)
     settingsWnd.modelBtn = flatButton(p1, "power_ranger_toggle_model", "", 16, 56, 126, 24, COLORS.active, function() toggleSetting("showModelOverlay") end)
     settingsWnd.armorBtn = flatButton(p1, "power_ranger_toggle_armor", "", 152, 56, 126, 24, COLORS.active, function() toggleSetting("showArmorIcon") end)
     settingsWnd.weaponBtn = flatButton(p1, "power_ranger_toggle_weapon", "", 288, 56, 126, 24, COLORS.active, function() toggleSetting("showWeaponIcon") end)
@@ -3371,8 +3468,15 @@ local function createSettingsWindow()
     settingsWnd.modelClassBtn = flatButton(p1, "power_ranger_toggle_model_class", "", 152, 84, 126, 24, COLORS.active, function() toggleSetting("showModelClass") end)
     settingsWnd.modelRangeBtn = flatButton(p1, "power_ranger_toggle_model_range", "", 288, 84, 126, 24, COLORS.active, function() toggleSetting("showModelRange") end)
     settingsWnd.modelDefBtn = flatButton(p1, "power_ranger_toggle_model_def", "", 424, 84, 126, 24, COLORS.active, function() toggleSetting("showModelDefense") end)
+    label(p1, "power_ranger_model_color_label", "Colors", 16, 116, 44, 14, 10, COLORS.muted, ALIGN.LEFT)
+    label(p1, "power_ranger_model_color_dist", "Dist", 72, 116, 28, 14, 10, COLORS.white, ALIGN.LEFT)
+    settingsWnd.colorCubes.modelRange = colorCube(p1, "power_ranger_model_color_range", 102, 112, "modelRange")
+    label(p1, "power_ranger_model_color_gs", "GS", 132, 116, 22, 14, 10, COLORS.white, ALIGN.LEFT)
+    settingsWnd.colorCubes.modelGearscore = colorCube(p1, "power_ranger_model_color_gs_cube", 156, 112, "modelGearscore")
+    label(p1, "power_ranger_model_color_class", "Class", 188, 116, 42, 14, 10, COLORS.white, ALIGN.LEFT)
+    settingsWnd.colorCubes.modelClass = colorCube(p1, "power_ranger_model_color_class_cube", 230, 112, "modelClass")
 
-    local p2 = sectionPanel(settingsWnd, "power_ranger_window_panel", 18, 176, 584, 229, "Intel Window")
+    local p2 = sectionPanel(settingsWnd, "power_ranger_window_panel", 18, 204, 584, 229, "Intel Window")
     settingsWnd.targetWindowBtn = flatButton(p2, "power_ranger_toggle_window", "", 16, 32, 124, 22, COLORS.active, function() toggleSetting("showTargetWindow") end)
     settingsWnd.compactWindowBtn = flatButton(p2, "power_ranger_toggle_compact_window", "", 148, 32, 96, 22, COLORS.active, function() toggleSetting("compactTargetWindow") end)
     settingsWnd.testWindowBtn = flatButton(p2, "power_ranger_toggle_test_window", "", 252, 32, 142, 22, COLORS.active, function() toggleSetting("testTargetWindow") end)
@@ -3396,7 +3500,6 @@ local function createSettingsWindow()
     settingsWnd.ownershipScaleValue = label(p2, "power_ranger_ownership_scale_value", "0", 396, 91, 24, 14, 10, COLORS.white, ALIGN.CENTER)
     flatButton(p2, "power_ranger_ownership_scale_up", "+", 424, 88, 24, 20, COLORS.button, function() shiftUiScale(1, "ownershipScaleLevel") end)
     settingsWnd.fieldButtons = {}
-    settingsWnd.colorCubes = {}
     for i, field in ipairs(TARGET_INFO_FIELDS) do
         local col = (i - 1) % 4
         local row = math.floor((i - 1) / 4)
@@ -3410,7 +3513,7 @@ local function createSettingsWindow()
         settingsWnd.colorCubes[field.key] = colorCube(p2, "power_ranger_info_color_" .. field.key, x + 106, y, field.key)
     end
 
-    local p4 = sectionPanel(settingsWnd, "power_ranger_self_panel", 18, 417, 584, 318, "Self Cooldowns & Gear")
+    local p4 = sectionPanel(settingsWnd, "power_ranger_self_panel", 18, 445, 584, 318, "Self Cooldowns & Gear")
     label(p4, "power_ranger_self_hint", "Known cooldown auras stay ID-based.", 14, 32, 264, 14, 10, COLORS.muted, ALIGN.LEFT)
     settingsWnd.nuziImportBtn = flatButton(p4, "power_ranger_toggle_nuzi_cd_import", "", 286, 29, 104, 20, COLORS.blue, function() toggleSetting("importNuziCooldowns") end)
     label(p4, "power_ranger_self_scale_label", "Scale", 410, 32, 40, 14, 10, COLORS.muted, ALIGN.LEFT)
@@ -3498,8 +3601,7 @@ function TargetOverlay.init()
     targetPdefTitleLabel = mainCanvas:CreateChildWidget("label", "targetPdefTitle", 0, true)
     targetPdefTitleLabel:SetExtent(54, 13)
     targetPdefTitleLabel.style:SetFontSize(10)
-    targetPdefTitleLabel.style:SetShadow(settings.overlayTextShadow ~= false)
-    targetPdefTitleLabel.style:SetOutline(false)
+    TargetOverlay.applyReadableTextStyle(targetPdefTitleLabel, true)
     targetPdefTitleLabel.style:SetAlign(ALIGN.CENTER)
     targetPdefTitleLabel.style:SetColor(1, 1, 1, 1)
     targetPdefTitleLabel:AddAnchor("RIGHT", weaponBuffIcon, "LEFT", 0, -5)
@@ -3509,8 +3611,7 @@ function TargetOverlay.init()
     targetPdefValueLabel = mainCanvas:CreateChildWidget("label", "targetPdefValue", 0, true)
     targetPdefValueLabel:SetExtent(54, 13)
     targetPdefValueLabel.style:SetFontSize(10)
-    targetPdefValueLabel.style:SetShadow(settings.overlayTextShadow ~= false)
-    targetPdefValueLabel.style:SetOutline(false)
+    TargetOverlay.applyReadableTextStyle(targetPdefValueLabel, true)
     targetPdefValueLabel.style:SetAlign(ALIGN.CENTER)
     targetPdefValueLabel.style:SetColor(1, 1, 1, 1)
     targetPdefValueLabel:AddAnchor("TOP", targetPdefTitleLabel, "BOTTOM", 0, -1)
@@ -3519,8 +3620,7 @@ function TargetOverlay.init()
     targetMdefTitleLabel = mainCanvas:CreateChildWidget("label", "targetMdefTitle", 0, true)
     targetMdefTitleLabel:SetExtent(54, 13)
     targetMdefTitleLabel.style:SetFontSize(10)
-    targetMdefTitleLabel.style:SetShadow(settings.overlayTextShadow ~= false)
-    targetMdefTitleLabel.style:SetOutline(false)
+    TargetOverlay.applyReadableTextStyle(targetMdefTitleLabel, true)
     targetMdefTitleLabel.style:SetAlign(ALIGN.CENTER)
     targetMdefTitleLabel.style:SetColor(1, 1, 1, 1)
     targetMdefTitleLabel:AddAnchor("LEFT", armorBuffIcon, "RIGHT", -3, -5)
@@ -3530,8 +3630,7 @@ function TargetOverlay.init()
     targetMdefValueLabel = mainCanvas:CreateChildWidget("label", "targetMdefValue", 0, true)
     targetMdefValueLabel:SetExtent(54, 13)
     targetMdefValueLabel.style:SetFontSize(10)
-    targetMdefValueLabel.style:SetShadow(settings.overlayTextShadow ~= false)
-    targetMdefValueLabel.style:SetOutline(false)
+    TargetOverlay.applyReadableTextStyle(targetMdefValueLabel, true)
     targetMdefValueLabel.style:SetAlign(ALIGN.CENTER)
     targetMdefValueLabel.style:SetColor(1, 1, 1, 1)
     targetMdefValueLabel:AddAnchor("TOP", targetMdefTitleLabel, "BOTTOM", 0, -1)
@@ -3543,20 +3642,18 @@ function TargetOverlay.init()
     targetRoleIcon:SetSRGB(false)
 
     targetGearscoreLabel = mainCanvas:CreateChildWidget("label", "targetGearscore", 0, true)
-    targetGearscoreLabel:SetAutoResize(true)
-    targetGearscoreLabel:SetHeight(CONFIG.fontSize + 4)
+    targetGearscoreLabel:SetAutoResize(false)
+    targetGearscoreLabel:SetExtent(90, CONFIG.fontSize + 4)
     targetGearscoreLabel.style:SetFontSize(CONFIG.fontSize)
-    targetGearscoreLabel.style:SetShadow(settings.overlayTextShadow ~= false)
-    targetGearscoreLabel.style:SetOutline(false)
+    TargetOverlay.applyReadableTextStyle(targetGearscoreLabel, true)
     targetGearscoreLabel.style:SetAlign(ALIGN.CENTER)
     targetGearscoreLabel:AddAnchor("TOP", mainCanvas, "BOTTOM", 0, CONFIG.gearscoreOffset)
     targetGearscoreLabel:Show(false)
 
     targetClassLabel = mainCanvas:CreateChildWidget("label", "targetClass", 0, true)
-    targetClassLabel:SetExtent(160, 16)
+    targetClassLabel:SetExtent(180, 16)
     targetClassLabel.style:SetFontSize(CONFIG.fontSize)
-    targetClassLabel.style:SetShadow(settings.overlayTextShadow ~= false)
-    targetClassLabel.style:SetOutline(false)
+    TargetOverlay.applyReadableTextStyle(targetClassLabel, true)
     targetClassLabel.style:SetAlign(ALIGN.CENTER)
     targetClassLabel.style:SetColor(1, 1, 1, 1)
     targetClassLabel:AddAnchor("TOP", targetGearscoreLabel, "BOTTOM", -10, -1)
@@ -3566,7 +3663,7 @@ function TargetOverlay.init()
     targetRangeCanvas:SetExtent(86, CONFIG.fontSize + 6)
     if targetRangeCanvas.Clickable then targetRangeCanvas:Clickable(false) end
     targetRangeLabel = label(targetRangeCanvas, "targetRange", "", 0, 0, 86, CONFIG.fontSize + 6, CONFIG.fontSize, COLORS.gold, ALIGN.CENTER)
-    if targetRangeLabel.style.SetShadow then targetRangeLabel.style:SetShadow(settings.overlayTextShadow ~= false) end
+    TargetOverlay.applyReadableTextStyle(targetRangeLabel, true)
     targetRangeLabel:Show(false)
     targetRangeCanvas:Show(false)
 
@@ -3672,14 +3769,17 @@ end
 
 local function applyModelLayout()
     local scale = uiScaleFactor()
-    if not mainCanvas or (mainCanvas._compactLayout == settings.compactModelOverlay and mainCanvas._layoutScale == scale) then return end
+    local textStyle = settings.overlayTextStyle or "shadow"
+    if not mainCanvas or (mainCanvas._compactLayout == settings.compactModelOverlay and mainCanvas._layoutScale == scale and mainCanvas._layoutTextStyle == textStyle) then return end
     mainCanvas._compactLayout = settings.compactModelOverlay
     mainCanvas._layoutScale = scale
+    mainCanvas._layoutTextStyle = textStyle
     local buffSize = math.floor((CONFIG.buffIconSize * scale) + 0.5)
     armorBuffIcon:SetExtent(buffSize, buffSize)
     weaponBuffIcon:SetExtent(buffSize, buffSize)
     targetRoleIcon:SetExtent(math.floor((CONFIG.roleIconSize * scale) + 0.5), math.floor((CONFIG.roleIconSize * scale) + 0.5))
-    targetClassLabel:SetExtent(math.floor((160 * scale) + 0.5), math.floor((16 * scale) + 0.5))
+    targetGearscoreLabel:SetExtent(math.floor((90 * scale) + 0.5), math.floor(((CONFIG.fontSize + 7) * scale) + 0.5))
+    targetClassLabel:SetExtent(math.floor((180 * scale) + 0.5), math.floor((16 * scale) + 0.5))
     targetClassLabel.style:SetFontSize(math.floor((CONFIG.fontSize * scale) + 0.5))
     targetPdefTitleLabel:SetExtent(math.floor((54 * scale) + 0.5), math.floor((13 * scale) + 0.5))
     targetPdefValueLabel:SetExtent(math.floor((54 * scale) + 0.5), math.floor((13 * scale) + 0.5))
@@ -3700,13 +3800,18 @@ local function applyModelLayout()
     if settings.compactModelOverlay then
         local leftOffset = -(tonumber(settings.compactModelLeftOffset) or CONFIG.compactModelLeftOffset)
         local compactIconGap = math.floor((2 * scale) + 0.5)
+        local outlineOffset = TargetOverlay.useOutlineText() and math.floor((4 * scale) + 0.5) or 0
+        targetGearscoreLabel.style:SetAlign(ALIGN.RIGHT)
+        targetClassLabel.style:SetAlign(ALIGN.RIGHT)
         armorBuffIcon:AddAnchor("RIGHT", mainCanvas, "LEFT", leftOffset, 0)
         weaponBuffIcon:AddAnchor("RIGHT", armorBuffIcon, "LEFT", -compactIconGap, 0)
         targetGearscoreLabel:SetHeight(math.floor(((CONFIG.fontSize + 7) * scale) + 0.5))
         targetGearscoreLabel.style:SetFontSize(math.floor(((CONFIG.fontSize + 3) * scale) + 0.5))
-        targetGearscoreLabel:AddAnchor("BOTTOM", armorBuffIcon, "TOP", 0, math.floor((-4 * scale) + 0.5))
-        targetClassLabel:AddAnchor("TOP", armorBuffIcon, "BOTTOM", 0, math.floor((4 * scale) + 0.5))
+        targetGearscoreLabel:AddAnchor("BOTTOMRIGHT", armorBuffIcon, "TOPRIGHT", -outlineOffset, math.floor((-4 * scale) + 0.5))
+        targetClassLabel:AddAnchor("TOPRIGHT", armorBuffIcon, "BOTTOMRIGHT", -outlineOffset, math.floor((4 * scale) + 0.5))
     else
+        targetGearscoreLabel.style:SetAlign(ALIGN.CENTER)
+        targetClassLabel.style:SetAlign(ALIGN.CENTER)
         armorBuffIcon:AddAnchor("LEFT", mainCanvas, "RIGHT", math.floor((CONFIG.armorBuffOffset * scale) + 0.5), 0)
         weaponBuffIcon:AddAnchor("RIGHT", mainCanvas, "LEFT", math.floor((CONFIG.weaponBuffOffset * scale) + 0.5), 0)
         targetGearscoreLabel:SetHeight(math.floor(((CONFIG.fontSize + 4) * scale) + 0.5))
@@ -3738,6 +3843,7 @@ local function updateFastModelRange()
     targetRangeLabel:SetExtent(math.floor((86 * scale) + 0.5), math.floor(((CONFIG.fontSize + 6) * scale) + 0.5))
     targetRangeLabel.style:SetFontSize(math.floor((CONFIG.fontSize * scale) + 0.5))
     setModelLabel(targetRangeLabel, string.format("%.1fm", dist))
+    setTextColor(targetRangeLabel, settingColor("modelRange"))
     targetRangeCanvas:AddAnchor("BOTTOM", "UIParent", "TOPLEFT", sX, sY - math.floor((44 * scale) + 0.5))
     targetRangeCanvas:Show(true)
 end
@@ -3890,13 +3996,14 @@ function TargetOverlay.update(dt)
 
     if showTargetText and settings.showModelGearscore and gearscore then
         setModelLabel(targetGearscoreLabel, tostring(gearscore))
-        targetGearscoreLabel.style:SetColor(1, 1, 1, 1)
+        setTextColor(targetGearscoreLabel, settingColor("modelGearscore"))
     else
         hideModelLabel(targetGearscoreLabel)
     end
 
     if showTargetText and settings.showModelClass then
         setModelLabel(targetClassLabel, className)
+        setTextColor(targetClassLabel, settingColor("modelClass"))
     else
         hideModelLabel(targetClassLabel)
     end
