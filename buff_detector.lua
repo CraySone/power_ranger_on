@@ -60,6 +60,15 @@ local function hasBuffId(buffTable, buffId)
     return false
 end
 
+local function hasBuffIdInCategories(buffCategories, buffId)
+    for _, buffTable in pairs(buffCategories) do
+        if hasBuffId(buffTable, buffId) then
+            return true
+        end
+    end
+    return false
+end
+
 -- Get all buffs from a unit
 local function getUnitBuffs(unit)
     local buffs = {}
@@ -123,7 +132,7 @@ function BuffDetector.getWeaponBuff(unit)
     local buffs = getUnitBuffs(unit)
 
     for _, buff in ipairs(buffs) do
-        if hasBuffId(WEAPON_BUFFS, buff.buff_id) then
+        if hasBuffIdInCategories(WEAPON_BUFFS, buff.buff_id) then
             return buff.buff_id
         end
     end
@@ -145,10 +154,8 @@ end
 function BuffDetector.getTrackedBuffObjects(unit)
     local trackedBuffs = {}
 
-    local buffCount = api.Unit:UnitBuffCount(unit) or 0
-    for i = 1, buffCount do
-        local buff = api.Unit:UnitBuff(unit, i)
-        if buff and BuffDetector.isTrackedBuff(buff.buff_id) then
+    for _, buff in ipairs(getUnitBuffs(unit)) do
+        if BuffDetector.isTrackedBuff(buff.buff_id) then
             table.insert(trackedBuffs, buff)
         end
     end

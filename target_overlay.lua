@@ -2,6 +2,8 @@ local api = require("api")
 local RoleHelper = require("power_ranger_on/role_helper")
 local BuffDetector = require("power_ranger_on/buff_detector")
 local OverlayUtils = require("power_ranger_on/overlay_utils")
+local Compat = require("power_ranger_on/compat")
+local NuziCooldownImport = require("power_ranger_on/nuzi_cooldown_import")
 
 local TargetOverlay = {}
 TargetOverlay.cooldawnBuffList = OverlayUtils.safeCall(function() return require("CooldawnBuffTracker/buff_helper") end)
@@ -51,6 +53,7 @@ local defaults = {
     showModelRange = true,
     showModelDefense = true,
     compactModelOverlay = true,
+    nuziUiCompatMode = "auto",
     compactModelLeftOffset = 45,
     overlayTextShadow = true,
     uiScaleLevel = 0,
@@ -59,6 +62,7 @@ local defaults = {
     showTargetWindow = true,
     compactTargetWindow = true,
     testTargetWindow = false,
+    importNuziCooldowns = true,
     simpleSpacingVersion = 6,
     simpleColumnGap = 43,
     simpleLineGap = 4,
@@ -138,6 +142,7 @@ local DEPRECATED_TRACKED_SKILL_PATTERNS = {
 }
 
 local function trackedBuffSettingKey(row)
+    if row and row.importKey then return tostring(row.importKey) end
     local unit = tostring(row and row.unit or "player")
     if row and row.id then
         if row.gliderPattern or row.category == "glider" then
@@ -187,6 +192,7 @@ local BUFF_CATEGORIES = {
     armor = {713, 714, 16551, 715, 716, 16552, 717, 740, 16553},
     weapon = {16557, 8227, 16558, 4899, 8226, 16559}
 }
+local SELF_BUFF_UNITS = {"player", "playerpet", "playerpet1", "playerpet2", "slave"}
 
 local COLOR_CHOICES = {
     {1, 1, 1, 1},
@@ -240,6 +246,9 @@ local targetInfoMisses = 0
 local screenPositionMisses = 0
 local updateElapsed = TARGET_UPDATE_MS
 local selfUpdateElapsed = SELF_UPDATE_MS
+local compatState = Compat.Resolve(defaults)
+local compatRefreshElapsed = 1000
+local nuziCooldownRows = NuziCooldownImport.EmptyRows()
 local buffState = {}
 local triggerState = {}
 local buffIconCache = {}
@@ -258,6 +267,58 @@ local recordDetectedSkill
 local serialValue
 local refreshSettingsButtons
 local refreshDetectedSkillRows
+
+local function updateCompatState(force)
+    compatRefreshElapsed = force and 1000 or compatRefreshElapsed
+    if force or compatRefreshElapsed >= 1000 then
+        compatRefreshElapsed = 0
+        compatState = Compat.Resolve(settings)
+    end
+    return compatState
+end
+
+local function refreshNuziCooldownRows(force)
+    if not Compat.ShouldShowOptions(compatState) then
+        local changed = #(nuziCooldownRows.buffs or {}) > 0 or #(nuziCooldownRows.skills or {}) > 0
+        if changed then
+            nuziCooldownRows = NuziCooldownImport.EmptyRows()
+            NuziCooldownImport.Reset()
+            if TargetOverlay.refreshEventSubscriptions then
+                TargetOverlay.refreshEventSubscriptions()
+            end
+        end
+        return changed
+    end
+
+    local rows, changed = NuziCooldownImport.Refresh(settings, force, nuziCooldownRows)
+    nuziCooldownRows = rows
+    if changed and TargetOverlay.refreshEventSubscriptions then
+        TargetOverlay.refreshEventSubscriptions()
+    end
+    return changed
+end
+
+local function allTrackedBuffRows()
+    local rows = {}
+    for _, row in ipairs(settings and settings.trackedBuffs or {}) do
+        table.insert(rows, row)
+    end
+    for _, row in ipairs(nuziCooldownRows.buffs or {}) do
+        table.insert(rows, row)
+    end
+    return rows
+end
+
+local function allTrackedSkillRows()
+    local rows = {}
+    for _, row in ipairs(settings and settings.trackedSkills or {}) do
+        table.insert(rows, row)
+    end
+    for _, row in ipairs(nuziCooldownRows.skills or {}) do
+        table.insert(rows, row)
+    end
+    return rows
+end
 
 local function copyDefaults(dst, src)
     for k, v in pairs(src) do
@@ -471,6 +532,8 @@ local function loadSettings()
     end
     settings.detectedSkills = {}
     settings.skillProbeLogging = false
+    updateCompatState(true)
+    refreshNuziCooldownRows(true)
 end
 
 local function saveSettings()
@@ -646,6 +709,7 @@ local function trackedBuffKey(row)
 end
 
 local function trackedBuffTriggerKey(row)
+    if row and row.importKey then return "trigger:" .. tostring(row.importKey) end
     local unit = tostring(row and row.unit or "player")
     local gliderPart = ""
     if row and (row.gliderPattern or row.category == "glider") then
@@ -1498,7 +1562,7 @@ end
 
 local function refreshTargetInfoWindow(targetInfo, className, gearscore, pdef, mdef, pdefPct, mdefPct, extraStats, ownershipOnly)
     if not targetInfoWnd then return end
-    if (not settings.showTargetWindow and not ownershipOnly) or not targetInfo then
+    if ((not settings.showTargetWindow or Compat.ShouldHideTargetInfoWindow(compatState, ownershipOnly)) and not ownershipOnly) or not targetInfo then
         targetInfoWnd:Show(false)
         return
     end
@@ -1718,19 +1782,33 @@ end
 
 local function findBuff(unit, wantedId)
     if unit == "self" then
-        return findBuffInUnit("player", wantedId) or findBuffInUnit("playerpet", wantedId)
+        for _, token in ipairs(SELF_BUFF_UNITS) do
+            local buff = findBuffInUnit(token, wantedId)
+            if buff then return buff end
+        end
+        return nil
     end
     return findBuffInUnit(unit or "player", wantedId)
 end
 
 local function findBuffByName(unit, wantedName)
     if unit == "self" then
-        return findBuffByNameInUnit("player", wantedName) or findBuffByNameInUnit("playerpet", wantedName)
+        for _, token in ipairs(SELF_BUFF_UNITS) do
+            local buff = findBuffByNameInUnit(token, wantedName)
+            if buff then return buff end
+        end
+        return nil
     end
     return findBuffByNameInUnit(unit or "player", wantedName)
 end
 
 local function findTrackedBuff(row)
+    if row.buffIds then
+        for _, id in ipairs(row.buffIds) do
+            local b = findBuff(row.unit or "player", id)
+            if b then return b end
+        end
+    end
     if row.buffNames then
         for _, name in ipairs(row.buffNames) do
             local b = findBuffByName(row.unit or "player", name)
@@ -1756,14 +1834,17 @@ local function updateTrackedBuffs()
     local t = api.Time:GetUiMsec()
     local glider = TargetOverlay.equippedGliderSnapshot()
     local mount = TargetOverlay.mountedPetSnapshot()
+    NuziCooldownImport.UpdateMountManaCooldowns(nuziCooldownRows.buffs, buffState, t, trackedBuffKey, mount and mount.icon)
     local learnedGliderIcon = false
-    for _, row in ipairs(settings.trackedBuffs or {}) do
+    for _, row in ipairs(allTrackedBuffRows()) do
         local key = trackedBuffKey(row)
         if row.enabled == false then
             buffState[key] = nil
             if triggerState[trackedBuffTriggerKey(row)] and triggerState[trackedBuffTriggerKey(row)].rowKey == key then
                 triggerState[trackedBuffTriggerKey(row)] = nil
             end
+        elseif row.mountManaSpent then
+            buffState[key] = buffState[key] or {}
         else
             local state = buffState[key] or {}
             local gliderMatches = TargetOverlay.trackedGliderMatches(row, glider)
@@ -1984,7 +2065,7 @@ local function trackedBuffCooldownEntry(row, st, glider, mount)
 end
 
 local function trackedSkillCooldownKey(row, skillName, skillId)
-    return tostring(row and (row.id or row.skillId or row.pattern or row.name) or skillName or skillId or "")
+    return tostring(row and (row.importKey or row.id or row.skillId or row.pattern or row.name) or skillName or skillId or "")
 end
 
 local function trackedSkillCooldownEntry(row, now)
@@ -2071,7 +2152,7 @@ end
 
 local function updateSelfPanel()
     if not selfWnd then return end
-    if settings.showSelfPanel == false then
+    if settings.showSelfPanel == false or Compat.ShouldHideSelfPanel(compatState) then
         selfWnd:Show(false)
         return
     end
@@ -2092,7 +2173,7 @@ local function updateSelfPanel()
     local mount = TargetOverlay.mountedPetSnapshot()
     local gliderEntries = {}
     local mountEntries = {}
-    for _, row in ipairs(settings.trackedBuffs or {}) do
+    for _, row in ipairs(allTrackedBuffRows()) do
         if row.enabled ~= false then
             local key = trackedBuffKey(row)
             local st = buffState[key] or {}
@@ -2108,7 +2189,7 @@ local function updateSelfPanel()
         end
     end
 
-    for _, row in ipairs(settings.trackedSkills or {}) do
+    for _, row in ipairs(allTrackedSkillRows()) do
         if row.enabled ~= false then
             table.insert(mountEntries, trackedSkillCooldownEntry(row, t))
         end
@@ -2317,7 +2398,7 @@ end
 
 local function findTrackedSkill(skillName, skillId)
     local lowerName = string.lower(tostring(skillName or ""))
-    for _, row in ipairs(settings.trackedSkills or {}) do
+    for _, row in ipairs(allTrackedSkillRows()) do
         if row.enabled ~= false then
             local rowId = tonumber(row.id or row.skillId)
             local pattern = string.lower(tostring(row.pattern or row.name or ""))
@@ -2502,7 +2583,7 @@ end
 
 local function onCombatMessage(targetUnitId, combatEvent, source, target, ...)
     local logging = settings.skillProbeLogging == true
-    if not logging and #(settings.trackedSkills or {}) == 0 then return end
+    if not logging and not TargetOverlay.hasEnabledTrackedSkills() then return end
     local args = {...}
     local result = parsedCombatMessage(combatEvent, args)
     local skillName, skillId = extractSkillFields(result, args)
@@ -2539,7 +2620,7 @@ end
 
 local function onSkillEvent(event, ...)
     local logging = settings.skillProbeLogging == true
-    if not logging and #(settings.trackedSkills or {}) == 0 then return end
+    if not logging and not TargetOverlay.hasEnabledTrackedSkills() then return end
     local args = {...}
     local skillName, skillId = extractSkillFields(nil, args)
     local row = findTrackedSkill(skillName, skillId)
@@ -2566,7 +2647,7 @@ local function onSkillEvent(event, ...)
 end
 
 function TargetOverlay.hasEnabledTrackedSkills()
-    for _, row in ipairs(settings and settings.trackedSkills or {}) do
+    for _, row in ipairs(allTrackedSkillRows()) do
         if row.enabled ~= false then return true end
     end
     return false
@@ -3060,6 +3141,10 @@ end
 
 function refreshSettingsButtons()
     if not settingsWnd then return end
+    local compat = updateCompatState(true)
+    local showNuziOptions = Compat.ShouldShowOptions(compat)
+    setToggleButton(settingsWnd.compatModeBtn, compat.active, Compat.ModeLabel(compat))
+    settingsWnd.compatModeBtn:Show(showNuziOptions)
     setToggleButton(settingsWnd.modelBtn, settings.showModelOverlay, "Overhead")
     setToggleButton(settingsWnd.armorBtn, settings.showArmorIcon, "Armor")
     setToggleButton(settingsWnd.weaponBtn, settings.showWeaponIcon, "Weapon")
@@ -3075,6 +3160,8 @@ function refreshSettingsButtons()
     setToggleButton(settingsWnd.testWindowBtn, settings.testTargetWindow, "Compact/Simple")
     setToggleButton(settingsWnd.selfBtn, settings.showSelfPanel, "Self win")
     setToggleButton(settingsWnd.selfCdBtn, settings.showSelfCooldowns, "Cooldowns")
+    setToggleButton(settingsWnd.nuziImportBtn, settings.importNuziCooldowns ~= false, "Nuzi CDs")
+    settingsWnd.nuziImportBtn:Show(showNuziOptions)
     setToggleButton(settingsWnd.probeLogBtn, settings.skillProbeLogging, "Log")
     if settingsWnd.scaleValue then
         settingsWnd.scaleValue:SetText(tostring(settings.uiScaleLevel or 0))
@@ -3111,6 +3198,13 @@ function refreshSettingsButtons()
     end
 end
 
+local function cycleCompatMode()
+    settings.nuziUiCompatMode = Compat.NextMode(settings.nuziUiCompatMode)
+    updateCompatState(true)
+    saveSettings()
+    refreshSettingsButtons()
+end
+
 local function toggleSetting(key)
     settings[key] = not settings[key]
     if settings[key] then
@@ -3121,6 +3215,10 @@ local function toggleSetting(key)
         end
     end
     if key == "overlayTextShadow" then TargetOverlay.applyTextShadow() end
+    if key == "importNuziCooldowns" then
+        refreshNuziCooldownRows(true)
+        TargetOverlay.refreshEventSubscriptions()
+    end
     saveSettings()
     refreshSettingsButtons()
 end
@@ -3197,6 +3295,7 @@ local function createSettingsWindow()
     header:Show(true)
     local title = label(settingsWnd, "power_ranger_settings_title", "Power Ranger ON", 16, 8, 320, 18, 14, COLORS.gold, ALIGN.LEFT)
     applyDrag(settingsWnd, title, "settingsX", "settingsY", true)
+    settingsWnd.compatModeBtn = flatButton(settingsWnd, "power_ranger_compat_mode", "", 414, 7, 160, 22, COLORS.blue, cycleCompatMode)
     flatButton(settingsWnd, "power_ranger_close", "X", 584, 7, 22, 22, COLORS.button, function() settingsWnd:Show(false) end)
 
     local p1 = sectionPanel(settingsWnd, "power_ranger_model_panel", 18, 52, 584, 112, "Target Overhead")
@@ -3252,7 +3351,8 @@ local function createSettingsWindow()
     end
 
     local p4 = sectionPanel(settingsWnd, "power_ranger_self_panel", 18, 389, 584, 318, "Self Cooldowns & Gear")
-    label(p4, "power_ranger_self_hint", "Known cooldown auras stay ID-based.", 14, 32, 380, 14, 10, COLORS.muted, ALIGN.LEFT)
+    label(p4, "power_ranger_self_hint", "Known cooldown auras stay ID-based.", 14, 32, 264, 14, 10, COLORS.muted, ALIGN.LEFT)
+    settingsWnd.nuziImportBtn = flatButton(p4, "power_ranger_toggle_nuzi_cd_import", "", 286, 29, 104, 20, COLORS.blue, function() toggleSetting("importNuziCooldowns") end)
     label(p4, "power_ranger_self_scale_label", "Scale", 410, 32, 40, 14, 10, COLORS.muted, ALIGN.LEFT)
     flatButton(p4, "power_ranger_self_scale_down", "-", 452, 29, 24, 20, COLORS.button, function() shiftUiScale(-1, "selfScaleLevel") end)
     settingsWnd.selfScaleValue = label(p4, "power_ranger_self_scale_value", "0", 480, 32, 24, 14, 10, COLORS.white, ALIGN.CENTER)
@@ -3538,8 +3638,9 @@ local function applyModelLayout()
     targetMdefValueLabel:RemoveAllAnchors()
     if settings.compactModelOverlay then
         local leftOffset = -(tonumber(settings.compactModelLeftOffset) or CONFIG.compactModelLeftOffset)
+        local compactIconGap = math.floor((4 * scale) + 0.5)
         armorBuffIcon:AddAnchor("RIGHT", mainCanvas, "LEFT", leftOffset, 0)
-        weaponBuffIcon:AddAnchor("RIGHT", mainCanvas, "LEFT", math.floor((CONFIG.weaponBuffOffset * scale) + 0.5), 0)
+        weaponBuffIcon:AddAnchor("RIGHT", armorBuffIcon, "LEFT", -compactIconGap, 0)
         targetGearscoreLabel:SetHeight(math.floor(((CONFIG.fontSize + 7) * scale) + 0.5))
         targetGearscoreLabel.style:SetFontSize(math.floor(((CONFIG.fontSize + 3) * scale) + 0.5))
         targetGearscoreLabel:AddAnchor("BOTTOM", armorBuffIcon, "TOP", 0, math.floor((-4 * scale) + 0.5))
@@ -3560,7 +3661,7 @@ end
 
 local function updateFastModelRange()
     if not targetRangeCanvas or not targetRangeLabel then return end
-    if settings.showModelOverlay == false or settings.showModelRange == false then
+    if settings.showModelOverlay == false or settings.showModelRange == false or Compat.ShouldHideTargetText(compatState) then
         hideModelRange()
         return
     end
@@ -3581,9 +3682,14 @@ local function updateFastModelRange()
 end
 
 function TargetOverlay.update(dt)
-    updateElapsed = updateElapsed + (dt or 0)
-    selfUpdateElapsed = selfUpdateElapsed + (dt or 0)
-    updateProbeLogging(dt or 0)
+    local elapsed = dt or 0
+    updateElapsed = updateElapsed + elapsed
+    selfUpdateElapsed = selfUpdateElapsed + elapsed
+    compatRefreshElapsed = compatRefreshElapsed + elapsed
+    NuziCooldownImport.AddElapsed(elapsed)
+    updateProbeLogging(elapsed)
+    updateCompatState(false)
+    refreshNuziCooldownRows(false)
     local now = api.Time:GetUiMsec()
     if skillProbeDirty and now - lastSkillProbeSave >= 2000 then
         lastSkillProbeSave = now
@@ -3716,18 +3822,19 @@ function TargetOverlay.update(dt)
     local trackedBuffs = BuffDetector.getTrackedBuffObjects("target")
     local armorBuff = TargetOverlay.findBuffByCategory(trackedBuffs, BUFF_CATEGORIES.armor)
     local weaponBuff = TargetOverlay.findBuffByCategory(trackedBuffs, BUFF_CATEGORIES.weapon)
+    local showTargetText = not Compat.ShouldHideTargetText(compatState)
     applyModelLayout()
     updateBuffIcon(armorBuffIcon, armorBuff, settings.showArmorIcon)
-    updateBuffIcon(weaponBuffIcon, weaponBuff, not settings.compactModelOverlay and settings.showWeaponIcon)
+    updateBuffIcon(weaponBuffIcon, weaponBuff, settings.showWeaponIcon)
 
-    if settings.showModelGearscore and gearscore then
+    if showTargetText and settings.showModelGearscore and gearscore then
         setModelLabel(targetGearscoreLabel, tostring(gearscore))
         targetGearscoreLabel.style:SetColor(1, 1, 1, 1)
     else
         hideModelLabel(targetGearscoreLabel)
     end
 
-    if settings.showModelClass then
+    if showTargetText and settings.showModelClass then
         setModelLabel(targetClassLabel, className)
     else
         hideModelLabel(targetClassLabel)
@@ -3735,7 +3842,7 @@ function TargetOverlay.update(dt)
 
     updateFastModelRange()
 
-    if settings.showModelDefense and not settings.compactModelOverlay then
+    if showTargetText and settings.showModelDefense and not settings.compactModelOverlay then
         setModelLabel(targetPdefTitleLabel, "PDef")
         setModelLabel(targetPdefValueLabel, OverlayUtils.defenseText(pdef, pdefPct))
         setModelLabel(targetMdefTitleLabel, "MDef")
@@ -3804,6 +3911,8 @@ function TargetOverlay.cleanup()
     screenPositionMisses = 0
     updateElapsed = TARGET_UPDATE_MS
     selfUpdateElapsed = SELF_UPDATE_MS
+    nuziCooldownRows = NuziCooldownImport.EmptyRows()
+    NuziCooldownImport.Reset()
     buffState = {}
     triggerState = {}
     buffIconCache = {}
