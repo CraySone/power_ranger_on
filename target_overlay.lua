@@ -71,6 +71,7 @@ local defaults = {
     showInfoGearscore = true,
     showInfoGuild = true,
     showInfoFamily = true,
+    showOwnershipLabels = true,
     showInfoDefense = true,
     showInfoPdef = true,
     showInfoMdef = true,
@@ -81,12 +82,14 @@ local defaults = {
     showInfoResilience = false,
     showSelfPanel = true,
     showSelfCooldowns = true,
+    showSelfEquipment = true,
     cooldownSettingsPage = 1,
     skillProbeLogging = false,
     detectedSkillsX = 760,
     detectedSkillsY = 260,
     ownershipWindowX = 860,
     ownershipWindowY = 280,
+    ownershipScaleLevel = 0,
     targetInfoColors = {
         range = {1, 0.84, 0, 1},
         class = {0.82, 0.90, 1, 1},
@@ -109,7 +112,7 @@ local defaults = {
     settingsY = 210,
     trackedBuffs = {
         { unit = "player", id = 131, name = "Invinc", source = "Player", cooldown = 120, fixedCooldown = true },
-        { unit = "self", name = "Sloth Glider", source = "Enhanced Sloth", buffName = "Star Divine Protection", buffNames = {"Star Divine Protection", "Star's Divine Protection", "Starfall"}, gliderPattern = {"enhanced sloth glider", "sloth glider"}, cooldown = 10, cooldownStartsOnActive = true, cooldownOnlyOnActive = true, triggerMinTimeLeftMs = 5300, fixedCooldown = true, icon = "Game\\ui\\icon\\icon_item_1648.dds" },
+        { unit = "self", name = "Sloth Glider", source = "Sloth", buffName = "Star Divine Protection", buffNames = {"Star Divine Protection", "Star's Divine Protection", "Starfall"}, gliderPattern = {"sloth"}, cooldown = 10, cooldownStartsOnActive = true, cooldownOnlyOnActive = true, triggerMinTimeLeftMs = 5300, fixedCooldown = true },
         { unit = "self", name = "Crystal Wings", source = "Crystal Wings", buffName = "Star Divine Protection", buffNames = {"Star Divine Protection", "Star's Divine Protection", "Starfall", "Charging"}, gliderPattern = {"crystal wings"}, cooldown = 60, cooldownStartsOnActive = true, cooldownOnlyOnActive = true, triggerMinTimeLeftMs = 5300, fixedCooldown = true },
         { unit = "self", name = "Magicopter", source = "Cumulus Magithopter", buffName = "Star Divine Protection", buffNames = {"Star Divine Protection", "Star's Divine Protection", "Starfall"}, gliderPattern = {"cumulus magicopter", "cumulus magithopter", "magicopter", "magithopter"}, cooldown = 45, cooldownStartsOnActive = true, cooldownOnlyOnActive = true, triggerMinTimeLeftMs = 5300, fixedCooldown = true, icon = "Game\\ui\\icon\\icon_item_4138.dds" },
         { unit = "self", id = 3636, name = "Ezi Glider", source = "Ezi", buffName = "Invincible Flight", buffNames = {"Invincible Flight", "Invincibility Flight"}, gliderPattern = {"ezi", "ezi's glider"}, cooldown = 60, cooldownStartsOnActive = true, fixedCooldown = true, itemType = 18174 },
@@ -375,6 +378,10 @@ local function addMissingTrackedBuffDefaults()
             copy.cooldownStartsOnActive = defaultRow.cooldownStartsOnActive
             copy.cooldownOnlyOnActive = defaultRow.cooldownOnlyOnActive
             copy.triggerMinTimeLeftMs = defaultRow.triggerMinTimeLeftMs
+            if defaultRow.name == "Sloth Glider" then
+                copy.source = defaultRow.source
+                if existing.icon == "Game\\ui\\icon\\icon_item_1648.dds" then copy.icon = nil end
+            end
         end
         return copy
     end
@@ -618,12 +625,12 @@ local function cooldownEdit(parent, id, x, y, w, h)
     border:SetExtent(w + 2, h + 2)
     border:AddAnchor("TOPLEFT", parent, x - 1, y - 1)
     border:Show(true)
-    local plate = parent:CreateColorDrawable(0.10, 0.10, 0.11, 0.96, "background")
-    plate:SetExtent(w, h)
-    plate:AddAnchor("TOPLEFT", parent, x, y)
-    plate:Show(true)
     edit:SetExtent(w, h)
     edit:AddAnchor("TOPLEFT", parent, x, y)
+    local plate = edit:CreateColorDrawable(0.10, 0.10, 0.11, 0.96, "background")
+    plate:AddAnchor("TOPLEFT", edit, 0, 0)
+    plate:AddAnchor("BOTTOMRIGHT", edit, 0, 0)
+    plate:Show(true)
     if edit.SetMaxTextLength then edit:SetMaxTextLength(4) end
     if edit.style then
         edit.style:SetColor(1, 1, 1, 1)
@@ -1529,6 +1536,10 @@ end
 
 local function refreshOwnershipWindow(info)
     if not ownershipWnd or not info then return end
+    if settings.showOwnershipLabels == false then
+        hideOwnershipWindow()
+        return
+    end
     local guild = TargetOverlay.ownershipField(info, {"expeditionName", "expedition", "guildName", "guild"})
     local family = TargetOverlay.ownershipField(info, {"family_name", "familyName", "family"})
     local owner = TargetOverlay.ownershipField(info, {"owner_name", "ownerName", "owner", "portal_owner", "portalOwner"})
@@ -1544,6 +1555,12 @@ local function refreshOwnershipWindow(info)
     if targetInfoWnd then targetInfoWnd:Show(false) end
     local titleDisplay = OverlayUtils.shortText(titleText, 34)
     local metaDisplay = table.concat(meta, "  |  ")
+    local scale = uiScaleFactor("ownershipScaleLevel")
+    local pad = math.floor((4 * scale) + 0.5)
+    local titleHeight = math.floor((20 * scale) + 0.5)
+    local metaHeight = math.floor((16 * scale) + 0.5)
+    ownershipWnd.title.style:SetFontSize(math.floor((15 * scale) + 0.5))
+    ownershipWnd.meta.style:SetFontSize(math.floor((11 * scale) + 0.5))
     ownershipWnd.title:SetText(titleDisplay)
     ownershipWnd.meta:SetText(metaDisplay)
     ownershipWnd.meta:Show(#meta > 0)
@@ -1551,12 +1568,16 @@ local function refreshOwnershipWindow(info)
     setTextColor(ownershipWnd.meta, COLORS.white)
     local titleWidth = ownershipWnd.title.style:GetTextWidth(titleDisplay)
     local metaWidth = #meta > 0 and ownershipWnd.meta.style:GetTextWidth(metaDisplay) or 0
-    local wantedWidth = math.max(120, math.min(460, math.ceil(math.max(titleWidth, metaWidth) + 12)))
-    local wantedHeight = #meta > 0 and 42 or 24
+    local wantedWidth = math.max(math.floor((120 * scale) + 0.5), math.min(math.floor((460 * scale) + 0.5), math.ceil(math.max(titleWidth, metaWidth) + (12 * scale))))
+    local wantedHeight = #meta > 0 and math.floor((42 * scale) + 0.5) or math.floor((24 * scale) + 0.5)
     if ownershipWnd._lastWidth ~= wantedWidth or ownershipWnd._lastHeight ~= wantedHeight then
         ownershipWnd:SetExtent(wantedWidth, wantedHeight)
-        ownershipWnd.title:SetExtent(wantedWidth - 8, 20)
-        ownershipWnd.meta:SetExtent(wantedWidth - 8, 16)
+        ownershipWnd.title:RemoveAllAnchors()
+        ownershipWnd.title:AddAnchor("TOPLEFT", ownershipWnd, pad, 0)
+        ownershipWnd.title:SetExtent(wantedWidth - (pad * 2), titleHeight)
+        ownershipWnd.meta:RemoveAllAnchors()
+        ownershipWnd.meta:AddAnchor("TOPLEFT", ownershipWnd, pad, titleHeight)
+        ownershipWnd.meta:SetExtent(wantedWidth - (pad * 2), metaHeight)
         ownershipWnd.dragHandle:SetExtent(wantedWidth, wantedHeight)
         ownershipWnd._lastWidth = wantedWidth
         ownershipWnd._lastHeight = wantedHeight
@@ -1937,9 +1958,17 @@ local function updateTrackedBuffs()
     if learnedGliderIcon then saveSettings() end
 end
 
-local function selfPanelWidth(gliderCount, mountCount)
-    local count = math.max(3, tonumber(gliderCount) or 0, tonumber(mountCount) or 0)
+local function selfPanelWidth(gliderCount, mountCount, equipmentVisible)
+    local count = math.max(equipmentVisible and 3 or 0, tonumber(gliderCount) or 0, tonumber(mountCount) or 0)
     return math.floor((math.max(SELF_PANEL.minWidth, SELF_PANEL.left + (count * SELF_PANEL.iconStep) + 4) * uiScaleFactor("selfScaleLevel")) + 0.5)
+end
+
+function TargetOverlay.setSelfEquipmentVisible(visible)
+    if not selfWnd or not selfWnd.equipIcons then return end
+    for i, icon in ipairs(selfWnd.equipIcons) do
+        icon:Show(visible)
+        if selfWnd.equipLabels[i] then selfWnd.equipLabels[i]:Show(visible) end
+    end
 end
 
 local function positionSelfEquipmentRow(y)
@@ -1963,16 +1992,18 @@ local function positionSelfEquipmentRow(y)
     end
 end
 
-local function resizeSelfPanel(gliderCount, mountCount, gearOnly)
+local function resizeSelfPanel(gliderCount, mountCount, cooldownsVisible, equipmentVisible)
     if not selfWnd then return end
-    local width = selfPanelWidth(gliderCount, mountCount)
+    local width = selfPanelWidth(gliderCount, mountCount, equipmentVisible)
     local scale = uiScaleFactor("selfScaleLevel")
-    local height = math.floor(((gearOnly and 60 or SELF_PANEL.height) * scale) + 0.5)
-    local equipY = gearOnly and SELF_PANEL.gliderY or SELF_PANEL.equipY
-    if selfWnd._equipY ~= equipY then
+    local baseHeight = cooldownsVisible and (equipmentVisible and SELF_PANEL.height or 104) or (equipmentVisible and 60 or SELF_PANEL.headerHeight)
+    local height = math.floor((baseHeight * scale) + 0.5)
+    local equipY = cooldownsVisible and SELF_PANEL.equipY or SELF_PANEL.gliderY
+    if equipmentVisible and selfWnd._equipY ~= equipY then
         positionSelfEquipmentRow(equipY)
         selfWnd._equipY = equipY
     end
+    TargetOverlay.setSelfEquipmentVisible(equipmentVisible)
     if selfWnd._lastWidth ~= width or selfWnd._lastHeight ~= height then
         selfWnd:SetExtent(width, height)
         if selfWnd.header then selfWnd.header:SetExtent(width, math.floor((SELF_PANEL.headerHeight * scale) + 0.5)) end
@@ -2142,6 +2173,11 @@ end
 
 local function updateSelfEquipmentIcons()
     if not selfWnd or not selfWnd.equipIcons then return end
+    if settings.showSelfEquipment == false then
+        TargetOverlay.setSelfEquipmentVisible(false)
+        return
+    end
+    TargetOverlay.setSelfEquipmentVisible(true)
     local now = api.Time:GetUiMsec()
     if selfWnd._equipReady and now - lastSelfEquipmentUpdate < 1000 then return end
     lastSelfEquipmentUpdate = now
@@ -2164,7 +2200,7 @@ local function updateSelfPanel()
         if selfWnd.status then selfWnd.status:SetText("OFF") end
         clearSelfCooldownRow(selfWnd.gliderIcons, selfWnd.gliderLabels)
         clearSelfCooldownRow(selfWnd.mountIcons, selfWnd.mountLabels)
-        resizeSelfPanel(0, 0, true)
+        resizeSelfPanel(0, 0, false, settings.showSelfEquipment ~= false)
         updateSelfEquipmentIcons()
         selfWnd:Show(true)
         return
@@ -2200,7 +2236,7 @@ local function updateSelfPanel()
     end
     ensureSelfCooldownRow(selfWnd.gliderIcons, selfWnd.gliderLabels, "power_ranger_self_glider_cd_dynamic", SELF_PANEL.gliderY, #gliderEntries)
     ensureSelfCooldownRow(selfWnd.mountIcons, selfWnd.mountLabels, "power_ranger_self_mount_cd_dynamic", SELF_PANEL.mountY, #mountEntries)
-    resizeSelfPanel(#gliderEntries, #mountEntries, false)
+    resizeSelfPanel(#gliderEntries, #mountEntries, true, settings.showSelfEquipment ~= false)
     renderSelfCooldownRow(selfWnd.gliderIcons, selfWnd.gliderLabels, gliderEntries)
     renderSelfCooldownRow(selfWnd.mountIcons, selfWnd.mountLabels, mountEntries)
     selfWnd:Show(true)
@@ -3162,8 +3198,10 @@ function refreshSettingsButtons()
     setToggleButton(settingsWnd.targetWindowBtn, settings.showTargetWindow, "Intel window")
     setToggleButton(settingsWnd.compactWindowBtn, settings.compactTargetWindow, "Compact")
     setToggleButton(settingsWnd.testWindowBtn, settings.testTargetWindow, "Compact/Simple")
+    setToggleButton(settingsWnd.ownershipBtn, settings.showOwnershipLabels ~= false, "Ownership")
     setToggleButton(settingsWnd.selfBtn, settings.showSelfPanel, "Self win")
     setToggleButton(settingsWnd.selfCdBtn, settings.showSelfCooldowns, "Cooldowns")
+    setToggleButton(settingsWnd.selfEquipmentBtn, settings.showSelfEquipment ~= false, "Equipment")
     setToggleButton(settingsWnd.nuziImportBtn, settings.importNuziCooldowns ~= false, "Nuzi CDs")
     settingsWnd.nuziImportBtn:Show(showNuziOptions)
     setToggleButton(settingsWnd.probeLogBtn, settings.skillProbeLogging, "Log")
@@ -3184,6 +3222,9 @@ function refreshSettingsButtons()
     end
     if settingsWnd.selfScaleValue then
         settingsWnd.selfScaleValue:SetText(tostring(settings.selfScaleLevel or 0))
+    end
+    if settingsWnd.ownershipScaleValue then
+        settingsWnd.ownershipScaleValue:SetText(tostring(settings.ownershipScaleLevel or 0))
     end
     refreshCooldownSettingRows()
     if settingsWnd.fieldButtons then
@@ -3219,12 +3260,14 @@ local function toggleSetting(key)
         end
     end
     if key == "overlayTextShadow" then TargetOverlay.applyTextShadow() end
+    if key == "showOwnershipLabels" and settings.showOwnershipLabels == false then hideOwnershipWindow() end
     if key == "importNuziCooldowns" then
         refreshNuziCooldownRows(true)
         TargetOverlay.refreshEventSubscriptions()
     end
     saveSettings()
     refreshSettingsButtons()
+    if key == "showSelfEquipment" or key == "showSelfCooldowns" or key == "showSelfPanel" then updateSelfPanel() end
 end
 
 function TargetOverlay.shiftSimpleSpacing(key, delta, minValue, maxValue)
@@ -3268,6 +3311,13 @@ local function shiftUiScale(delta, key)
     if settingsWnd and settingsWnd.selfScaleValue then
         settingsWnd.selfScaleValue:SetText(tostring(settings.selfScaleLevel or 0))
     end
+    if settingsWnd and settingsWnd.ownershipScaleValue then
+        settingsWnd.ownershipScaleValue:SetText(tostring(settings.ownershipScaleLevel or 0))
+    end
+    if ownershipWnd then
+        ownershipWnd._lastWidth = nil
+        ownershipWnd._lastHeight = nil
+    end
     if tonumber(delta) and tonumber(delta) ~= 0 then
         saveSettings()
     end
@@ -3285,8 +3335,8 @@ end
 
 local function createSettingsWindow()
     settingsWnd = api.Interface:CreateEmptyWindow("PowerRangerSettings", "UIParent")
-    settingsWnd:SetExtent(620, 727)
-    local x, y = TargetOverlay.safeWindowPosition(settings.settingsX, settings.settingsY, 620, 727)
+    settingsWnd:SetExtent(620, 755)
+    local x, y = TargetOverlay.safeWindowPosition(settings.settingsX, settings.settingsY, 620, 755)
     settingsWnd:AddAnchor("TOPLEFT", "UIParent", x, y)
     addBg(settingsWnd, 0, 0, 0, 0.96)
     local body = settingsWnd:CreateColorDrawable(COLORS.dark[1], COLORS.dark[2], COLORS.dark[3], COLORS.dark[4], "background")
@@ -3322,7 +3372,7 @@ local function createSettingsWindow()
     settingsWnd.modelRangeBtn = flatButton(p1, "power_ranger_toggle_model_range", "", 288, 84, 126, 24, COLORS.active, function() toggleSetting("showModelRange") end)
     settingsWnd.modelDefBtn = flatButton(p1, "power_ranger_toggle_model_def", "", 424, 84, 126, 24, COLORS.active, function() toggleSetting("showModelDefense") end)
 
-    local p2 = sectionPanel(settingsWnd, "power_ranger_window_panel", 18, 176, 584, 201, "Intel Window")
+    local p2 = sectionPanel(settingsWnd, "power_ranger_window_panel", 18, 176, 584, 229, "Intel Window")
     settingsWnd.targetWindowBtn = flatButton(p2, "power_ranger_toggle_window", "", 16, 32, 124, 22, COLORS.active, function() toggleSetting("showTargetWindow") end)
     settingsWnd.compactWindowBtn = flatButton(p2, "power_ranger_toggle_compact_window", "", 148, 32, 96, 22, COLORS.active, function() toggleSetting("compactTargetWindow") end)
     settingsWnd.testWindowBtn = flatButton(p2, "power_ranger_toggle_test_window", "", 252, 32, 142, 22, COLORS.active, function() toggleSetting("testTargetWindow") end)
@@ -3339,13 +3389,19 @@ local function createSettingsWindow()
     flatButton(p2, "power_ranger_simple_lines_down", "-", 324, 60, 24, 20, COLORS.button, function() TargetOverlay.shiftSimpleSpacing("simpleLineGap", -1, 0, 23) end)
     settingsWnd.simpleLineGapValue = label(p2, "power_ranger_simple_lines_value", "0", 352, 63, 24, 14, 10, COLORS.white, ALIGN.CENTER)
     flatButton(p2, "power_ranger_simple_lines_up", "+", 380, 60, 24, 20, COLORS.button, function() TargetOverlay.shiftSimpleSpacing("simpleLineGap", 1, 0, 23) end)
+    label(p2, "power_ranger_ownership_label", "Land / vehicle ownership", 16, 92, 148, 14, 10, COLORS.muted, ALIGN.LEFT)
+    settingsWnd.ownershipBtn = flatButton(p2, "power_ranger_toggle_ownership", "", 168, 88, 142, 20, COLORS.active, function() toggleSetting("showOwnershipLabels") end)
+    label(p2, "power_ranger_ownership_scale_label", "Scale", 326, 92, 40, 14, 10, COLORS.muted, ALIGN.LEFT)
+    flatButton(p2, "power_ranger_ownership_scale_down", "-", 368, 88, 24, 20, COLORS.button, function() shiftUiScale(-1, "ownershipScaleLevel") end)
+    settingsWnd.ownershipScaleValue = label(p2, "power_ranger_ownership_scale_value", "0", 396, 91, 24, 14, 10, COLORS.white, ALIGN.CENTER)
+    flatButton(p2, "power_ranger_ownership_scale_up", "+", 424, 88, 24, 20, COLORS.button, function() shiftUiScale(1, "ownershipScaleLevel") end)
     settingsWnd.fieldButtons = {}
     settingsWnd.colorCubes = {}
     for i, field in ipairs(TARGET_INFO_FIELDS) do
         local col = (i - 1) % 4
         local row = math.floor((i - 1) / 4)
         local x = 16 + (col * 138)
-        local y = 90 + (row * 27)
+        local y = 118 + (row * 27)
         local bg = p2:CreateColorDrawable(row % 2 == 0 and 0.08 or 0.12, row % 2 == 0 and 0.08 or 0.12, row % 2 == 0 and 0.095 or 0.135, 0.72, "background")
         bg:SetExtent(128, 22)
         bg:AddAnchor("TOPLEFT", p2, x - 4, y - 1)
@@ -3354,17 +3410,18 @@ local function createSettingsWindow()
         settingsWnd.colorCubes[field.key] = colorCube(p2, "power_ranger_info_color_" .. field.key, x + 106, y, field.key)
     end
 
-    local p4 = sectionPanel(settingsWnd, "power_ranger_self_panel", 18, 389, 584, 318, "Self Cooldowns & Gear")
+    local p4 = sectionPanel(settingsWnd, "power_ranger_self_panel", 18, 417, 584, 318, "Self Cooldowns & Gear")
     label(p4, "power_ranger_self_hint", "Known cooldown auras stay ID-based.", 14, 32, 264, 14, 10, COLORS.muted, ALIGN.LEFT)
     settingsWnd.nuziImportBtn = flatButton(p4, "power_ranger_toggle_nuzi_cd_import", "", 286, 29, 104, 20, COLORS.blue, function() toggleSetting("importNuziCooldowns") end)
     label(p4, "power_ranger_self_scale_label", "Scale", 410, 32, 40, 14, 10, COLORS.muted, ALIGN.LEFT)
     flatButton(p4, "power_ranger_self_scale_down", "-", 452, 29, 24, 20, COLORS.button, function() shiftUiScale(-1, "selfScaleLevel") end)
     settingsWnd.selfScaleValue = label(p4, "power_ranger_self_scale_value", "0", 480, 32, 24, 14, 10, COLORS.white, ALIGN.CENTER)
     flatButton(p4, "power_ranger_self_scale_up", "+", 508, 29, 24, 20, COLORS.button, function() shiftUiScale(1, "selfScaleLevel") end)
-    settingsWnd.selfBtn = flatButton(p4, "power_ranger_toggle_self", "", 16, 58, 126, 24, COLORS.active, function() toggleSetting("showSelfPanel") end)
-    settingsWnd.selfCdBtn = flatButton(p4, "power_ranger_toggle_self_cd", "", 152, 58, 126, 24, COLORS.active, function() toggleSetting("showSelfCooldowns") end)
-    settingsWnd.probeLogBtn = flatButton(p4, "power_ranger_probe_log", "", 288, 58, 94, 24, COLORS.blue, toggleProbeLogging)
-    flatButton(p4, "power_ranger_detected_open", "Detected", 392, 58, 126, 24, COLORS.blue, openDetectedSkillsWindow)
+    settingsWnd.selfBtn = flatButton(p4, "power_ranger_toggle_self", "", 16, 58, 98, 24, COLORS.active, function() toggleSetting("showSelfPanel") end)
+    settingsWnd.selfCdBtn = flatButton(p4, "power_ranger_toggle_self_cd", "", 120, 58, 104, 24, COLORS.active, function() toggleSetting("showSelfCooldowns") end)
+    settingsWnd.selfEquipmentBtn = flatButton(p4, "power_ranger_toggle_self_equipment", "", 230, 58, 110, 24, COLORS.active, function() toggleSetting("showSelfEquipment") end)
+    settingsWnd.probeLogBtn = flatButton(p4, "power_ranger_probe_log", "", 346, 58, 72, 24, COLORS.blue, toggleProbeLogging)
+    flatButton(p4, "power_ranger_detected_open", "Detected", 424, 58, 110, 24, COLORS.blue, openDetectedSkillsWindow)
     label(p4, "power_ranger_cd_glider_title", "Gliders", 16, 90, 64, 14, 11, COLORS.gold, ALIGN.LEFT)
     settingsWnd.cooldownGliderPageLabel = label(p4, "power_ranger_cd_glider_page_label", "", 88, 91, 190, 13, 10, COLORS.muted, ALIGN.LEFT)
     settingsWnd.cooldownGliderPrevBtn = flatButton(p4, "power_ranger_cd_glider_page_prev", "<", 466, 87, 30, 22, COLORS.button, function() shiftCooldownSettingsPage(-1, "glider") end)

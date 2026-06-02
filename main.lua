@@ -5,8 +5,8 @@ local michaelClientLib = require("power_ranger_on/michael_client")
 local power_ranger_on = {
     name = "Power Ranger ON",
     author = "CraySone",
-    desc = "Target class, gearscore, role and buff helper",
-    version = "1.0.5"
+    desc = "Compact PvP overlay for target intel, defenses, gearscore, class, ownership info, and self-cooldown tracking.",
+    version = "1.1.1"
 }
 
 local active = false
