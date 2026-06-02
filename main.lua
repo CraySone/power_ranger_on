@@ -6,7 +6,7 @@ local power_ranger_on = {
     name = "Power Ranger ON",
     author = "CraySone",
     desc = "Compact PvP overlay for target intel, defenses, gearscore, class, ownership info, and self-cooldown tracking.",
-    version = "1.1.1"
+    version = "1.2.1"
 }
 
 local active = false
