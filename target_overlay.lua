@@ -64,8 +64,8 @@ local defaults = {
     testTargetWindow = false,
     importNuziCooldowns = true,
     simpleSpacingVersion = 6,
-    simpleColumnGap = 43,
-    simpleLineGap = 4,
+    simpleColumnGap = 0,
+    simpleLineGap = 0,
     showInfoRange = true,
     showInfoClass = true,
     showInfoGearscore = true,
@@ -511,8 +511,8 @@ local function loadSettings()
     end
     settings.compactModelLeftOffset = math.max(20, math.min(140, tonumber(settings.compactModelLeftOffset) or CONFIG.compactModelLeftOffset))
     settings.overlayShadowSize = nil
-    settings.simpleColumnGap = math.max(0, math.min(73, tonumber(settings.simpleColumnGap) or 43))
-    settings.simpleLineGap = math.max(0, math.min(23, tonumber(settings.simpleLineGap) or 4))
+    settings.simpleColumnGap = math.max(0, math.min(73, tonumber(settings.simpleColumnGap) or 0))
+    settings.simpleLineGap = math.max(0, math.min(23, tonumber(settings.simpleLineGap) or 0))
     if settings.showInfoDefense == false then
         if settings.showInfoPdef == nil then settings.showInfoPdef = false end
         if settings.showInfoMdef == nil then settings.showInfoMdef = false end
@@ -985,10 +985,14 @@ function TargetOverlay.trackedGliderMatches(row, glider)
     if not patterns then return true end
     local name = string.lower(tostring(glider and glider.name or ""))
     if name == "" then return false end
+    local normalizedName = string.gsub(name, "^enhanced%s+", "")
     if type(patterns) ~= "table" then patterns = {patterns} end
     for _, pattern in ipairs(patterns) do
         local wanted = string.lower(tostring(pattern or ""))
-        if wanted ~= "" and name:find(wanted, 1, true) then return true end
+        local normalizedWanted = string.gsub(wanted, "^enhanced%s+", "")
+        if wanted ~= "" and (name:find(wanted, 1, true) or normalizedName:find(normalizedWanted, 1, true)) then
+            return true
+        end
     end
     return false
 end
@@ -1599,8 +1603,8 @@ local function refreshTargetInfoWindow(targetInfo, className, gearscore, pdef, m
     if targetInfoWnd.simpleMeta.style.SetShadow then targetInfoWnd.simpleMeta.style:SetShadow(testLayout and settings.overlayTextShadow ~= false) end
     local headerHeight = math.floor(((compact and 18 or 22) * scale) + 0.5)
     local sideMargin = math.floor(((testLayout and 4 or compact and 6 or 12) * scale) + 0.5)
-    local simpleColumnGap = math.max(0, math.min(73, tonumber(settings.simpleColumnGap) or 43)) - 43
-    local simpleLineGap = math.max(0, math.min(23, tonumber(settings.simpleLineGap) or 4)) - 4
+    local simpleColumnGap = math.max(0, math.min(73, tonumber(settings.simpleColumnGap) or 0)) - 43
+    local simpleLineGap = math.max(0, math.min(23, tonumber(settings.simpleLineGap) or 0)) - 4
     local colGap = math.floor(((testLayout and simpleColumnGap or compact and 6 or 12) * scale) + 0.5)
     local titleMargin = math.floor(((testLayout and 4 or compact and 6 or 8) * scale) + 0.5)
     local outlinePad = testLayout and math.floor((4 * scale) + 0.5) or 0
@@ -3173,10 +3177,10 @@ function refreshSettingsButtons()
         settingsWnd.intelScaleValue:SetText(tostring(settings.targetWindowScaleLevel or 0))
     end
     if settingsWnd.simpleColumnGapValue then
-        settingsWnd.simpleColumnGapValue:SetText(tostring(settings.simpleColumnGap or 43))
+        settingsWnd.simpleColumnGapValue:SetText(tostring(settings.simpleColumnGap or 0))
     end
     if settingsWnd.simpleLineGapValue then
-        settingsWnd.simpleLineGapValue:SetText(tostring(settings.simpleLineGap or 4))
+        settingsWnd.simpleLineGapValue:SetText(tostring(settings.simpleLineGap or 0))
     end
     if settingsWnd.selfScaleValue then
         settingsWnd.selfScaleValue:SetText(tostring(settings.selfScaleLevel or 0))
@@ -3329,11 +3333,11 @@ local function createSettingsWindow()
     label(p2, "power_ranger_simple_spacing_label", "Simple spacing", 16, 64, 92, 14, 10, COLORS.muted, ALIGN.LEFT)
     label(p2, "power_ranger_simple_columns_label", "Columns", 116, 64, 54, 14, 10, COLORS.muted, ALIGN.LEFT)
     flatButton(p2, "power_ranger_simple_columns_down", "-", 174, 60, 24, 20, COLORS.button, function() TargetOverlay.shiftSimpleSpacing("simpleColumnGap", -1, 0, 73) end)
-    settingsWnd.simpleColumnGapValue = label(p2, "power_ranger_simple_columns_value", "43", 202, 63, 24, 14, 10, COLORS.white, ALIGN.CENTER)
+    settingsWnd.simpleColumnGapValue = label(p2, "power_ranger_simple_columns_value", "0", 202, 63, 24, 14, 10, COLORS.white, ALIGN.CENTER)
     flatButton(p2, "power_ranger_simple_columns_up", "+", 230, 60, 24, 20, COLORS.button, function() TargetOverlay.shiftSimpleSpacing("simpleColumnGap", 1, 0, 73) end)
     label(p2, "power_ranger_simple_lines_label", "Lines", 282, 64, 38, 14, 10, COLORS.muted, ALIGN.LEFT)
     flatButton(p2, "power_ranger_simple_lines_down", "-", 324, 60, 24, 20, COLORS.button, function() TargetOverlay.shiftSimpleSpacing("simpleLineGap", -1, 0, 23) end)
-    settingsWnd.simpleLineGapValue = label(p2, "power_ranger_simple_lines_value", "4", 352, 63, 24, 14, 10, COLORS.white, ALIGN.CENTER)
+    settingsWnd.simpleLineGapValue = label(p2, "power_ranger_simple_lines_value", "0", 352, 63, 24, 14, 10, COLORS.white, ALIGN.CENTER)
     flatButton(p2, "power_ranger_simple_lines_up", "+", 380, 60, 24, 20, COLORS.button, function() TargetOverlay.shiftSimpleSpacing("simpleLineGap", 1, 0, 23) end)
     settingsWnd.fieldButtons = {}
     settingsWnd.colorCubes = {}
@@ -3638,7 +3642,7 @@ local function applyModelLayout()
     targetMdefValueLabel:RemoveAllAnchors()
     if settings.compactModelOverlay then
         local leftOffset = -(tonumber(settings.compactModelLeftOffset) or CONFIG.compactModelLeftOffset)
-        local compactIconGap = math.floor((4 * scale) + 0.5)
+        local compactIconGap = math.floor((2 * scale) + 0.5)
         armorBuffIcon:AddAnchor("RIGHT", mainCanvas, "LEFT", leftOffset, 0)
         weaponBuffIcon:AddAnchor("RIGHT", armorBuffIcon, "LEFT", -compactIconGap, 0)
         targetGearscoreLabel:SetHeight(math.floor(((CONFIG.fontSize + 7) * scale) + 0.5))
