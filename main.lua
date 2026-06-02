@@ -6,7 +6,7 @@ local power_ranger_on = {
     name = "Power Ranger ON",
     author = "CraySone",
     desc = "Target class, gearscore, role and buff helper",
-    version = "1.0"
+    version = "1.0.5"
 }
 
 local active = false
