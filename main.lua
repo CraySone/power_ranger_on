@@ -1,5 +1,6 @@
 local api = require("api")
 local TargetOverlay = require("power_ranger_on/target_overlay")
+local HotSwap = require("power_ranger_on/hot_swap")
 local michaelClientLib = require("power_ranger_on/michael_client")
 
 local power_ranger_on = {
@@ -15,12 +16,14 @@ local updateRegistered = false
 local function OnUpdate(dt)
     if not active then return end
     TargetOverlay.update(dt)
+    HotSwap.update(dt)
 end
 
 local function Load()
     if active then return end
     active = true
     TargetOverlay.init()
+    HotSwap.init(api.GetSettings("power_ranger_on"))
     pcall(function()
         michaelClientLib:initializeMichaelClient()
         local configMenu = ADDON:GetContent(UIC.SYSTEM_CONFIG_FRAME)
@@ -39,6 +42,7 @@ end
 local function Unload()
     active = false
     pcall(function() michaelClientLib.OnUnload() end)
+    HotSwap.cleanup()
     TargetOverlay.cleanup()
 end
 

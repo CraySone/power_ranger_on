@@ -183,20 +183,10 @@ Catalog.DEVICES = {
             unit = "self",
             id = 8000211,
             name = "Dash",
-            source = "Mount",
-            cooldown = 30,
+            source = "Rajani",
+            cooldown = 60,
             preferMountIcon = true,
             icon = "Game\\ui\\icon\\icon_skill_wild03.dds"
-        }),
-        ability("rajani_sprint", {
-            unit = "self",
-            id = 8000208,
-            name = "Sprint",
-            source = "Rajani",
-            cooldown = 30,
-            cooldownStartsOnActive = true,
-            fixedCooldown = true,
-            preferMountIcon = true
         })
     }),
     mountDevice("kirin", "Kirin", {

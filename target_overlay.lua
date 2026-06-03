@@ -5,10 +5,19 @@ local OverlayUtils = require("power_ranger_on/overlay_utils")
 local Compat = require("power_ranger_on/compat")
 local NuziCooldownImport = require("power_ranger_on/nuzi_cooldown_import")
 local CooldownRecipes = require("power_ranger_on/cooldown_recipes")
-local CooldownCatalog = require("power_ranger_on/cooldown_catalog")
+local HotSwap = require("power_ranger_on/hot_swap")
 
 local TargetOverlay = {}
-TargetOverlay.cooldawnBuffList = OverlayUtils.safeCall(function() return require("CooldawnBuffTracker/buff_helper") end)
+TargetOverlay.uiHelpers = require("power_ranger_on/ui_helpers")
+TargetOverlay.targetReader = require("power_ranger_on/target_reader")
+TargetOverlay.detectedSkills = require("power_ranger_on/detected_skills")
+TargetOverlay.selfCooldowns = require("power_ranger_on/self_cooldowns")
+TargetOverlay.buffRuntime = require("power_ranger_on/buff_runtime")
+TargetOverlay.equipmentReader = require("power_ranger_on/equipment_reader")
+TargetOverlay.iconWidgets = require("power_ranger_on/icon_widgets")
+TargetOverlay.resourceLookup = require("power_ranger_on/resource_lookup")
+TargetOverlay.windowHelpers = require("power_ranger_on/window_helpers")
+TargetOverlay.optionalBuffHelper = OverlayUtils.safeCall(function() return require("CooldawnBuffTracker/buff_helper") end)
 TargetOverlay.simpleStatsGrid = {
     pdef = 0,
     mdef = 0,
@@ -16,7 +25,8 @@ TargetOverlay.simpleStatsGrid = {
     toughness = 0,
     block = 1,
     parry = 1,
-    evasion = 1
+    evasion = 1,
+    critRate = 1
 }
 TargetOverlay.compactStatsOrder = {
     pdef = 1,
@@ -25,7 +35,8 @@ TargetOverlay.compactStatsOrder = {
     toughness = 4,
     block = 1,
     parry = 2,
-    evasion = 3
+    evasion = 3,
+    critRate = 4
 }
 
 local ADDON_ID = "power_ranger_on"
@@ -57,6 +68,8 @@ local defaults = {
     compactModelOverlay = true,
     nuziUiCompatMode = "auto",
     compactModelLeftOffset = 45,
+    modelRangeOffsetX = 0,
+    modelRangeOffsetY = 0,
     overlayTextShadow = true,
     overlayTextStyle = "shadow",
     uiScaleLevel = 0,
@@ -84,6 +97,7 @@ local defaults = {
     showInfoEvasion = true,
     showInfoToughness = false,
     showInfoResilience = false,
+    showInfoCritRate = false,
     showSelfPanel = true,
     showSelfCooldowns = true,
     showSelfEquipment = true,
@@ -109,7 +123,8 @@ local defaults = {
         parry = {1, 0.92, 0.62, 1},
         evasion = {0.70, 1, 0.70, 1},
         toughness = {1, 0.72, 0.72, 1},
-        resilience = {0.90, 0.72, 1, 1}
+        resilience = {0.90, 0.72, 1, 1},
+        critRate = {1, 0.72, 0.52, 1}
     },
     targetWindowX = 860,
     targetWindowY = 330,
@@ -117,7 +132,7 @@ local defaults = {
     selfY = 470,
     settingsX = 650,
     settingsY = 210,
-    trackedBuffs = CooldownCatalog.BuildTrackedBuffRows(),
+    trackedBuffs = require("power_ranger_on/cooldown_catalog").BuildTrackedBuffRows(),
     trackedSkills = {},
     detectedSkills = {}
 }
@@ -129,6 +144,7 @@ local DEPRECATED_TRACKED_BUFFS = {
     ["self:30779"] = true,
     ["self:30780"] = true,
     ["self:20121"] = true,
+    ["self:8000208"] = true,
     ["self:name:nui's veil:nui's veil"] = true,
     ["self:name:star divine protection:flamefeather"] = true
 }
@@ -197,7 +213,8 @@ local COLOR_CHOICES = {
     {0.62, 0.82, 1, 1},
     {0.38, 0.95, 0.44, 1},
     {1, 0.72, 0.72, 1},
-    {0.90, 0.72, 1, 1}
+    {0.90, 0.72, 1, 1},
+    {0.89, 0, 0.55, 1}
 }
 
 local TARGET_INFO_FIELDS = {
@@ -212,7 +229,8 @@ local TARGET_INFO_FIELDS = {
     { key = "parry", setting = "showInfoParry", label = "Parry" },
     { key = "evasion", setting = "showInfoEvasion", label = "Evasion" },
     { key = "toughness", setting = "showInfoToughness", label = "Tough" },
-    { key = "resilience", setting = "showInfoResilience", label = "Resil" }
+    { key = "resilience", setting = "showInfoResilience", label = "Resil" },
+    { key = "critRate", setting = "showInfoCritRate", label = "Crit" }
 }
 
 local settings = nil
@@ -248,9 +266,6 @@ local compatRefreshElapsed = 1000
 local nuziCooldownRows = NuziCooldownImport.EmptyRows()
 local buffState = {}
 local triggerState = {}
-local buffIconCache = {}
-local buffTooltipCache = {}
-local skillIconCache = {}
 local skillCooldowns = {}
 local playerName = nil
 local skillProbe = { entries = {}, maxEntries = 240 }
@@ -519,6 +534,8 @@ local function loadSettings()
     if settings.overlayTextStyle ~= "outline" then settings.overlayTextStyle = "shadow" end
     settings.overlayTextShadow = settings.overlayTextStyle == "shadow"
     settings.compactModelLeftOffset = math.max(20, math.min(140, tonumber(settings.compactModelLeftOffset) or CONFIG.compactModelLeftOffset))
+    settings.modelRangeOffsetX = math.max(-120, math.min(120, tonumber(settings.modelRangeOffsetX) or 0))
+    settings.modelRangeOffsetY = math.max(-120, math.min(120, tonumber(settings.modelRangeOffsetY) or 0))
     settings.modelRangeScaleLevel = math.max(0, math.min(10, tonumber(settings.modelRangeScaleLevel) or 0))
     settings.overlayShadowSize = nil
     settings.simpleColumnGap = math.max(0, math.min(73, tonumber(settings.simpleColumnGap) or 0))
@@ -588,49 +605,15 @@ local function cycleSettingColor(key)
 end
 
 local function addBg(parent, r, g, b, a)
-    local bg = parent:CreateColorDrawable(r, g, b, a, "background")
-    bg:AddAnchor("TOPLEFT", parent, 0, 0)
-    bg:AddAnchor("BOTTOMRIGHT", parent, 0, 0)
-    bg:Show(true)
-    return bg
+    return TargetOverlay.uiHelpers.AddBg(parent, r, g, b, a)
 end
 
 local function label(parent, id, text, x, y, w, h, size, color, align)
-    local l = api.Interface:CreateWidget("label", id, parent)
-    l:SetExtent(w, h)
-    l:AddAnchor("TOPLEFT", parent, x, y)
-    l.style:SetFontSize(size or 12)
-    l.style:SetAlign(align or ALIGN.LEFT)
-    if l.style.SetShadow then l.style:SetShadow(false) end
-    if l.style.SetOutline then l.style:SetOutline(false) end
-    setTextColor(l, color or COLORS.white)
-    l:SetText(text or "")
-    l:Show(true)
-    return l
+    return TargetOverlay.uiHelpers.Label(parent, id, text, x, y, w, h, size, color or COLORS.white, align)
 end
 
 local function flatButton(parent, id, text, x, y, w, h, tone, onClick)
-    local btn = api.Interface:CreateWidget("button", id, parent)
-    btn:SetExtent(w, h)
-    btn:AddAnchor("TOPLEFT", parent, x, y)
-    btn:SetText("")
-    local border = btn:CreateColorDrawable(0, 0, 0, 0.92, "background")
-    border:AddAnchor("TOPLEFT", btn, 0, 0)
-    border:AddAnchor("BOTTOMRIGHT", btn, 0, 0)
-    border:Show(true)
-    local fill = btn:CreateColorDrawable((tone or COLORS.button)[1], (tone or COLORS.button)[2], (tone or COLORS.button)[3], (tone or COLORS.button)[4], "background")
-    fill:AddAnchor("TOPLEFT", btn, 1, 1)
-    fill:AddAnchor("BOTTOMRIGHT", btn, -1, -1)
-    fill:Show(true)
-    local txt = label(btn, id .. "_txt", text, 1, 2, w - 2, h - 4, 11, COLORS.white, ALIGN.CENTER)
-    txt:Clickable(false)
-    btn._fill = fill
-    btn._text = txt
-    function btn:SetCleanText(value) self._text:SetText(value or "") end
-    function btn:SetTone(color) self._fill:SetColor(color[1], color[2], color[3], color[4]) end
-    if onClick then btn:SetHandler("OnClick", onClick) end
-    btn:Show(true)
-    return btn
+    return TargetOverlay.uiHelpers.FlatButton(parent, id, text, x, y, w, h, tone, onClick, COLORS)
 end
 
 local function cooldownEdit(parent, id, x, y, w, h)
@@ -670,55 +653,22 @@ local function cooldownEdit(parent, id, x, y, w, h)
 end
 
 local function panel(parent, id, x, y, w, h)
-    local p = parent:CreateChildWidget("emptywidget", id, 0, true)
-    p:SetExtent(w, h)
-    p:AddAnchor("TOPLEFT", parent, x, y)
-    addBg(p, COLORS.panel[1], COLORS.panel[2], COLORS.panel[3], COLORS.panel[4])
-    p:Show(true)
-    return p
+    return TargetOverlay.uiHelpers.Panel(parent, id, x, y, w, h, COLORS)
 end
 
 local function sectionPanel(parent, id, x, y, w, h, titleText)
-    local p = panel(parent, id, x, y, w, h)
-    local header = p:CreateColorDrawable(0.09, 0.09, 0.11, 0.95, "background")
-    header:SetExtent(w, 24)
-    header:AddAnchor("TOPLEFT", p, 0, 0)
-    header:Show(true)
-    local accent = p:CreateColorDrawable(1, 0.84, 0, 0.85, "background")
-    accent:SetExtent(4, 24)
-    accent:AddAnchor("TOPLEFT", p, 0, 0)
-    accent:Show(true)
-    label(p, id .. "_title", titleText or "", 14, 4, w - 28, 16, 12, COLORS.gold, ALIGN.LEFT)
-    return p
+    return TargetOverlay.uiHelpers.SectionPanel(parent, id, x, y, w, h, titleText, COLORS)
 end
 
 local function colorCube(parent, id, x, y, key)
-    local btn = api.Interface:CreateWidget("button", id, parent)
-    btn:SetExtent(20, 20)
-    btn:AddAnchor("TOPLEFT", parent, x, y)
-    btn:SetText("")
-    local border = btn:CreateColorDrawable(0, 0, 0, 0.96, "background")
-    border:AddAnchor("TOPLEFT", btn, 0, 0)
-    border:AddAnchor("BOTTOMRIGHT", btn, 0, 0)
-    border:Show(true)
-    local fill = btn:CreateColorDrawable(1, 1, 1, 1, "background")
-    fill:AddAnchor("TOPLEFT", btn, 3, 3)
-    fill:AddAnchor("BOTTOMRIGHT", btn, -3, -3)
-    fill:Show(true)
-    btn._fill = fill
-    btn._colorKey = key
-    btn:SetHandler("OnClick", function()
+    return TargetOverlay.uiHelpers.ColorCube(parent, id, x, y, key, function()
         cycleSettingColor(key)
         refreshSettingsButtons()
     end)
-    btn:Show(true)
-    return btn
 end
 
 local function setToggleButton(btn, enabled, text)
-    if not btn then return end
-    btn:SetCleanText(text .. (enabled and " ON" or " OFF"))
-    btn:SetTone(enabled and COLORS.active or COLORS.button)
+    TargetOverlay.uiHelpers.SetToggleButton(btn, enabled, text, COLORS)
 end
 
 local function uiScaleFactor(key)
@@ -745,101 +695,31 @@ local function trackedBuffTriggerKey(row)
 end
 
 function TargetOverlay.clamp(value, minValue, maxValue)
-    value = tonumber(value) or minValue
-    if maxValue < minValue then return minValue end
-    if value < minValue then return minValue end
-    if value > maxValue then return maxValue end
-    return value
+    return TargetOverlay.windowHelpers.Clamp(value, minValue, maxValue)
 end
 
 function TargetOverlay.safeWindowPosition(x, y, width, height)
-    local screenWidth = tonumber(api.Interface:GetScreenWidth()) or 1920
-    local screenHeight = tonumber(api.Interface:GetScreenHeight()) or 1080
-    if screenWidth <= 0 then screenWidth = 1920 end
-    if screenHeight <= 0 then screenHeight = 1080 end
-    local pad = 12
-    local maxX = screenWidth - (tonumber(width) or 1) - pad
-    local maxY = screenHeight - (tonumber(height) or 1) - pad
-    return TargetOverlay.clamp(x, pad, maxX), TargetOverlay.clamp(y, pad, maxY)
+    return TargetOverlay.windowHelpers.SafePosition(x, y, width, height)
 end
 
 function TargetOverlay.windowPosition(window)
-    if not window then return nil, nil end
-    if window.GetEffectiveOffset then
-        local x, y = window:GetEffectiveOffset()
-        if tonumber(x) and tonumber(y) then return x, y end
-    end
-    if window.GetOffset then
-        local x, y = window:GetOffset()
-        if tonumber(x) and tonumber(y) then return x, y end
-    end
-    return nil, nil
+    return TargetOverlay.windowHelpers.Position(window)
 end
 
 function TargetOverlay.saveWindowPosition(window, keyX, keyY)
-    local x, y = TargetOverlay.windowPosition(window)
-    if not tonumber(x) or not tonumber(y) then return end
-    settings[keyX] = math.floor(tonumber(x) + 0.5)
-    settings[keyY] = math.floor(tonumber(y) + 0.5)
-    saveSettings()
+    TargetOverlay.windowHelpers.SavePosition(window, settings, keyX, keyY, saveSettings)
 end
 
 local function applyDrag(window, handle, keyX, keyY, allowPlainDrag)
-    local function startDrag()
-        if not allowPlainDrag and not (api.Input and api.Input:IsShiftKeyDown()) then return end
-        if window.StartMoving then window:StartMoving() end
-        if api.Cursor and api.Cursor.ClearCursor then api.Cursor:ClearCursor() end
-    end
-    local function stopDrag()
-        if window.StopMovingOrSizing then window:StopMovingOrSizing() end
-        if api.Cursor and api.Cursor.ClearCursor then api.Cursor:ClearCursor() end
-        TargetOverlay.saveWindowPosition(window, keyX, keyY)
-    end
-    if window.EnableDrag then window:EnableDrag(true) end
-    if window.RegisterForDrag then window:RegisterForDrag("LeftButton") end
-    if window.SetHandler then
-        window:SetHandler("OnDragStart", startDrag)
-        window:SetHandler("OnDragStop", stopDrag)
-        window:SetHandler("OnDragEnd", stopDrag)
-    end
-    if handle then
-        if handle.EnableDrag then handle:EnableDrag(true) end
-        if handle.RegisterForDrag then handle:RegisterForDrag("LeftButton") end
-        if handle.SetHandler then
-            handle:SetHandler("OnDragStart", startDrag)
-            handle:SetHandler("OnDragStop", stopDrag)
-            handle:SetHandler("OnDragEnd", stopDrag)
-        end
-    end
+    TargetOverlay.windowHelpers.ApplyDrag(window, handle, settings, keyX, keyY, saveSettings, allowPlainDrag)
 end
 
 local function applyHandleDrag(window, handle, keyX, keyY)
-    local function startDrag()
-        if not (api.Input and api.Input:IsShiftKeyDown()) then return end
-        if window.StartMoving then window:StartMoving() end
-        if api.Cursor and api.Cursor.ClearCursor then api.Cursor:ClearCursor() end
-    end
-    local function stopDrag()
-        if window.StopMovingOrSizing then window:StopMovingOrSizing() end
-        if api.Cursor and api.Cursor.ClearCursor then api.Cursor:ClearCursor() end
-        TargetOverlay.saveWindowPosition(window, keyX, keyY)
-    end
-    if handle then
-        if handle.Clickable then handle:Clickable(true) end
-        if handle.EnableDrag then handle:EnableDrag(true) end
-        if handle.RegisterForDrag then handle:RegisterForDrag("LeftButton") end
-        if handle.SetHandler then
-            handle:SetHandler("OnDragStart", startDrag)
-            handle:SetHandler("OnDragStop", stopDrag)
-            handle:SetHandler("OnDragEnd", stopDrag)
-        end
-    end
+    TargetOverlay.windowHelpers.ApplyHandleDrag(window, handle, settings, keyX, keyY, saveSettings)
 end
 
 function TargetOverlay.getDistance(token)
-    local d = tonumber(OverlayUtils.safeCall(function() return api.Unit:UnitDistance(token) end))
-    if not d then return nil end
-    return math.floor(d + 0.5)
+    return TargetOverlay.targetReader.GetDistance(OverlayUtils.safeCall, token)
 end
 
 function TargetOverlay.getGearscoreColor(gearscore)
@@ -865,147 +745,63 @@ function TargetOverlay.findBuffByCategory(trackedBuffs, category)
 end
 
 function TargetOverlay.getTargetInfoById(targetId)
-    if not targetId then return nil end
-    local info = OverlayUtils.safeCall(function() return api.Unit:GetUnitInfoById(targetId) end)
-    if info then return info end
-    local textId = tostring(targetId)
-    if string.find(textId, "^0x") then
-        info = OverlayUtils.safeCall(function() return api.Unit:GetUnitInfoById(string.sub(textId, 3)) end)
-        if info then return info end
-    end
-    if type(targetId) == "number" then
-        info = OverlayUtils.safeCall(function() return api.Unit:GetUnitInfoById(string.format("%x", targetId)) end)
-        if info then return info end
-    end
-    local numericId = tonumber(targetId)
-    if numericId and numericId ~= targetId then
-        return OverlayUtils.safeCall(function() return api.Unit:GetUnitInfoById(numericId) end)
-    end
-    return nil
+    return TargetOverlay.targetReader.GetInfoById(OverlayUtils.safeCall, targetId)
 end
 
 function TargetOverlay.isCharacterTarget(info, gearscore)
-    if not info then return false end
-    if info.type == "character" or info.type == "player" then return true end
-    if info.type ~= nil and info.type ~= "" then return false end
-    return tonumber(gearscore) ~= nil
+    return TargetOverlay.targetReader.IsCharacter(info, gearscore)
 end
 
 function TargetOverlay.isPlayerTarget(info)
-    return info and (info.type == "character" or info.type == "player") or false
+    return TargetOverlay.targetReader.IsPlayer(info)
 end
 
 function TargetOverlay.ownershipField(info, keys)
-    local value = OverlayUtils.textField(info, keys)
-    if not value then return nil end
-    local upper = string.upper(tostring(value))
-    if upper == "NO FAMILY" or upper == "UNKNOWN" or upper == "NONE" or upper == "NIL" then return nil end
-    return value
+    return TargetOverlay.targetReader.OwnershipField(OverlayUtils.textField, info, keys)
 end
 
 function TargetOverlay.hasOwnershipFields(info)
-    return TargetOverlay.ownershipField(info, {"expeditionName", "expedition", "guildName", "guild"})
-        or TargetOverlay.ownershipField(info, {"family_name", "familyName", "family"})
-        or TargetOverlay.ownershipField(info, {"owner_name", "ownerName", "owner", "portal_owner", "portalOwner"})
+    return TargetOverlay.targetReader.HasOwnershipFields(OverlayUtils.textField, info)
 end
 
 function TargetOverlay.isOwnershipTarget(info)
-    if not info or TargetOverlay.isPlayerTarget(info) then return false end
-    local typeText = string.lower(tostring(info.type or info.unitType or info.unit_type or info.category or info.kind or info.objectType or info.object_type or ""))
-    local nameText = string.lower(tostring(info.name or info.unitName or info.unit_name or info.landType or info.house_category or ""))
-    local hasInfo = TargetOverlay.hasOwnershipFields(info)
-    if hasInfo and (info.is_portal or info.isPortal) then return true end
-    if hasInfo and typeText ~= "npc" and typeText ~= "monster" then return true end
-    if typeText:find("monster", 1, true) or typeText:find("npc", 1, true) or typeText:find("character", 1, true) then
-        return false
-    end
-    if typeText == "" then return hasInfo ~= nil end
-    if typeText:find("house", 1, true) or typeText:find("housing", 1, true) or typeText:find("building", 1, true)
-        or typeText:find("land", 1, true) or typeText:find("property", 1, true)
-        or typeText:find("vehicle", 1, true) or typeText:find("ship", 1, true) or typeText:find("boat", 1, true)
-        or typeText:find("mount", 1, true) or typeText:find("slave", 1, true) or typeText:find("doodad", 1, true)
-        or typeText:find("farm", 1, true) or typeText:find("plant", 1, true) or typeText:find("tree", 1, true)
-        or nameText:find("farmhouse", 1, true) or nameText:find("scarecrow", 1, true) or nameText:find("tree", 1, true)
-        or nameText:find("farm", 1, true) or nameText:find("land", 1, true) or nameText:find("property", 1, true) then
-        return hasInfo ~= nil
-    end
-    return hasInfo ~= nil
+    return TargetOverlay.targetReader.IsOwnership(OverlayUtils.textField, info)
 end
 
 function TargetOverlay.getClassName(targetInfo)
-    local className = RoleHelper.getClassName(targetInfo and targetInfo.class)
-    if className then return className end
-    local apiName = OverlayUtils.safeCall(function() return api.Ability:GetUnitClassName("target") end)
-    if type(apiName) == "string" and apiName ~= "" and apiName ~= "0" then return apiName end
-    return nil
+    return TargetOverlay.targetReader.GetClassName(OverlayUtils.safeCall, targetInfo)
 end
 
 function TargetOverlay.getDefense(info)
-    local pdef = OverlayUtils.numField(info, {"armor", "physical_defense", "physicalDefense", "pdef"})
-    local mdef = OverlayUtils.numField(info, {"magic_resist", "magicResist", "magic_defense", "magicDefense", "mdef"})
-    local pdefPct = OverlayUtils.numField(info, {"armor_percentage", "armorPercent", "physical_defense_percentage", "physicalDefensePercent", "pdefPercent"})
-    local mdefPct = OverlayUtils.numField(info, {"magic_resist_percentage", "magicResistPercent", "magic_defense_percentage", "magicDefensePercent", "mdefPercent"})
-    return pdef, mdef, pdefPct, mdefPct
+    return TargetOverlay.targetReader.GetDefense(OverlayUtils.numField, info)
 end
 
 function TargetOverlay.fillDefense(basePdef, baseMdef, basePdefPct, baseMdefPct, info)
-    local pdef, mdef, pdefPct, mdefPct = TargetOverlay.getDefense(info)
-    return basePdef or pdef, baseMdef or mdef, basePdefPct or pdefPct, baseMdefPct or mdefPct
+    return TargetOverlay.targetReader.FillDefense(OverlayUtils.numField, basePdef, baseMdef, basePdefPct, baseMdefPct, info)
 end
 
 function TargetOverlay.targetExtraStats(tokenInfo, targetInfo, modifierInfo)
-    local infos = {tokenInfo or {}, targetInfo or {}, modifierInfo or {}}
-    return {
-        block = OverlayUtils.chanceText(OverlayUtils.firstNumAllowZero(infos, {"block_rate", "blockRate", "block_chance", "blockChance", "shield_block_rate", "shieldBlockRate", "shield_defense_rate", "shieldDefenseRate", "shield_defense", "shieldDefense", "block"}) or OverlayUtils.firstPatternNum(infos, {"block", "shield_defense", "shielddefense"})),
-        parry = OverlayUtils.chanceText(OverlayUtils.firstNumAllowZero(infos, {"parry_rate", "parryRate", "parry_chance", "parryChance", "weapon_parry", "weaponParry", "parry", "melee_parry_rate", "meleeParryRate"}) or OverlayUtils.firstPatternNum(infos, {"parry"})),
-        evasion = OverlayUtils.chanceText(OverlayUtils.firstNumAllowZero(infos, {"evasion", "evasion_rate", "evasionRate", "evade_rate", "evadeRate", "dodge", "dodge_rate", "dodgeRate"}) or OverlayUtils.firstPatternNum(infos, {"evasion", "evade", "dodge"})),
-        toughness = OverlayUtils.valueText(OverlayUtils.firstNumAllowZero(infos, {"toughness", "toughness_value", "toughnessValue", "battle_resist", "battleResist", "critical_resistance", "criticalResistance", "critical_resilience", "criticalResilience", "received_critical_damage_reduce", "receivedCriticalDamageReduce", "critical_damage_resistance", "criticalDamageResistance"}) or OverlayUtils.firstPatternNum(infos, {"tough", "battle_resist", "battleresist", "critical_resist", "criticalresist", "critical_resilience", "criticalresilience"})),
-        resilience = OverlayUtils.valueText(OverlayUtils.firstNumAllowZero(infos, {"resilience", "resilience_value", "resilienceValue", "flexibility", "pvp_resilience", "pvpResilience", "battle_resilience", "battleResilience", "pvp_damage_resistance", "pvpDamageResistance", "pvp_damage_reduce", "pvpDamageReduce"}) or OverlayUtils.firstPatternNum(infos, {"resil", "flexibility", "pvp"}))
-    }
+    return TargetOverlay.targetReader.ExtraStats(OverlayUtils, tokenInfo, targetInfo, modifierInfo)
 end
 
 function TargetOverlay.equippedSnapshot(slot)
-    if not slot then return nil end
-    local info = OverlayUtils.safeCall(function() return api.Equipment:GetEquippedItemTooltipInfo(slot) end)
-    local textInfo = OverlayUtils.safeCall(function() return api.Equipment:GetEquippedItemTooltipText("player", slot) end)
-    return {
-        name = OverlayUtils.itemName(info) or OverlayUtils.itemName(textInfo),
-        icon = OverlayUtils.iconPath(info) or OverlayUtils.iconPath(textInfo),
-        itemType = CooldownRecipes.ExtractItemType(info, textInfo)
-    }
+    return TargetOverlay.equipmentReader.Snapshot(slot)
 end
 
 function TargetOverlay.gliderEquipSlot()
-    if not EQUIP_SLOT then return nil end
-    if EQUIP_SLOT.GLIDER then return EQUIP_SLOT.GLIDER end
-    if EQUIP_SLOT.BACKPACK then return EQUIP_SLOT.BACKPACK end
-    if EQUIP_SLOT.MUSICAL then return tonumber(EQUIP_SLOT.MUSICAL) and (EQUIP_SLOT.MUSICAL + 1) or nil end
-    return nil
+    return TargetOverlay.equipmentReader.GliderSlot()
 end
 
 function TargetOverlay.equippedGliderSnapshot()
-    return TargetOverlay.equippedSnapshot(TargetOverlay.gliderEquipSlot()) or {}
+    return TargetOverlay.equipmentReader.GliderSnapshot()
 end
 
-local MOUNT_SYMBOLS = {
-    ["abysswraith kirin"] = "Game\\ui\\icon\\icon_skill_karon01.dds",
-    ["stormwraith kirin"] = "Game\\ui\\icon\\icon_skill_karon01.dds"
-}
-
 function TargetOverlay.mountedPetSnapshot()
-    local info = OverlayUtils.safeCall(function() return api.Unit:UnitInfo("playerpet") end) or {}
-    local name = OverlayUtils.textField(info, {"mate_npc_name", "mateNpcName", "name", "unitName", "unit_name"})
-    local key = string.lower(tostring(name or ""))
-    return {
-        name = name,
-        icon = OverlayUtils.iconPath(info) or MOUNT_SYMBOLS[key]
-    }
+    return TargetOverlay.equipmentReader.MountedPetSnapshot()
 end
 
 function TargetOverlay.trackedGliderMatches(row, glider)
-    local matched = CooldownRecipes.DeviceMatches(row, glider)
-    if matched ~= nil then return matched end
-    return true
+    return TargetOverlay.equipmentReader.DeviceMatches(row, glider)
 end
 
 function TargetOverlay.buffId(buff)
@@ -1030,96 +826,35 @@ function TargetOverlay.isStarTriggerCooldown(row)
 end
 
 function TargetOverlay.buffTooltipById(id)
-    if id == nil then return nil end
-    local key = tostring(id or "")
-    if buffTooltipCache[key] ~= nil then return buffTooltipCache[key] or nil end
-    local tooltip = OverlayUtils.safeCall(function() return api.Ability:GetBuffTooltip(tonumber(id), 1) end)
-    if not tooltip then
-        tooltip = OverlayUtils.safeCall(function() return api.Ability.GetBuffTooltip(tonumber(id)) end)
-    end
-    if not tooltip and TargetOverlay.cooldawnBuffList and TargetOverlay.cooldawnBuffList.GetBuffName then
-        local name = OverlayUtils.safeCall(function() return TargetOverlay.cooldawnBuffList.GetBuffName(tostring(id)) end)
-        if name then tooltip = { name = name } end
-    end
-    OverlayUtils.cachePut(buffTooltipCache, key, tooltip or false)
-    return tooltip
+    return TargetOverlay.resourceLookup.BuffTooltipById(id, TargetOverlay.optionalBuffHelper)
 end
 
 function TargetOverlay.buffIconById(id)
-    local key = tostring(id or "")
-    if buffIconCache[key] ~= nil then return buffIconCache[key] end
-    local tooltip = TargetOverlay.buffTooltipById(id)
-    local path = OverlayUtils.iconPath(tooltip)
-    if not path and TargetOverlay.cooldawnBuffList and TargetOverlay.cooldawnBuffList.GetBuffIcon then
-        path = OverlayUtils.safeCall(function() return TargetOverlay.cooldawnBuffList.GetBuffIcon(tostring(id)) end)
-    end
-    OverlayUtils.cachePut(buffIconCache, key, path or false)
-    return path
+    return TargetOverlay.resourceLookup.BuffIconById(id, TargetOverlay.optionalBuffHelper)
 end
 
 function TargetOverlay.itemIconByType(itemType)
-    local key = "item:" .. tostring(itemType or "")
-    if buffIconCache[key] ~= nil then return buffIconCache[key] or nil end
-    local info = OverlayUtils.safeCall(function() return api.Item:GetItemInfoByType(tonumber(itemType)) end)
-    local path = OverlayUtils.iconPath(info)
-    OverlayUtils.cachePut(buffIconCache, key, path or false)
-    return path
+    return TargetOverlay.resourceLookup.ItemIconByType(itemType)
 end
 
 function TargetOverlay.cooldownRowIcon(row)
-    if not row then return nil end
-    local itemType = CooldownRecipes.FirstItemType(row)
-    if itemType then
-        local icon = TargetOverlay.itemIconByType(itemType)
-        if icon then return icon end
-    end
-    return row.icon
+    return TargetOverlay.resourceLookup.CooldownRowIcon(row)
 end
 
 function TargetOverlay.buffCooldownById(id)
-    if not id then return 30 end
-    if TargetOverlay.cooldawnBuffList and TargetOverlay.cooldawnBuffList.GetBuffCooldown then
-        local cooldown = OverlayUtils.safeCall(function() return TargetOverlay.cooldawnBuffList.GetBuffCooldown(tostring(id)) end)
-        cooldown = tonumber(cooldown)
-        if cooldown and cooldown > 0 then return cooldown end
-    end
-    return 30
+    return TargetOverlay.resourceLookup.BuffCooldownById(id, TargetOverlay.optionalBuffHelper)
 end
 
 function TargetOverlay.buffNameById(id)
-    local tooltip = TargetOverlay.buffTooltipById(id)
-    local name = OverlayUtils.textField(tooltip, {"name", "title", "buff_name"})
-    if name then return name end
-    if TargetOverlay.cooldawnBuffList and TargetOverlay.cooldawnBuffList.GetBuffName then
-        return OverlayUtils.safeCall(function() return TargetOverlay.cooldawnBuffList.GetBuffName(tostring(id)) end)
-    end
-    return nil
+    return TargetOverlay.resourceLookup.BuffNameById(id, TargetOverlay.optionalBuffHelper)
 end
 
 function TargetOverlay.detectedCooldown(name, id, fallback)
-    local lowerName = string.lower(tostring(name or ""))
-    if lowerName:find("invisible predator", 1, true)
-        or lowerName:find("insibile predator", 1, true)
-        or (lowerName:find("predator", 1, true) and lowerName:find("invis", 1, true)) then
-        return 60
-    end
-    local cooldown = tonumber(fallback)
-    if cooldown and cooldown > 0 then return cooldown end
-    return TargetOverlay.buffCooldownById(id) or 30
+    return TargetOverlay.resourceLookup.DetectedCooldown(name, id, fallback, TargetOverlay.optionalBuffHelper)
 end
 
 function TargetOverlay.skillIconById(id)
-    if id == nil then return nil end
-    local key = tostring(id or "")
-    if skillIconCache[key] ~= nil then return skillIconCache[key] end
-    local tooltip = OverlayUtils.safeCall(function() return api.Skill:GetSkillTooltip(tonumber(id)) end)
-    local path = OverlayUtils.iconPath(tooltip)
-    if not path then
-        tooltip = OverlayUtils.safeCall(function() return api.Ability:GetBuffTooltip(tonumber(id), 1) end)
-        path = OverlayUtils.iconPath(tooltip)
-    end
-    OverlayUtils.cachePut(skillIconCache, key, path or false)
-    return path
+    return TargetOverlay.resourceLookup.SkillIconById(id)
 end
 
 function TargetOverlay.getPlayerName()
@@ -1133,147 +868,28 @@ function TargetOverlay.getPlayerName()
     return name and tostring(name) or nil
 end
 
-local function decorateCooldownIcon(icon, parent, id, size)
-    if not icon then return end
-    local overlay = icon:CreateColorDrawable(0, 0, 0, 0.62, "overlay")
-    overlay:AddAnchor("TOPLEFT", icon, 0, 0)
-    overlay:AddAnchor("BOTTOMRIGHT", icon, 0, 0)
-    overlay:Show(false)
-    icon.cooldownOverlay = overlay
-
-    local timer = parent:CreateChildWidget("label", id .. "_timer", 0, true)
-    timer:SetExtent(size, size)
-    timer:AddAnchor("CENTER", icon, 0, 0)
-    timer.style:SetFontSize(10)
-    timer.style:SetAlign(ALIGN.CENTER)
-    if timer.style.SetShadow then timer.style:SetShadow(false) end
-    if timer.style.SetOutline then timer.style:SetOutline(false) end
-    timer.style:SetColor(1, 1, 1, 1)
-    timer:SetText("")
-    timer:Show(false)
-    timer:Clickable(false)
-    icon.timerLabel = timer
-end
-
 local function createIcon(parent, id, x, y, size)
-    local icon = nil
-    if CreateItemIconButton then
-        local ok, created = pcall(function() return CreateItemIconButton(id, parent) end)
-        if ok then icon = created end
-    end
-    if icon then
-        icon:SetExtent(size, size)
-        icon:AddAnchor("TOPLEFT", parent, x, y)
-        if icon.Clickable then icon:Clickable(false) end
-        if F_SLOT and F_SLOT.ApplySlotSkin and SLOT_STYLE then
-            pcall(function() F_SLOT.ApplySlotSkin(icon, icon.back, SLOT_STYLE.DEFAULT) end)
-        end
-        icon:Show(false)
-        decorateCooldownIcon(icon, parent, id, size)
-        return icon
-    end
-
-    local holder = parent:CreateChildWidget("emptywidget", id, 0, true)
-    holder:SetExtent(size, size)
-    holder:AddAnchor("TOPLEFT", parent, x, y)
-    addBg(holder, 0, 0, 0, 0.48)
-    holder:Show(false)
-    decorateCooldownIcon(holder, parent, id, size)
-    return holder
+    return TargetOverlay.iconWidgets.Create(parent, id, x, y, size, addBg)
 end
 
 local function setIcon(icon, path)
-    if not icon then return end
-    if not path or tostring(path) == "" then
-        icon:Show(false)
-        return
-    end
-    local ok = false
-    if F_SLOT and F_SLOT.SetIconBackGround then
-        ok = pcall(function() F_SLOT.SetIconBackGround(icon, tostring(path)) end)
-    end
-    if not ok and icon.SetTgaTexture then
-        ok = pcall(function() icon:SetTgaTexture(tostring(path)) end)
-    end
-    icon:Show(ok == true)
+    TargetOverlay.iconWidgets.Set(icon, path)
 end
 
 local function setCachedIcon(icon, path)
-    if not icon then return end
-    path = path and tostring(path) or nil
-    if icon._lastPath == path and icon._lastVisible ~= nil then
-        icon:Show(icon._lastVisible)
-        return
-    end
-    icon._lastPath = path
-    if path and path ~= "" then
-        setIcon(icon, path)
-        icon._lastVisible = true
-    else
-        icon:Show(false)
-        icon._lastVisible = false
-    end
+    TargetOverlay.iconWidgets.SetCached(icon, path)
 end
 
 local function setEquipIcon(icon, path)
-    if not icon then return end
-    path = path and tostring(path) or nil
-    if path and path ~= "" then
-        setCachedIcon(icon, path)
-        return
-    end
-    if icon._lastPath ~= "__empty" then
-        if F_SLOT and F_SLOT.SetIconBackGround then
-            pcall(function() F_SLOT.SetIconBackGround(icon, nil) end)
-        end
-        if F_SLOT and F_SLOT.ApplySlotSkin and SLOT_STYLE and icon.back then
-            pcall(function() F_SLOT.ApplySlotSkin(icon, icon.back, SLOT_STYLE.DEFAULT) end)
-        end
-        icon._lastPath = "__empty"
-    end
-    icon._lastVisible = true
-    icon:Show(true)
+    TargetOverlay.iconWidgets.SetEquip(icon, path)
 end
 
 local function setCooldownIcon(icon, path, state, seconds)
-    setCachedIcon(icon, path)
-    if not icon then return end
-    local active = state == "active" or state == "cooldown"
-    if icon.cooldownOverlay then icon.cooldownOverlay:Show(active) end
-    if icon.timerLabel then
-        if state == "active" then
-            icon.timerLabel:SetText(OverlayUtils.cooldownTimerText(seconds) or "ON")
-            icon.timerLabel:Show(true)
-        elseif state == "cooldown" and seconds then
-            icon.timerLabel:SetText(OverlayUtils.cooldownTimerText(seconds) or "")
-            icon.timerLabel:Show(true)
-        else
-            icon.timerLabel:SetText("")
-            icon.timerLabel:Show(false)
-        end
-    end
+    TargetOverlay.iconWidgets.SetCooldown(icon, path, state, seconds)
 end
 
 local function setCooldownSkillIcon(icon, path, state, seconds)
-    if path then
-        setCooldownIcon(icon, path, state, seconds)
-        return
-    end
-    setEquipIcon(icon, nil)
-    local active = state == "active" or state == "cooldown"
-    if icon.cooldownOverlay then icon.cooldownOverlay:Show(active) end
-    if icon.timerLabel then
-        if state == "cooldown" and seconds then
-            icon.timerLabel:SetText(OverlayUtils.cooldownTimerText(seconds) or "")
-            icon.timerLabel:Show(true)
-        elseif state == "active" then
-            icon.timerLabel:SetText(OverlayUtils.cooldownTimerText(seconds) or "ON")
-            icon.timerLabel:Show(true)
-        else
-            icon.timerLabel:SetText("")
-            icon.timerLabel:Show(false)
-        end
-    end
+    TargetOverlay.iconWidgets.SetCooldownSkill(icon, path, state, seconds)
 end
 
 local function setInfoCell(row, value, color)
@@ -1459,6 +1075,7 @@ local function buildInfoRows(targetInfo, className, gearscore, pdef, mdef, pdefP
     if settings.showInfoResilience then
         addRow(defense, "resilience", extraStats.resilience and ("Resil: " .. extraStats.resilience) or nil)
     end
+    if settings.showInfoCritRate then addRow(defense, "critRate", extraStats.critRate and ("Crit: " .. extraStats.critRate) or nil) end
 
     local rows = {}
     if not compact and (#identity > 0 or rangeHeader ~= "") then
@@ -1472,6 +1089,11 @@ local function buildInfoRows(targetInfo, className, gearscore, pdef, mdef, pdefP
             for _, row in ipairs(defense) do
                 local gridRow = TargetOverlay.simpleStatsGrid[row.key]
                 if gridRow ~= nil then
+                    if row.key == "critRate" then
+                        local topCount = #(simpleRows[0] or {})
+                        local bottomCount = #(simpleRows[1] or {})
+                        gridRow = topCount <= bottomCount and 0 or 1
+                    end
                     local order = TargetOverlay.compactStatsOrder[row.key] or 99
                     if not simpleRows[gridRow] then simpleRows[gridRow] = {} end
                     table.insert(simpleRows[gridRow], { order = order, row = row })
@@ -1490,6 +1112,11 @@ local function buildInfoRows(targetInfo, className, gearscore, pdef, mdef, pdefP
             for _, row in ipairs(defense) do
                 local gridRow = TargetOverlay.simpleStatsGrid[row.key]
                 if gridRow ~= nil then
+                    if row.key == "critRate" then
+                        local topCount = #(compactRows[0] or {})
+                        local bottomCount = #(compactRows[1] or {})
+                        gridRow = topCount <= bottomCount and 0 or 1
+                    end
                     local order = TargetOverlay.compactStatsOrder[row.key] or 99
                     if not compactRows[gridRow] then compactRows[gridRow] = {} end
                     table.insert(compactRows[gridRow], { order = order, row = row })
@@ -1511,60 +1138,25 @@ local function buildInfoRows(targetInfo, className, gearscore, pdef, mdef, pdefP
 end
 
 local function createTargetInfoWindow()
-    targetInfoWnd = api.Interface:CreateEmptyWindow("PowerRangerTargetInfo", "UIParent")
-    targetInfoWnd:SetExtent(430, 150)
-    local x, y = TargetOverlay.safeWindowPosition(settings.targetWindowX, settings.targetWindowY, 430, 150)
-    targetInfoWnd:AddAnchor("TOPLEFT", "UIParent", x, y)
-    if targetInfoWnd.Clickable then targetInfoWnd:Clickable(false) end
-    targetInfoWnd.bg = addBg(targetInfoWnd, 0, 0, 0, 0.62)
-    local header = targetInfoWnd:CreateColorDrawable(0.06, 0.075, 0.095, 0.76, "background")
-    header:SetExtent(430, 22)
-    header:AddAnchor("TOPLEFT", targetInfoWnd, 0, 0)
-    header:Show(true)
-    targetInfoWnd.header = header
-    local title = label(targetInfoWnd, "power_ranger_target_info_title", "Power Ranger ON", 8, 3, 414, 16, 14, COLORS.gold, ALIGN.LEFT)
-    title:Clickable(false)
-    targetInfoWnd.title = title
-    targetInfoWnd.simpleMeta = label(targetInfoWnd, "power_ranger_target_info_simple_meta", "", 8, 18, 414, 14, 11, COLORS.white, ALIGN.LEFT)
-    targetInfoWnd.simpleMeta:Clickable(false)
-    targetInfoWnd.simpleMeta:Show(false)
-    local dragHandle = targetInfoWnd:CreateChildWidget("emptywidget", "power_ranger_target_info_drag", 0, true)
-    dragHandle:SetExtent(430, 22)
-    dragHandle:AddAnchor("TOPLEFT", targetInfoWnd, 0, 0)
-    dragHandle:Show(true)
-    targetInfoWnd.dragHandle = dragHandle
-    applyHandleDrag(targetInfoWnd, dragHandle, "targetWindowX", "targetWindowY")
-    targetInfoWnd.rows = {}
-    targetInfoWnd.simpleValues = {}
-    for i = 1, 16 do
-        targetInfoWnd.rows[i] = label(targetInfoWnd, "power_ranger_info_row_" .. i, "", 12, 30, 198, 16, 12, COLORS.white, ALIGN.LEFT)
-        targetInfoWnd.rows[i]:Clickable(false)
-        targetInfoWnd.simpleValues[i] = label(targetInfoWnd, "power_ranger_info_simple_value_" .. i, "", 12, 30, 96, 16, 12, COLORS.white, ALIGN.LEFT)
-        targetInfoWnd.simpleValues[i]:Clickable(false)
-        targetInfoWnd.simpleValues[i]:Show(false)
-    end
-    targetInfoWnd:Show(false)
+    targetInfoWnd = require("power_ranger_on/target_windows").CreateTargetInfo({
+        colors = COLORS,
+        settings = settings,
+        addBg = addBg,
+        label = label,
+        safePosition = TargetOverlay.safeWindowPosition,
+        applyHandleDrag = applyHandleDrag
+    })
 end
 
 local function createOwnershipWindow()
-    ownershipWnd = api.Interface:CreateEmptyWindow("PowerRangerOwnershipInfo", "UIParent")
-    ownershipWnd:SetExtent(360, 42)
-    local x, y = TargetOverlay.safeWindowPosition(settings.ownershipWindowX, settings.ownershipWindowY, 360, 42)
-    ownershipWnd:AddAnchor("TOPLEFT", "UIParent", x, y)
-    if ownershipWnd.Clickable then ownershipWnd:Clickable(false) end
-    ownershipWnd.title = label(ownershipWnd, "power_ranger_ownership_title", "", 4, 0, 352, 20, 15, COLORS.white, ALIGN.LEFT)
-    ownershipWnd.title:Clickable(false)
-    ownershipWnd.meta = label(ownershipWnd, "power_ranger_ownership_meta", "", 4, 20, 352, 16, 11, COLORS.white, ALIGN.LEFT)
-    ownershipWnd.meta:Clickable(false)
-    TargetOverlay.applyReadableTextStyle(ownershipWnd.title, true)
-    TargetOverlay.applyReadableTextStyle(ownershipWnd.meta, true)
-    local dragHandle = ownershipWnd:CreateChildWidget("emptywidget", "power_ranger_ownership_drag", 0, true)
-    dragHandle:SetExtent(360, 42)
-    dragHandle:AddAnchor("TOPLEFT", ownershipWnd, 0, 0)
-    dragHandle:Show(true)
-    ownershipWnd.dragHandle = dragHandle
-    applyHandleDrag(ownershipWnd, dragHandle, "ownershipWindowX", "ownershipWindowY")
-    ownershipWnd:Show(false)
+    ownershipWnd = require("power_ranger_on/target_windows").CreateOwnership({
+        colors = COLORS,
+        settings = settings,
+        label = label,
+        safePosition = TargetOverlay.safeWindowPosition,
+        applyReadableTextStyle = TargetOverlay.applyReadableTextStyle,
+        applyHandleDrag = applyHandleDrag
+    })
 end
 
 local function hideOwnershipWindow()
@@ -1835,479 +1427,82 @@ local function refreshTargetInfoWindow(targetInfo, className, gearscore, pdef, m
     targetInfoWnd:Show(true)
 end
 
-local function findBuffInUnit(unit, wantedId)
-    local count = OverlayUtils.safeCall(function() return api.Unit:UnitBuffCount(unit) end) or 0
-    for i = 1, tonumber(count) or 0 do
-        local b = OverlayUtils.safeCall(function() return api.Unit:UnitBuff(unit, i) end)
-        if TargetOverlay.buffId(b) == tonumber(wantedId) then return b end
-    end
-    local debuffCount = OverlayUtils.safeCall(function() return api.Unit:UnitDeBuffCount(unit) end) or 0
-    for i = 1, tonumber(debuffCount) or 0 do
-        local b = OverlayUtils.safeCall(function() return api.Unit:UnitDeBuff(unit, i) end)
-        if TargetOverlay.buffId(b) == tonumber(wantedId) then return b end
-    end
-    return nil
-end
-
-local function auraMatchesName(aura, wantedName)
-    local needle = string.lower(tostring(wantedName or ""))
-    if needle == "" then return false end
-    local id = TargetOverlay.buffId(aura)
-    local tooltip = TargetOverlay.buffTooltipById(id)
-    local name = string.lower(tostring(TargetOverlay.buffName(aura) or OverlayUtils.textField(tooltip, {"name", "title", "buff_name"}) or ""))
-    local desc = string.lower(tostring(OverlayUtils.textField(tooltip, {"description", "desc", "tooltip"}) or ""))
-    return name:find(needle, 1, true) ~= nil or desc:find(needle, 1, true) ~= nil
-end
-
-local function findBuffByNameInUnit(unit, wantedName)
-    local count = OverlayUtils.safeCall(function() return api.Unit:UnitBuffCount(unit) end) or 0
-    for i = 1, tonumber(count) or 0 do
-        local b = OverlayUtils.safeCall(function() return api.Unit:UnitBuff(unit, i) end)
-        if auraMatchesName(b, wantedName) then return b end
-    end
-    local debuffCount = OverlayUtils.safeCall(function() return api.Unit:UnitDeBuffCount(unit) end) or 0
-    for i = 1, tonumber(debuffCount) or 0 do
-        local b = OverlayUtils.safeCall(function() return api.Unit:UnitDeBuff(unit, i) end)
-        if auraMatchesName(b, wantedName) then return b end
-    end
-    return nil
-end
-
-local function findBuff(unit, wantedId)
-    if unit == "self" then
-        for _, token in ipairs(SELF_BUFF_UNITS) do
-            local buff = findBuffInUnit(token, wantedId)
-            if buff then return buff end
-        end
-        return nil
-    end
-    return findBuffInUnit(unit or "player", wantedId)
-end
-
-local function findBuffByName(unit, wantedName)
-    if unit == "self" then
-        for _, token in ipairs(SELF_BUFF_UNITS) do
-            local buff = findBuffByNameInUnit(token, wantedName)
-            if buff then return buff end
-        end
-        return nil
-    end
-    return findBuffByNameInUnit(unit or "player", wantedName)
-end
-
-local function findTrackedBuff(row)
-    if row.buffIds then
-        for _, id in ipairs(row.buffIds) do
-            local b = findBuff(row.unit or "player", id)
-            if b then return b end
-        end
-    end
-    if row.buffNames then
-        for _, name in ipairs(row.buffNames) do
-            local b = findBuffByName(row.unit or "player", name)
-            if b then return b end
-        end
-        return nil
-    end
-    if row.buffName then return findBuffByName(row.unit or "player", row.buffName) end
-    return findBuff(row.unit or "player", row.id)
-end
-
-local function triggerBuffFreshEnough(row, buff)
-    local minLeft = tonumber(row and row.triggerMinTimeLeftMs)
-    if (not minLeft or minLeft <= 0) and TargetOverlay.isStarTriggerCooldown(row) then
-        minLeft = 5300
-    end
-    if not minLeft or minLeft <= 0 then return true end
-    local timeLeft = tonumber(buff and buff.timeLeft)
-    return timeLeft and timeLeft > minLeft
-end
-
 local function updateTrackedBuffs()
-    local t = api.Time:GetUiMsec()
-    local glider = TargetOverlay.equippedGliderSnapshot()
-    local mount = TargetOverlay.mountedPetSnapshot()
-    NuziCooldownImport.UpdateMountManaCooldowns(nuziCooldownRows.buffs, buffState, t, trackedBuffKey, mount and mount.icon)
-    local learnedGliderIcon = false
-    for _, row in ipairs(allTrackedBuffRows()) do
-        local key = trackedBuffKey(row)
-        if row.enabled == false then
-            buffState[key] = nil
-            if triggerState[trackedBuffTriggerKey(row)] and triggerState[trackedBuffTriggerKey(row)].rowKey == key then
-                triggerState[trackedBuffTriggerKey(row)] = nil
-            end
-        elseif row.mountManaSpent then
-            buffState[key] = buffState[key] or {}
-        else
-            local state = buffState[key] or {}
-            local gliderMatches = TargetOverlay.trackedGliderMatches(row, glider)
-            if row.gliderPattern and gliderMatches and glider.icon and not row.icon then
-                row.icon = glider.icon
-                learnedGliderIcon = true
-            end
-            local triggerKey = trackedBuffTriggerKey(row)
-            local trigger = triggerState[triggerKey]
-            local b = nil
-            if row.cooldownStartsOnActive and (row.gliderPattern or row.category == "glider") then
-                local visibleBuff = findTrackedBuff(row)
-                if not visibleBuff then
-                    triggerState[triggerKey] = nil
-                    trigger = nil
-                elseif not triggerBuffFreshEnough(row, visibleBuff) then
-                    b = nil
-                elseif trigger and trigger.rowKey then
-                    if trigger.rowKey == key then b = visibleBuff end
-                elseif gliderMatches then
-                    triggerState[triggerKey] = { rowKey = key, startedAt = t }
-                    b = visibleBuff
-                end
-            elseif gliderMatches then
-                b = findTrackedBuff(row)
-            end
-            if b then
-                if state.active ~= true then
-                    state.activatedAt = t
-                    if row.cooldownStartsOnActive then
-                        local cooldownMs = (tonumber(row.cooldown) or 0) * 1000
-                        state.readyAt = t + cooldownMs
-                    end
-                    if settings.skillProbeLogging == true and recordSkillProbe then
-                        recordSkillProbe({
-                            event = "TRACKED_BUFF_ACTIVE",
-                            unit = tostring(row.unit or "player"),
-                            buffId = tonumber(row.id),
-                            buffName = row.buffName,
-                            glider = row.gliderPattern and serialValue(glider) or nil,
-                            name = row.name or TargetOverlay.buffName(b) or tostring(row.id),
-                            aura = serialValue(b)
-                        })
-                    end
-                end
-                state.active = true
-                state.lastSeen = t
-                if row.cooldownStartsOnActive and state.readyAt and t >= state.readyAt then state.readyAt = nil end
-                if not row.cooldownStartsOnActive then state.readyAt = nil end
-                state.name = row.name or TargetOverlay.buffName(b) or tostring(row.id)
-                state.icon = (row.preferMountIcon and mount.icon) or (row.gliderPattern and (TargetOverlay.cooldownRowIcon(row) or glider.icon)) or TargetOverlay.cooldownRowIcon(row) or OverlayUtils.iconPath(b) or TargetOverlay.buffIconById(row.id)
-                state.timeLeft = b.timeLeft
-            elseif state.active then
-                state.active = false
-                if not row.cooldownStartsOnActive then
-                    local cooldownMs = (tonumber(row.cooldown) or 0) * 1000
-                    state.readyAt = (state.activatedAt or t) + cooldownMs
-                    if state.readyAt < t then state.readyAt = t end
-                end
-                state.name = row.name or state.name or tostring(row.id)
-                state.icon = row.gliderPattern and (TargetOverlay.cooldownRowIcon(row) or state.icon) or (state.icon or TargetOverlay.buffIconById(row.id) or TargetOverlay.cooldownRowIcon(row))
-                state.timeLeft = nil
-                if settings.skillProbeLogging == true and recordSkillProbe then
-                    recordSkillProbe({
-                        event = "TRACKED_BUFF_COOLDOWN",
-                        unit = tostring(row.unit or "player"),
-                        buffId = tonumber(row.id),
-                        buffName = row.buffName,
-                        glider = row.gliderPattern and serialValue(glider) or nil,
-                        name = state.name,
-                        cooldown = tonumber(row.cooldown) or 0,
-                        readyIn = state.readyAt and math.ceil((state.readyAt - t) / 1000) or 0
-                    })
-                end
-            elseif state.readyAt and t >= state.readyAt then
-                state.readyAt = nil
-                state.timeLeft = nil
-                state.activatedAt = nil
-            else
-                state.icon = row.gliderPattern and (TargetOverlay.cooldownRowIcon(row) or state.icon) or (state.icon or TargetOverlay.buffIconById(row.id) or TargetOverlay.cooldownRowIcon(row))
-                state.timeLeft = nil
-            end
-            buffState[key] = state
-        end
-    end
-    if learnedGliderIcon then saveSettings() end
-end
-
-local function selfPanelWidth(gliderCount, mountCount, equipmentVisible)
-    local count = math.max(equipmentVisible and 3 or 0, tonumber(gliderCount) or 0, tonumber(mountCount) or 0)
-    return math.floor((math.max(SELF_PANEL.minWidth, SELF_PANEL.left + (count * SELF_PANEL.iconStep) + 4) * uiScaleFactor("selfScaleLevel")) + 0.5)
-end
-
-function TargetOverlay.setSelfEquipmentVisible(visible)
-    if not selfWnd or not selfWnd.equipIcons then return end
-    for i, icon in ipairs(selfWnd.equipIcons) do
-        icon:Show(visible)
-        if selfWnd.equipLabels[i] then selfWnd.equipLabels[i]:Show(visible) end
-    end
-end
-
-local function positionSelfEquipmentRow(y)
-    if not selfWnd or not selfWnd.equipIcons then return end
-    local scale = uiScaleFactor("selfScaleLevel")
-    local xs = { SELF_PANEL.left, SELF_PANEL.left + 42, SELF_PANEL.left + 84 }
-    for i, icon in ipairs(selfWnd.equipIcons) do
-        local x = math.floor((xs[i] * scale) + 0.5)
-        local iconY = math.floor((y * scale) + 0.5)
-        icon:SetExtent(math.floor((24 * scale) + 0.5), math.floor((24 * scale) + 0.5))
-        icon:RemoveAllAnchors()
-        icon:AddAnchor("TOPLEFT", selfWnd, x, iconY)
-        if icon.timerLabel then
-            icon.timerLabel:SetExtent(math.floor((24 * scale) + 0.5), math.floor((24 * scale) + 0.5))
-            icon.timerLabel.style:SetFontSize(math.floor((10 * scale) + 0.5))
-        end
-        selfWnd.equipLabels[i]:RemoveAllAnchors()
-        selfWnd.equipLabels[i]:SetExtent(math.floor((46 * scale) + 0.5), math.floor((10 * scale) + 0.5))
-        selfWnd.equipLabels[i].style:SetFontSize(math.floor((7 * scale) + 0.5))
-        selfWnd.equipLabels[i]:AddAnchor("TOPLEFT", selfWnd, math.floor(((xs[i] - 10) * scale) + 0.5), math.floor(((y + 24) * scale) + 0.5))
-    end
-end
-
-local function resizeSelfPanel(gliderCount, mountCount, cooldownsVisible, equipmentVisible)
-    if not selfWnd then return end
-    local width = selfPanelWidth(gliderCount, mountCount, equipmentVisible)
-    local scale = uiScaleFactor("selfScaleLevel")
-    local baseHeight = cooldownsVisible and (equipmentVisible and SELF_PANEL.height or 104) or (equipmentVisible and 60 or SELF_PANEL.headerHeight)
-    local height = math.floor((baseHeight * scale) + 0.5)
-    local equipY = cooldownsVisible and SELF_PANEL.equipY or SELF_PANEL.gliderY
-    if equipmentVisible and selfWnd._equipY ~= equipY then
-        positionSelfEquipmentRow(equipY)
-        selfWnd._equipY = equipY
-    end
-    TargetOverlay.setSelfEquipmentVisible(equipmentVisible)
-    if selfWnd._lastWidth ~= width or selfWnd._lastHeight ~= height then
-        selfWnd:SetExtent(width, height)
-        if selfWnd.header then selfWnd.header:SetExtent(width, math.floor((SELF_PANEL.headerHeight * scale) + 0.5)) end
-        if selfWnd.dragHandle then selfWnd.dragHandle:SetExtent(width, math.floor((SELF_PANEL.headerHeight * scale) + 0.5)) end
-        if selfWnd.title then
-            selfWnd.title:RemoveAllAnchors()
-            selfWnd.title:AddAnchor("TOPLEFT", selfWnd, math.floor((8 * scale) + 0.5), math.floor((3 * scale) + 0.5))
-            selfWnd.title:SetExtent(math.floor((110 * scale) + 0.5), math.floor((14 * scale) + 0.5))
-            selfWnd.title.style:SetFontSize(math.floor((11 * scale) + 0.5))
-        end
-        if selfWnd.status then
-            if selfWnd.status.RemoveAllAnchors then selfWnd.status:RemoveAllAnchors() end
-            selfWnd.status:SetExtent(math.max(math.floor((46 * scale) + 0.5), width - math.floor((116 * scale) + 0.5)), math.floor((14 * scale) + 0.5))
-            selfWnd.status.style:SetFontSize(math.floor((10 * scale) + 0.5))
-            selfWnd.status:AddAnchor("TOPLEFT", selfWnd, math.floor((112 * scale) + 0.5), math.floor((3 * scale) + 0.5))
-        end
-        selfWnd._lastWidth = width
-        selfWnd._lastHeight = height
-    end
-end
-
-local function clearSelfCooldownRow(icons, labels)
-    for i, icon in ipairs(icons or {}) do
-        icon:Show(false)
-        if labels and labels[i] then labels[i]:SetText("") end
-    end
-end
-
-local function ensureSelfCooldownRow(icons, labels, prefix, y, wanted)
-    if not selfWnd then return end
-    local scale = uiScaleFactor("selfScaleLevel")
-    local count = math.max(tonumber(wanted) or 0, #icons)
-    for i = #icons + 1, count do
-        local x = math.floor(((SELF_PANEL.left + ((i - 1) * SELF_PANEL.iconStep)) * scale) + 0.5)
-        icons[i] = createIcon(selfWnd, prefix .. "_icon_" .. i, x, math.floor((y * scale) + 0.5), math.floor((SELF_PANEL.iconSize * scale) + 0.5))
-        labels[i] = label(selfWnd, prefix .. "_label_" .. i, "", math.floor(((SELF_PANEL.left + ((i - 1) * SELF_PANEL.iconStep) - 3) * scale) + 0.5), math.floor(((y + 28) * scale) + 0.5), math.floor((34 * scale) + 0.5), math.floor((10 * scale) + 0.5), math.floor((7 * scale) + 0.5), COLORS.white, ALIGN.CENTER)
-        labels[i]:Clickable(false)
-    end
-    for i, icon in ipairs(icons) do
-        local x = SELF_PANEL.left + ((i - 1) * SELF_PANEL.iconStep)
-        local size = math.floor((SELF_PANEL.iconSize * scale) + 0.5)
-        icon:SetExtent(size, size)
-        icon:RemoveAllAnchors()
-        icon:AddAnchor("TOPLEFT", selfWnd, math.floor((x * scale) + 0.5), math.floor((y * scale) + 0.5))
-        if icon.timerLabel then
-            icon.timerLabel:SetExtent(size, size)
-            icon.timerLabel.style:SetFontSize(math.floor((10 * scale) + 0.5))
-        end
-        labels[i]:SetExtent(math.floor((34 * scale) + 0.5), math.floor((10 * scale) + 0.5))
-        labels[i].style:SetFontSize(math.floor((7 * scale) + 0.5))
-        labels[i]:RemoveAllAnchors()
-        labels[i]:AddAnchor("TOPLEFT", selfWnd, math.floor(((x - 3) * scale) + 0.5), math.floor(((y + 28) * scale) + 0.5))
-    end
-end
-
-local function renderSelfCooldownRow(icons, labels, entries)
-    local shown = 0
-    for i, icon in ipairs(icons or {}) do
-        local entry = entries and entries[i]
-        if entry then
-            setCooldownSkillIcon(icon, entry.icon, entry.state or "ready", entry.remain)
-            if labels and labels[i] then labels[i]:SetText(OverlayUtils.shortText(entry.name, 7)) end
-            shown = i
-        else
-            icon:Show(false)
-            if labels and labels[i] then labels[i]:SetText("") end
-        end
-    end
-    return shown
-end
-
-local function trackedBuffCooldownEntry(row, st, glider, mount)
-    local name = row.name or st.name or tostring(row.id)
-    local iconState = "ready"
-    local remain = nil
-    if st.active then
-        if (row.cooldownOnlyOnActive or TargetOverlay.isStarTriggerCooldown(row)) and st.readyAt then
-            remain = math.max(0, math.ceil((st.readyAt - api.Time:GetUiMsec()) / 1000))
-            iconState = "cooldown"
-        else
-            remain = OverlayUtils.buffRemainText(st.timeLeft)
-            iconState = row.cooldownAura and "cooldown" or "active"
-        end
-    elseif st.readyAt then
-        remain = math.max(0, math.ceil((st.readyAt - api.Time:GetUiMsec()) / 1000))
-        iconState = "cooldown"
-    end
-    return {
-        name = name,
-        icon = (row.preferMountIcon and ((mount and mount.icon) or TargetOverlay.cooldownRowIcon(row) or st.icon)) or (row.gliderPattern and (TargetOverlay.cooldownRowIcon(row) or st.icon or (TargetOverlay.trackedGliderMatches(row, glider) and glider and glider.icon))) or (st.icon or TargetOverlay.cooldownRowIcon(row) or TargetOverlay.buffIconById(row.id)),
-        state = iconState,
-        remain = remain
-    }
+    TargetOverlay.buffRuntime.Update({
+        settings = settings,
+        selfBuffUnits = SELF_BUFF_UNITS,
+        nuziBuffRows = nuziCooldownRows.buffs,
+        buffState = buffState,
+        triggerState = triggerState,
+        allTrackedBuffRows = allTrackedBuffRows,
+        trackedBuffKey = trackedBuffKey,
+        trackedBuffTriggerKey = trackedBuffTriggerKey,
+        buffId = TargetOverlay.buffId,
+        buffName = TargetOverlay.buffName,
+        buffTooltipById = TargetOverlay.buffTooltipById,
+        buffIconById = TargetOverlay.buffIconById,
+        cooldownRowIcon = TargetOverlay.cooldownRowIcon,
+        trackedGliderMatches = TargetOverlay.trackedGliderMatches,
+        equippedGliderSnapshot = TargetOverlay.equippedGliderSnapshot,
+        mountedPetSnapshot = TargetOverlay.mountedPetSnapshot,
+        isStarTriggerCooldown = TargetOverlay.isStarTriggerCooldown,
+        serialValue = serialValue,
+        recordSkillProbe = recordSkillProbe,
+        saveSettings = saveSettings
+    })
 end
 
 local function trackedSkillCooldownKey(row, skillName, skillId)
     return tostring(row and (row.importKey or row.id or row.skillId or row.pattern or row.name) or skillName or skillId or "")
 end
 
-local function trackedSkillCooldownEntry(row, now)
-    local key = trackedSkillCooldownKey(row)
-    local cd = key ~= "" and skillCooldowns[key] or nil
-    if cd and cd.readyAt and cd.readyAt > now then
-        return {
-            name = cd.name or row.name or row.id,
-            icon = cd.icon or row.icon or TargetOverlay.skillIconById(row.id or row.skillId),
-            state = "cooldown",
-            remain = math.max(0, math.ceil((cd.readyAt - now) / 1000))
-        }
-    end
-    if cd then skillCooldowns[key] = nil end
-    return {
-        name = row.name or row.pattern or row.id,
-        icon = row.icon or TargetOverlay.skillIconById(row.id or row.skillId),
-        state = "ready",
-        remain = nil
-    }
-end
-
 local function createSelfWindow()
-    selfWnd = api.Interface:CreateEmptyWindow("PowerRangerSelf", "UIParent")
-    selfWnd:SetExtent(SELF_PANEL.minWidth, SELF_PANEL.height)
-    local x, y = TargetOverlay.safeWindowPosition(settings.selfX, settings.selfY, SELF_PANEL.minWidth, SELF_PANEL.height)
-    selfWnd:AddAnchor("TOPLEFT", "UIParent", x, y)
-    if selfWnd.Clickable then selfWnd:Clickable(false) end
-    addBg(selfWnd, 0, 0, 0, 0.62)
-    selfWnd.header = selfWnd:CreateColorDrawable(0.06, 0.075, 0.095, 0.76, "background")
-    selfWnd.header:SetExtent(SELF_PANEL.minWidth, SELF_PANEL.headerHeight)
-    selfWnd.header:AddAnchor("TOPLEFT", selfWnd, 0, 0)
-    selfWnd.header:Show(true)
-    local title = label(selfWnd, "power_ranger_self_title", "Self CDs", 8, 3, 110, 14, 11, COLORS.gold, ALIGN.LEFT)
-    title:Clickable(false)
-    selfWnd.title = title
-    selfWnd.dragHandle = selfWnd:CreateChildWidget("emptywidget", "power_ranger_self_drag", 0, true)
-    selfWnd.dragHandle:SetExtent(SELF_PANEL.minWidth, SELF_PANEL.headerHeight)
-    selfWnd.dragHandle:AddAnchor("TOPLEFT", selfWnd, 0, 0)
-    selfWnd.dragHandle:Show(true)
-    applyHandleDrag(selfWnd, selfWnd.dragHandle, "selfX", "selfY")
-    selfWnd.status = label(selfWnd, "power_ranger_self_status", "", 112, 3, 48, 14, 10, COLORS.muted, ALIGN.RIGHT)
-    selfWnd.status:Clickable(false)
-    selfWnd.gliderIcons = {}
-    selfWnd.gliderLabels = {}
-    selfWnd.mountIcons = {}
-    selfWnd.mountLabels = {}
-    for i = 1, SELF_PANEL.maxRowIcons do
-        local x = SELF_PANEL.left + ((i - 1) * SELF_PANEL.iconStep)
-        selfWnd.gliderIcons[i] = createIcon(selfWnd, "power_ranger_self_glider_cd_icon_" .. i, x, SELF_PANEL.gliderY, SELF_PANEL.iconSize)
-        selfWnd.gliderLabels[i] = label(selfWnd, "power_ranger_self_glider_cd_label_" .. i, "", x - 3, SELF_PANEL.gliderY + 28, 34, 10, 7, COLORS.white, ALIGN.CENTER)
-        selfWnd.mountIcons[i] = createIcon(selfWnd, "power_ranger_self_mount_cd_icon_" .. i, x, SELF_PANEL.mountY, SELF_PANEL.iconSize)
-        selfWnd.mountLabels[i] = label(selfWnd, "power_ranger_self_mount_cd_label_" .. i, "", x - 3, SELF_PANEL.mountY + 28, 34, 10, 7, COLORS.white, ALIGN.CENTER)
-        selfWnd.gliderLabels[i]:Clickable(false)
-        selfWnd.mountLabels[i]:Clickable(false)
-    end
-    selfWnd.equipIcons = {}
-    selfWnd.equipLabels = {}
-    selfWnd.equipIcons[1] = createIcon(selfWnd, "power_ranger_self_equip_weapon", SELF_PANEL.left, SELF_PANEL.equipY, 24)
-    selfWnd.equipLabels[1] = label(selfWnd, "power_ranger_self_equip_weapon_label", "Weapon", SELF_PANEL.left - 10, SELF_PANEL.equipY + 24, 46, 10, 7, COLORS.muted, ALIGN.CENTER)
-    selfWnd.equipIcons[2] = createIcon(selfWnd, "power_ranger_self_equip_offhand", SELF_PANEL.left + 42, SELF_PANEL.equipY, 24)
-    selfWnd.equipLabels[2] = label(selfWnd, "power_ranger_self_equip_offhand_label", "Offhand", SELF_PANEL.left + 32, SELF_PANEL.equipY + 24, 46, 10, 7, COLORS.muted, ALIGN.CENTER)
-    selfWnd.equipIcons[3] = createIcon(selfWnd, "power_ranger_self_equip_glider", SELF_PANEL.left + 84, SELF_PANEL.equipY, 24)
-    selfWnd.equipLabels[3] = label(selfWnd, "power_ranger_self_equip_glider_label", "Glider", SELF_PANEL.left + 74, SELF_PANEL.equipY + 24, 46, 10, 7, COLORS.muted, ALIGN.CENTER)
-    selfWnd.equipLabels[1]:Clickable(false)
-    selfWnd.equipLabels[2]:Clickable(false)
-    selfWnd.equipLabels[3]:Clickable(false)
-    selfWnd:Show(false)
-end
-
-local function updateSelfEquipmentIcons()
-    if not selfWnd or not selfWnd.equipIcons then return end
-    if settings.showSelfEquipment == false then
-        TargetOverlay.setSelfEquipmentVisible(false)
-        return
-    end
-    TargetOverlay.setSelfEquipmentVisible(true)
-    local now = api.Time:GetUiMsec()
-    if selfWnd._equipReady and now - lastSelfEquipmentUpdate < 1000 then return end
-    lastSelfEquipmentUpdate = now
-    selfWnd._equipReady = true
-    local weapon = TargetOverlay.equippedSnapshot(EQUIP_SLOT and EQUIP_SLOT.MAINHAND) or {}
-    local offhand = TargetOverlay.equippedSnapshot(EQUIP_SLOT and EQUIP_SLOT.OFFHAND) or {}
-    local glider = TargetOverlay.equippedSnapshot(TargetOverlay.gliderEquipSlot()) or {}
-    setEquipIcon(selfWnd.equipIcons[1], weapon.icon)
-    setEquipIcon(selfWnd.equipIcons[2], offhand.icon)
-    setEquipIcon(selfWnd.equipIcons[3], glider.icon)
+    selfWnd = require("power_ranger_on/target_windows").CreateSelf({
+        colors = COLORS,
+        settings = settings,
+        selfPanel = SELF_PANEL,
+        addBg = addBg,
+        label = label,
+        createIcon = createIcon,
+        safePosition = TargetOverlay.safeWindowPosition,
+        applyHandleDrag = applyHandleDrag
+    })
 end
 
 local function updateSelfPanel()
-    if not selfWnd then return end
-    if settings.showSelfPanel == false or Compat.ShouldHideSelfPanel(compatState) then
-        selfWnd:Show(false)
-        return
-    end
-    if settings.showSelfCooldowns == false then
-        if selfWnd.status then selfWnd.status:SetText("OFF") end
-        clearSelfCooldownRow(selfWnd.gliderIcons, selfWnd.gliderLabels)
-        clearSelfCooldownRow(selfWnd.mountIcons, selfWnd.mountLabels)
-        resizeSelfPanel(0, 0, false, settings.showSelfEquipment ~= false)
-        updateSelfEquipmentIcons()
-        selfWnd:Show(true)
-        return
-    end
-
-    local t = api.Time:GetUiMsec()
-    if selfWnd.status then selfWnd.status:SetText(settings.skillProbeLogging and "LOG" or "") end
-    updateSelfEquipmentIcons()
-    local glider = TargetOverlay.equippedGliderSnapshot()
-    local mount = TargetOverlay.mountedPetSnapshot()
-    local gliderEntries = {}
-    local mountEntries = {}
-    for _, row in ipairs(allTrackedBuffRows()) do
-        if row.enabled ~= false then
-            local key = trackedBuffKey(row)
-            local st = buffState[key] or {}
-            local visibleForGlider = row.gliderPattern or row.category == "glider" or TargetOverlay.trackedGliderMatches(row, glider) or st.active or st.readyAt
-            if visibleForGlider then
-                local entry = trackedBuffCooldownEntry(row, st, glider, mount)
-                if row.gliderPattern or row.category == "glider" then
-                    table.insert(gliderEntries, entry)
-                else
-                    table.insert(mountEntries, entry)
-                end
-            end
-        end
-    end
-
-    for _, row in ipairs(allTrackedSkillRows()) do
-        if row.enabled ~= false then
-            table.insert(mountEntries, trackedSkillCooldownEntry(row, t))
-        end
-    end
-    ensureSelfCooldownRow(selfWnd.gliderIcons, selfWnd.gliderLabels, "power_ranger_self_glider_cd_dynamic", SELF_PANEL.gliderY, #gliderEntries)
-    ensureSelfCooldownRow(selfWnd.mountIcons, selfWnd.mountLabels, "power_ranger_self_mount_cd_dynamic", SELF_PANEL.mountY, #mountEntries)
-    resizeSelfPanel(#gliderEntries, #mountEntries, true, settings.showSelfEquipment ~= false)
-    renderSelfCooldownRow(selfWnd.gliderIcons, selfWnd.gliderLabels, gliderEntries)
-    renderSelfCooldownRow(selfWnd.mountIcons, selfWnd.mountLabels, mountEntries)
-    selfWnd:Show(true)
+    TargetOverlay.selfCooldowns.Update({
+        selfWnd = selfWnd,
+        settings = settings,
+        panel = SELF_PANEL,
+        colors = COLORS,
+        scale = function() return uiScaleFactor("selfScaleLevel") end,
+        shouldHideSelfPanel = function() return Compat.ShouldHideSelfPanel(compatState) end,
+        createIcon = createIcon,
+        label = label,
+        setCooldownSkillIcon = setCooldownSkillIcon,
+        setEquipIcon = setEquipIcon,
+        shortText = OverlayUtils.shortText,
+        buffRemainText = OverlayUtils.buffRemainText,
+        allTrackedBuffRows = allTrackedBuffRows,
+        allTrackedSkillRows = allTrackedSkillRows,
+        trackedBuffKey = trackedBuffKey,
+        trackedSkillCooldownKey = trackedSkillCooldownKey,
+        buffState = buffState,
+        skillCooldowns = skillCooldowns,
+        isStarTriggerCooldown = TargetOverlay.isStarTriggerCooldown,
+        cooldownRowIcon = TargetOverlay.cooldownRowIcon,
+        trackedGliderMatches = TargetOverlay.trackedGliderMatches,
+        buffIconById = TargetOverlay.buffIconById,
+        skillIconById = TargetOverlay.skillIconById,
+        equippedSnapshot = TargetOverlay.equippedSnapshot,
+        equippedGliderSnapshot = TargetOverlay.equippedGliderSnapshot,
+        mountedPetSnapshot = TargetOverlay.mountedPetSnapshot,
+        gliderSlot = TargetOverlay.gliderEquipSlot,
+        mainhandSlot = function() return EQUIP_SLOT and EQUIP_SLOT.MAINHAND end,
+        offhandSlot = function() return EQUIP_SLOT and EQUIP_SLOT.OFFHAND end,
+        lastEquipmentUpdate = function() return lastSelfEquipmentUpdate end,
+        setLastEquipmentUpdate = function(value) lastSelfEquipmentUpdate = value end
+    })
 end
 
 function serialValue(value)
@@ -2641,6 +1836,7 @@ function recordDetectedSkill(skillName, skillId, sourceName, flatText, extra)
             if settings.detectedSkills[i].key == key then table.remove(settings.detectedSkills, i) end
         end
         if detectedSkillsWnd and refreshDetectedSkillRows then refreshDetectedSkillRows() end
+        if HotSwap and HotSwap.RefreshSettings then HotSwap.RefreshSettings() end
         return
     end
     local found = nil
@@ -2678,6 +1874,7 @@ function recordDetectedSkill(skillName, skillId, sourceName, flatText, extra)
     found.seen = (tonumber(found.seen) or 0) + 1
     found.lastSeen = api.Time:GetUiMsec()
     if detectedSkillsWnd and refreshDetectedSkillRows then refreshDetectedSkillRows() end
+    if HotSwap and HotSwap.RefreshSettings then HotSwap.RefreshSettings() end
 end
 
 local function startSkillCooldown(row, skillName, skillId)
@@ -2783,18 +1980,7 @@ function TargetOverlay.refreshEventSubscriptions()
 end
 
 local function createEventWindow()
-    eventWnd = api.Interface:CreateEmptyWindow("PowerRangerEvents", "UIParent")
-    eventWnd:SetExtent(1, 1)
-    eventWnd:AddAnchor("TOPLEFT", "UIParent", 0, 0)
-    if eventWnd.Clickable then eventWnd:Clickable(false) end
-    eventWnd:SetHandler("OnEvent", function(self, event, ...)
-        if event == "COMBAT_MSG" then
-            onCombatMessage(...)
-        elseif event == "SPELLCAST_START" or event == "SPELLCAST_SUCCEEDED" or event == "SPELLCAST_STOP" then
-            onSkillEvent(event, ...)
-        end
-    end)
-    eventWnd:Show(true)
+    eventWnd = require("power_ranger_on/event_window").Create(onCombatMessage, onSkillEvent)
     TargetOverlay.refreshEventSubscriptions()
 end
 
@@ -3073,176 +2259,58 @@ local function shiftCooldownSettingsPage(delta, group)
     refreshSettingsButtons()
 end
 
-local function detectedDetailText(row)
-    if not row then return "Select a detected row to inspect details." end
-    local function short(value, maxLen)
-        value = tostring(value or "-")
-        if #value <= maxLen then return value end
-        return value:sub(1, maxLen - 3) .. "..."
-    end
-    local pieces = {
-        "Name: " .. short(row.name or row.pattern, 58),
-        "Type: " .. tostring(row.kind or "-"),
-        "ID: " .. tostring(row.id or "-"),
-        "Seen: " .. tostring(row.seen or 0),
-        "Unit: " .. tostring(row.unit or "-"),
-        "Aura: " .. tostring(row.auraKind or "-"),
-        "Category: " .. tostring(row.category or "-"),
-        "Source: " .. short(row.source, 58),
-        "Cooldown: " .. tostring(row.cooldown or "-") .. "s",
-        "Time left: " .. tostring(row.timeLeft or "-"),
-        "Pattern: " .. short(row.pattern, 58)
-    }
-    if row.gliderName then table.insert(pieces, "Glider: " .. short(row.gliderName, 58)) end
-    if row.gliderItemType then table.insert(pieces, "Glider item: " .. tostring(row.gliderItemType)) end
-    if row.mountName then table.insert(pieces, "Mount: " .. short(row.mountName, 58)) end
-    if row.description and row.description ~= "" then table.insert(pieces, "Desc: " .. short(row.description, 100)) end
-    return table.concat(pieces, "\n")
-end
-
 local function showDetectedDetails(index)
-    if not detectedSkillsWnd then return end
-    settings.detectedDetailsIndex = index
-    local row = settings.detectedSkills and settings.detectedSkills[index]
-    if detectedSkillsWnd.details then
-        detectedSkillsWnd.details:SetText(detectedDetailText(row))
-    end
-    refreshDetectedSkillRows()
+    TargetOverlay.detectedSkills.ShowDetails({
+        window = detectedSkillsWnd,
+        settings = settings,
+        refreshRows = refreshDetectedSkillRows
+    }, index)
 end
 
 local function toggleDetectedSkillTracking(index, mode)
-    local row = settings.detectedSkills and settings.detectedSkills[index]
-    if not row then return end
-    if row.kind == "buff" then
-        settings.trackedBuffs = settings.trackedBuffs or {}
-        mode = mode or "aura"
-        local trackedIndex = TargetOverlay.detectedBuffTrackedIndex(row, mode)
-        if trackedIndex then
-            buffState[trackedBuffKey(settings.trackedBuffs[trackedIndex])] = nil
-            table.remove(settings.trackedBuffs, trackedIndex)
-        elseif mode == "aura" and trackedCooldownIsHardcoded(row.name or row.pattern, row.id) then
-            table.remove(settings.detectedSkills, index)
-        else
-            local recipe = TargetOverlay.detectedRecipeRow(row, mode)
-            if recipe then table.insert(settings.trackedBuffs, recipe) end
-        end
-        TargetOverlay.refreshEventSubscriptions()
-        saveSettings()
-        refreshDetectedSkillRows()
-        refreshSettingsButtons()
-        return
-    end
-    settings.trackedSkills = settings.trackedSkills or {}
-    local trackedIndex = trackedSkillIndex(row.name or row.pattern, row.id)
-    if trackedIndex then
-        local tracked = settings.trackedSkills[trackedIndex]
-        clearSkillCooldownForRow(tracked)
-        table.remove(settings.trackedSkills, trackedIndex)
-    elseif trackedCooldownIsHardcoded(row.name or row.pattern, row.id) then
-        table.remove(settings.detectedSkills, index)
-    else
-        table.insert(settings.trackedSkills, {
-            enabled = true,
-            name = row.name or row.pattern or tostring(row.id),
-            pattern = row.pattern or string.lower(tostring(row.name or "")),
-            id = row.id,
-            icon = row.icon,
-            source = row.source,
-            category = row.category,
-            cooldown = tonumber(row.cooldown) or 30
-        })
-    end
-    TargetOverlay.refreshEventSubscriptions()
-    saveSettings()
-    refreshDetectedSkillRows()
-    refreshSettingsButtons()
+    TargetOverlay.detectedSkills.ToggleTracking({
+        settings = settings,
+        buffState = buffState,
+        trackedBuffKey = trackedBuffKey,
+        detectedBuffTrackedIndex = TargetOverlay.detectedBuffTrackedIndex,
+        trackedCooldownIsHardcoded = trackedCooldownIsHardcoded,
+        detectedRecipeRow = TargetOverlay.detectedRecipeRow,
+        trackedSkillIndex = trackedSkillIndex,
+        clearSkillCooldownForRow = clearSkillCooldownForRow,
+        refreshEventSubscriptions = TargetOverlay.refreshEventSubscriptions,
+        saveSettings = saveSettings,
+        refreshRows = refreshDetectedSkillRows,
+        refreshSettingsButtons = refreshSettingsButtons
+    }, index, mode)
 end
 
 function refreshDetectedSkillRows()
-    if not detectedSkillsWnd or not detectedSkillsWnd.rows then return end
-    local rows = settings.detectedSkills or {}
-    for i, ui in ipairs(detectedSkillsWnd.rows) do
-        local row = rows[i]
-        if row then
-            if row.kind == "buff" then
-                setToggleButton(ui.auraButton, TargetOverlay.detectedBuffTrackedIndex(row, "aura") ~= nil, "Aura")
-                setToggleButton(ui.gliderButton, TargetOverlay.detectedBuffTrackedIndex(row, "glider") ~= nil, "Glid")
-                setToggleButton(ui.mountButton, TargetOverlay.detectedBuffTrackedIndex(row, "mount") ~= nil, "Mount")
-                ui.gliderButton:Show(true)
-                ui.mountButton:Show(true)
-            else
-                setToggleButton(ui.auraButton, trackedSkillIndex(row.name or row.pattern, row.id) ~= nil, "Skill")
-                ui.gliderButton:Show(false)
-                ui.mountButton:Show(false)
-            end
-            setToggleButton(ui.detailsButton, settings.detectedDetailsIndex == i, "Info")
-            setEquipIcon(ui.icon, row.icon or (row.kind == "buff" and TargetOverlay.buffIconById(row.id) or TargetOverlay.skillIconById(row.id)))
-            ui.name:SetText(OverlayUtils.shortText(row.name or row.pattern or tostring(row.id or "Unknown"), 22))
-            local context = row.source or "Unknown"
-            if row.gliderName then
-                context = context .. " | G:" .. tostring(row.gliderName)
-            elseif row.mountName then
-                context = context .. " | M:" .. tostring(row.mountName)
-            end
-            ui.meta:SetText(OverlayUtils.shortText((row.kind == "buff" and "Aura " or "Skill ") .. (row.id and ("ID " .. tostring(row.id) .. " | ") or "") .. context, 26))
-            ui.seen:SetText("x" .. tostring(row.seen or 1))
-            ui.root:Show(true)
-        else
-            ui.root:Show(false)
-        end
-    end
-    if detectedSkillsWnd.details then
-        local detailRow = settings.detectedSkills and settings.detectedSkills[settings.detectedDetailsIndex or 0]
-        detectedSkillsWnd.details:SetText(detectedDetailText(detailRow))
-    end
+    TargetOverlay.detectedSkills.RefreshRows({
+        window = detectedSkillsWnd,
+        settings = settings,
+        setToggleButton = setToggleButton,
+        detectedBuffTrackedIndex = TargetOverlay.detectedBuffTrackedIndex,
+        trackedSkillIndex = trackedSkillIndex,
+        setEquipIcon = setEquipIcon,
+        buffIconById = TargetOverlay.buffIconById,
+        skillIconById = TargetOverlay.skillIconById
+    })
 end
 
 local function createDetectedSkillsWindow()
     if detectedSkillsWnd then return end
-    detectedSkillsWnd = api.Interface:CreateEmptyWindow("PowerRangerDetectedSkills", "UIParent")
-    detectedSkillsWnd:SetExtent(560, 504)
-    local x, y = TargetOverlay.safeWindowPosition(settings.detectedSkillsX, settings.detectedSkillsY, 560, 504)
-    detectedSkillsWnd:AddAnchor("TOPLEFT", "UIParent", x, y)
-    addBg(detectedSkillsWnd, 0, 0, 0, 0.96)
-    local body = detectedSkillsWnd:CreateColorDrawable(COLORS.dark[1], COLORS.dark[2], COLORS.dark[3], COLORS.dark[4], "background")
-    body:AddAnchor("TOPLEFT", detectedSkillsWnd, 1, 1)
-    body:AddAnchor("BOTTOMRIGHT", detectedSkillsWnd, -1, -1)
-    body:Show(true)
-    local header = detectedSkillsWnd:CreateColorDrawable(0.09, 0.09, 0.11, 0.98, "background")
-    header:SetExtent(558, 30)
-    header:AddAnchor("TOPLEFT", detectedSkillsWnd, 1, 1)
-    header:Show(true)
-    local title = label(detectedSkillsWnd, "power_ranger_detected_title", "Detected Cooldowns", 14, 7, 250, 16, 13, COLORS.gold, ALIGN.LEFT)
-    applyDrag(detectedSkillsWnd, title, "detectedSkillsX", "detectedSkillsY")
-    flatButton(detectedSkillsWnd, "power_ranger_detected_close", "X", 526, 5, 22, 20, COLORS.button, function() detectedSkillsWnd:Show(false) end)
-    label(detectedSkillsWnd, "power_ranger_detected_hint", "Aura = plain buff. Glid = current glider + aura. Mount = pet/mount aura.", 14, 36, 520, 14, 10, COLORS.muted, ALIGN.LEFT)
-    detectedSkillsWnd.rows = {}
-    for i = 1, 8 do
-        local y = 56 + ((i - 1) * 31)
-        local root = detectedSkillsWnd:CreateChildWidget("emptywidget", "power_ranger_detected_row_" .. i, 0, true)
-        root:SetExtent(532, 28)
-        root:AddAnchor("TOPLEFT", detectedSkillsWnd, 14, y)
-        local bg = root:CreateColorDrawable(i % 2 == 0 and 0.11 or 0.075, i % 2 == 0 and 0.11 or 0.075, i % 2 == 0 and 0.125 or 0.09, 0.74, "background")
-        bg:AddAnchor("TOPLEFT", root, 0, 0)
-        bg:AddAnchor("BOTTOMRIGHT", root, 0, 0)
-        bg:Show(true)
-        local icon = createIcon(root, "power_ranger_detected_icon_" .. i, 4, 2, 24)
-        local name = label(root, "power_ranger_detected_name_" .. i, "", 36, 4, 135, 14, 10, COLORS.white, ALIGN.LEFT)
-        local meta = label(root, "power_ranger_detected_meta_" .. i, "", 174, 4, 108, 14, 10, COLORS.muted, ALIGN.LEFT)
-        local seen = label(root, "power_ranger_detected_seen_" .. i, "", 284, 4, 32, 14, 10, COLORS.muted, ALIGN.LEFT)
-        local rowIndex = i
-        local infoBtn = flatButton(root, "power_ranger_detected_info_" .. i, "", 318, 3, 46, 22, COLORS.button, function() showDetectedDetails(rowIndex) end)
-        local auraBtn = flatButton(root, "power_ranger_detected_aura_" .. i, "", 366, 3, 48, 22, COLORS.active, function() toggleDetectedSkillTracking(rowIndex, "aura") end)
-        local gliderBtn = flatButton(root, "power_ranger_detected_glider_" .. i, "", 416, 3, 50, 22, COLORS.active, function() toggleDetectedSkillTracking(rowIndex, "glider") end)
-        local mountBtn = flatButton(root, "power_ranger_detected_mount_" .. i, "", 468, 3, 54, 22, COLORS.active, function() toggleDetectedSkillTracking(rowIndex, "mount") end)
-        name:Clickable(false)
-        meta:Clickable(false)
-        seen:Clickable(false)
-        detectedSkillsWnd.rows[i] = { root = root, icon = icon, name = name, meta = meta, seen = seen, detailsButton = infoBtn, auraButton = auraBtn, gliderButton = gliderBtn, mountButton = mountBtn }
-    end
-    local detailsPanel = panel(detectedSkillsWnd, "power_ranger_detected_details_panel", 14, 306, 532, 184)
-    detectedSkillsWnd.details = label(detailsPanel, "power_ranger_detected_details", "Select a detected row to inspect details.", 8, 7, 516, 170, 10, COLORS.muted, ALIGN.LEFT)
-    detectedSkillsWnd:Show(false)
+    detectedSkillsWnd = require("power_ranger_on/detected_skills_ui").Create({
+        colors = COLORS,
+        settings = settings,
+        label = label,
+        flatButton = flatButton,
+        panel = panel,
+        createIcon = createIcon,
+        applyDrag = applyDrag,
+        safePosition = TargetOverlay.safeWindowPosition,
+        showDetails = showDetectedDetails,
+        toggleTracking = toggleDetectedSkillTracking
+    })
 end
 
 local function openDetectedSkillsWindow()
@@ -3285,6 +2353,12 @@ function refreshSettingsButtons()
     end
     if settingsWnd.modelRangeScaleValue then
         settingsWnd.modelRangeScaleValue:SetText(tostring(settings.modelRangeScaleLevel or 0))
+    end
+    if settingsWnd.modelRangeXValue then
+        settingsWnd.modelRangeXValue:SetText(tostring(settings.modelRangeOffsetX or 0))
+    end
+    if settingsWnd.modelRangeYValue then
+        settingsWnd.modelRangeYValue:SetText(tostring(settings.modelRangeOffsetY or 0))
     end
     if settingsWnd.modelLeftValue then
         settingsWnd.modelLeftValue:SetText(tostring(settings.compactModelLeftOffset or CONFIG.compactModelLeftOffset))
@@ -3378,6 +2452,13 @@ function TargetOverlay.shiftCompactModelLeft(delta)
     refreshSettingsButtons()
 end
 
+function TargetOverlay.shiftModelRangeOffset(axis, delta)
+    local key = axis == "y" and "modelRangeOffsetY" or "modelRangeOffsetX"
+    settings[key] = math.max(-120, math.min(120, (tonumber(settings[key]) or 0) + delta))
+    saveSettings()
+    refreshSettingsButtons()
+end
+
 local function shiftUiScale(delta, key)
     key = key or "uiScaleLevel"
     local level = math.max(0, math.min(10, (tonumber(settings[key]) or 0) + (tonumber(delta) or 0)))
@@ -3398,6 +2479,12 @@ local function shiftUiScale(delta, key)
     end
     if settingsWnd and settingsWnd.modelRangeScaleValue then
         settingsWnd.modelRangeScaleValue:SetText(tostring(settings.modelRangeScaleLevel or 0))
+    end
+    if settingsWnd and settingsWnd.modelRangeXValue then
+        settingsWnd.modelRangeXValue:SetText(tostring(settings.modelRangeOffsetX or 0))
+    end
+    if settingsWnd and settingsWnd.modelRangeYValue then
+        settingsWnd.modelRangeYValue:SetText(tostring(settings.modelRangeOffsetY or 0))
     end
     if settingsWnd and settingsWnd.intelScaleValue then
         settingsWnd.intelScaleValue:SetText(tostring(settings.targetWindowScaleLevel or 0))
@@ -3428,142 +2515,73 @@ local function toggleProbeLogging()
 end
 
 local function createSettingsWindow()
-    settingsWnd = api.Interface:CreateEmptyWindow("PowerRangerSettings", "UIParent")
-    settingsWnd:SetExtent(620, 811)
-    local x, y = TargetOverlay.safeWindowPosition(settings.settingsX, settings.settingsY, 620, 811)
-    settingsWnd:AddAnchor("TOPLEFT", "UIParent", x, y)
-    addBg(settingsWnd, 0, 0, 0, 0.96)
-    local body = settingsWnd:CreateColorDrawable(COLORS.dark[1], COLORS.dark[2], COLORS.dark[3], COLORS.dark[4], "background")
-    body:AddAnchor("TOPLEFT", settingsWnd, 1, 1)
-    body:AddAnchor("BOTTOMRIGHT", settingsWnd, -1, -1)
-    body:Show(true)
-    local header = settingsWnd:CreateColorDrawable(0.09, 0.09, 0.11, 0.98, "background")
-    header:SetExtent(618, 34)
-    header:AddAnchor("TOPLEFT", settingsWnd, 1, 1)
-    header:Show(true)
-    local title = label(settingsWnd, "power_ranger_settings_title", "Power Ranger ON", 16, 8, 320, 18, 14, COLORS.gold, ALIGN.LEFT)
-    applyDrag(settingsWnd, title, "settingsX", "settingsY", true)
-    settingsWnd.compatModeBtn = flatButton(settingsWnd, "power_ranger_compat_mode", "", 414, 7, 160, 22, COLORS.blue, cycleCompatMode)
-    flatButton(settingsWnd, "power_ranger_close", "X", 584, 7, 22, 22, COLORS.button, function() settingsWnd:Show(false) end)
-    settingsWnd.colorCubes = {}
+    local settingsUi = require("power_ranger_on/settings_ui")
+    local settingsSections = require("power_ranger_on/settings_sections")
+    settingsWnd = settingsUi.CreateShell({
+        id = "PowerRangerSettings",
+        title = "Power Ranger ON",
+        width = 620,
+        height = 875,
+        x = settings.settingsX,
+        y = settings.settingsY,
+        xKey = "settingsX",
+        yKey = "settingsY",
+        colors = COLORS,
+        safePosition = TargetOverlay.safeWindowPosition,
+        applyDrag = applyDrag,
+        compatButtonId = "power_ranger_compat_mode",
+        onCompat = cycleCompatMode,
+        closeButtonId = "power_ranger_close",
+        onClose = function() settingsWnd:Show(false) end
+    })
 
-    local p1 = sectionPanel(settingsWnd, "power_ranger_model_panel", 18, 52, 584, 168, "Target Overhead")
-    settingsWnd.modelCompactBtn = flatButton(p1, "power_ranger_toggle_model_compact", "", 16, 32, 116, 20, COLORS.active, function() toggleSetting("compactModelOverlay") end)
-    label(p1, "power_ranger_scale_label", "Scale", 144, 35, 36, 14, 10, COLORS.muted, ALIGN.LEFT)
-    flatButton(p1, "power_ranger_scale_down", "-", 182, 32, 22, 20, COLORS.button, function() shiftUiScale(-1) end)
-    settingsWnd.scaleValue = label(p1, "power_ranger_scale_value", "0", 206, 35, 20, 14, 10, COLORS.white, ALIGN.CENTER)
-    flatButton(p1, "power_ranger_scale_up", "+", 228, 32, 22, 20, COLORS.button, function() shiftUiScale(1) end)
-    label(p1, "power_ranger_model_left_label", "Left", 266, 35, 28, 14, 10, COLORS.muted, ALIGN.LEFT)
-    flatButton(p1, "power_ranger_model_left_down", "-", 296, 32, 22, 20, COLORS.button, function() TargetOverlay.shiftCompactModelLeft(-1) end)
-    settingsWnd.modelLeftValue = label(p1, "power_ranger_model_left_value", "45", 320, 35, 26, 14, 10, COLORS.white, ALIGN.CENTER)
-    flatButton(p1, "power_ranger_model_left_up", "+", 348, 32, 22, 20, COLORS.button, function() TargetOverlay.shiftCompactModelLeft(1) end)
-    settingsWnd.shadowBtn = flatButton(p1, "power_ranger_toggle_text_style", "", 388, 32, 154, 20, COLORS.active, TargetOverlay.cycleOverlayTextStyle)
-    settingsWnd.modelBtn = flatButton(p1, "power_ranger_toggle_model", "", 16, 56, 126, 24, COLORS.active, function() toggleSetting("showModelOverlay") end)
-    settingsWnd.armorBtn = flatButton(p1, "power_ranger_toggle_armor", "", 152, 56, 126, 24, COLORS.active, function() toggleSetting("showArmorIcon") end)
-    settingsWnd.weaponBtn = flatButton(p1, "power_ranger_toggle_weapon", "", 288, 56, 126, 24, COLORS.active, function() toggleSetting("showWeaponIcon") end)
-    settingsWnd.roleBtn = flatButton(p1, "power_ranger_toggle_role", "", 424, 56, 126, 24, COLORS.active, function() toggleSetting("showRoleIcon") end)
-    settingsWnd.modelGsBtn = flatButton(p1, "power_ranger_toggle_model_gs", "", 16, 84, 126, 24, COLORS.active, function() toggleSetting("showModelGearscore") end)
-    settingsWnd.modelClassBtn = flatButton(p1, "power_ranger_toggle_model_class", "", 152, 84, 126, 24, COLORS.active, function() toggleSetting("showModelClass") end)
-    settingsWnd.modelRangeBtn = flatButton(p1, "power_ranger_toggle_model_range", "", 288, 84, 126, 24, COLORS.active, function() toggleSetting("showModelRange") end)
-    settingsWnd.modelDefBtn = flatButton(p1, "power_ranger_toggle_model_def", "", 424, 84, 126, 24, COLORS.active, function() toggleSetting("showModelDefense") end)
-    label(p1, "power_ranger_model_color_label", "Colors", 16, 116, 44, 14, 10, COLORS.muted, ALIGN.LEFT)
-    label(p1, "power_ranger_model_color_dist", "Dist", 72, 116, 28, 14, 10, COLORS.white, ALIGN.LEFT)
-    settingsWnd.colorCubes.modelRange = colorCube(p1, "power_ranger_model_color_range", 102, 112, "modelRange")
-    label(p1, "power_ranger_model_color_gs", "GS", 132, 116, 22, 14, 10, COLORS.white, ALIGN.LEFT)
-    settingsWnd.colorCubes.modelGearscore = colorCube(p1, "power_ranger_model_color_gs_cube", 156, 112, "modelGearscore")
-    label(p1, "power_ranger_model_color_class", "Class", 188, 116, 42, 14, 10, COLORS.white, ALIGN.LEFT)
-    settingsWnd.colorCubes.modelClass = colorCube(p1, "power_ranger_model_color_class_cube", 230, 112, "modelClass")
-    label(p1, "power_ranger_model_range_scale_label", "Range size", 16, 144, 70, 14, 10, COLORS.muted, ALIGN.LEFT)
-    flatButton(p1, "power_ranger_model_range_scale_down", "-", 92, 140, 24, 20, COLORS.button, function() shiftUiScale(-1, "modelRangeScaleLevel") end)
-    settingsWnd.modelRangeScaleValue = label(p1, "power_ranger_model_range_scale_value", "0", 120, 143, 24, 14, 10, COLORS.white, ALIGN.CENTER)
-    flatButton(p1, "power_ranger_model_range_scale_up", "+", 148, 140, 24, 20, COLORS.button, function() shiftUiScale(1, "modelRangeScaleLevel") end)
+    settingsSections.BuildTargetOverhead(settingsWnd, {
+        colors = COLORS,
+        sectionPanel = sectionPanel,
+        label = label,
+        flatButton = flatButton,
+        colorCube = colorCube,
+        toggleSetting = toggleSetting,
+        shiftUiScale = shiftUiScale,
+        shiftCompactModelLeft = TargetOverlay.shiftCompactModelLeft,
+        shiftModelRangeOffset = TargetOverlay.shiftModelRangeOffset,
+        cycleOverlayTextStyle = TargetOverlay.cycleOverlayTextStyle
+    })
 
-    local p2 = sectionPanel(settingsWnd, "power_ranger_window_panel", 18, 232, 584, 229, "Intel Window")
-    settingsWnd.targetWindowBtn = flatButton(p2, "power_ranger_toggle_window", "", 16, 32, 124, 22, COLORS.active, function() toggleSetting("showTargetWindow") end)
-    settingsWnd.compactWindowBtn = flatButton(p2, "power_ranger_toggle_compact_window", "", 148, 32, 96, 22, COLORS.active, function() toggleSetting("compactTargetWindow") end)
-    settingsWnd.testWindowBtn = flatButton(p2, "power_ranger_toggle_test_window", "", 252, 32, 142, 22, COLORS.active, function() toggleSetting("testTargetWindow") end)
-    label(p2, "power_ranger_intel_scale_label", "Scale", 406, 36, 40, 14, 10, COLORS.muted, ALIGN.LEFT)
-    flatButton(p2, "power_ranger_intel_scale_down", "-", 448, 32, 24, 20, COLORS.button, function() shiftUiScale(-1, "targetWindowScaleLevel") end)
-    settingsWnd.intelScaleValue = label(p2, "power_ranger_intel_scale_value", "0", 476, 35, 24, 14, 10, COLORS.white, ALIGN.CENTER)
-    flatButton(p2, "power_ranger_intel_scale_up", "+", 504, 32, 24, 20, COLORS.button, function() shiftUiScale(1, "targetWindowScaleLevel") end)
-    label(p2, "power_ranger_simple_spacing_label", "Simple spacing", 16, 64, 92, 14, 10, COLORS.muted, ALIGN.LEFT)
-    label(p2, "power_ranger_simple_columns_label", "Columns", 116, 64, 54, 14, 10, COLORS.muted, ALIGN.LEFT)
-    flatButton(p2, "power_ranger_simple_columns_down", "-", 174, 60, 24, 20, COLORS.button, function() TargetOverlay.shiftSimpleSpacing("simpleColumnGap", -1, 0, 73) end)
-    settingsWnd.simpleColumnGapValue = label(p2, "power_ranger_simple_columns_value", "0", 202, 63, 24, 14, 10, COLORS.white, ALIGN.CENTER)
-    flatButton(p2, "power_ranger_simple_columns_up", "+", 230, 60, 24, 20, COLORS.button, function() TargetOverlay.shiftSimpleSpacing("simpleColumnGap", 1, 0, 73) end)
-    label(p2, "power_ranger_simple_lines_label", "Lines", 282, 64, 38, 14, 10, COLORS.muted, ALIGN.LEFT)
-    flatButton(p2, "power_ranger_simple_lines_down", "-", 324, 60, 24, 20, COLORS.button, function() TargetOverlay.shiftSimpleSpacing("simpleLineGap", -1, 0, 23) end)
-    settingsWnd.simpleLineGapValue = label(p2, "power_ranger_simple_lines_value", "0", 352, 63, 24, 14, 10, COLORS.white, ALIGN.CENTER)
-    flatButton(p2, "power_ranger_simple_lines_up", "+", 380, 60, 24, 20, COLORS.button, function() TargetOverlay.shiftSimpleSpacing("simpleLineGap", 1, 0, 23) end)
-    label(p2, "power_ranger_ownership_label", "Land / vehicle ownership", 16, 92, 148, 14, 10, COLORS.muted, ALIGN.LEFT)
-    settingsWnd.ownershipBtn = flatButton(p2, "power_ranger_toggle_ownership", "", 168, 88, 142, 20, COLORS.active, function() toggleSetting("showOwnershipLabels") end)
-    label(p2, "power_ranger_ownership_scale_label", "Scale", 326, 92, 40, 14, 10, COLORS.muted, ALIGN.LEFT)
-    flatButton(p2, "power_ranger_ownership_scale_down", "-", 368, 88, 24, 20, COLORS.button, function() shiftUiScale(-1, "ownershipScaleLevel") end)
-    settingsWnd.ownershipScaleValue = label(p2, "power_ranger_ownership_scale_value", "0", 396, 91, 24, 14, 10, COLORS.white, ALIGN.CENTER)
-    flatButton(p2, "power_ranger_ownership_scale_up", "+", 424, 88, 24, 20, COLORS.button, function() shiftUiScale(1, "ownershipScaleLevel") end)
-    settingsWnd.fieldButtons = {}
-    for i, field in ipairs(TARGET_INFO_FIELDS) do
-        local col = (i - 1) % 4
-        local row = math.floor((i - 1) / 4)
-        local x = 16 + (col * 138)
-        local y = 118 + (row * 27)
-        local bg = p2:CreateColorDrawable(row % 2 == 0 and 0.08 or 0.12, row % 2 == 0 and 0.08 or 0.12, row % 2 == 0 and 0.095 or 0.135, 0.72, "background")
-        bg:SetExtent(128, 22)
-        bg:AddAnchor("TOPLEFT", p2, x - 4, y - 1)
-        bg:Show(true)
-        settingsWnd.fieldButtons[field.key] = flatButton(p2, "power_ranger_info_field_" .. field.key, "", x, y, 98, 20, COLORS.active, function() toggleSetting(field.setting) end)
-        settingsWnd.colorCubes[field.key] = colorCube(p2, "power_ranger_info_color_" .. field.key, x + 106, y, field.key)
-    end
+    settingsSections.BuildIntelWindow(settingsWnd, {
+        colors = COLORS,
+        sectionPanel = sectionPanel,
+        label = label,
+        flatButton = flatButton,
+        colorCube = colorCube,
+        toggleSetting = toggleSetting,
+        shiftUiScale = shiftUiScale,
+        shiftSimpleSpacing = TargetOverlay.shiftSimpleSpacing,
+        fields = TARGET_INFO_FIELDS
+    })
 
-    local p4 = sectionPanel(settingsWnd, "power_ranger_self_panel", 18, 473, 584, 318, "Self Cooldowns & Gear")
-    label(p4, "power_ranger_self_hint", "Known cooldown auras stay ID-based.", 14, 32, 264, 14, 10, COLORS.muted, ALIGN.LEFT)
-    settingsWnd.nuziImportBtn = flatButton(p4, "power_ranger_toggle_nuzi_cd_import", "", 286, 29, 104, 20, COLORS.blue, function() toggleSetting("importNuziCooldowns") end)
-    label(p4, "power_ranger_self_scale_label", "Scale", 410, 32, 40, 14, 10, COLORS.muted, ALIGN.LEFT)
-    flatButton(p4, "power_ranger_self_scale_down", "-", 452, 29, 24, 20, COLORS.button, function() shiftUiScale(-1, "selfScaleLevel") end)
-    settingsWnd.selfScaleValue = label(p4, "power_ranger_self_scale_value", "0", 480, 32, 24, 14, 10, COLORS.white, ALIGN.CENTER)
-    flatButton(p4, "power_ranger_self_scale_up", "+", 508, 29, 24, 20, COLORS.button, function() shiftUiScale(1, "selfScaleLevel") end)
-    settingsWnd.selfBtn = flatButton(p4, "power_ranger_toggle_self", "", 16, 58, 98, 24, COLORS.active, function() toggleSetting("showSelfPanel") end)
-    settingsWnd.selfCdBtn = flatButton(p4, "power_ranger_toggle_self_cd", "", 120, 58, 104, 24, COLORS.active, function() toggleSetting("showSelfCooldowns") end)
-    settingsWnd.selfEquipmentBtn = flatButton(p4, "power_ranger_toggle_self_equipment", "", 230, 58, 110, 24, COLORS.active, function() toggleSetting("showSelfEquipment") end)
-    settingsWnd.probeLogBtn = flatButton(p4, "power_ranger_probe_log", "", 346, 58, 72, 24, COLORS.blue, toggleProbeLogging)
-    flatButton(p4, "power_ranger_detected_open", "Detected", 424, 58, 110, 24, COLORS.blue, openDetectedSkillsWindow)
-    label(p4, "power_ranger_cd_glider_title", "Gliders", 16, 90, 64, 14, 11, COLORS.gold, ALIGN.LEFT)
-    settingsWnd.cooldownGliderPageLabel = label(p4, "power_ranger_cd_glider_page_label", "", 88, 91, 190, 13, 10, COLORS.muted, ALIGN.LEFT)
-    settingsWnd.cooldownGliderPrevBtn = flatButton(p4, "power_ranger_cd_glider_page_prev", "<", 466, 87, 30, 22, COLORS.button, function() shiftCooldownSettingsPage(-1, "glider") end)
-    settingsWnd.cooldownGliderNextBtn = flatButton(p4, "power_ranger_cd_glider_page_next", ">", 502, 87, 30, 22, COLORS.button, function() shiftCooldownSettingsPage(1, "glider") end)
-    label(p4, "power_ranger_cd_other_title", "Mounts / Skills", 16, 198, 120, 14, 11, COLORS.gold, ALIGN.LEFT)
-    settingsWnd.cooldownOtherPageLabel = label(p4, "power_ranger_cd_other_page_label", "", 146, 199, 190, 13, 10, COLORS.muted, ALIGN.LEFT)
-    settingsWnd.cooldownOtherPrevBtn = flatButton(p4, "power_ranger_cd_other_page_prev", "<", 466, 195, 30, 22, COLORS.button, function() shiftCooldownSettingsPage(-1, "other") end)
-    settingsWnd.cooldownOtherNextBtn = flatButton(p4, "power_ranger_cd_other_page_next", ">", 502, 195, 30, 22, COLORS.button, function() shiftCooldownSettingsPage(1, "other") end)
-    settingsWnd.cooldownGliderRows = {}
-    settingsWnd.cooldownOtherRows = {}
-    local function createCooldownSettingRows(rows, prefix, group, startY)
-        for i = 1, 3 do
-            local y = startY + ((i - 1) * 28)
-            local root = p4:CreateChildWidget("emptywidget", prefix .. "_row_" .. i, 0, true)
-            root:SetExtent(552, 26)
-            root:AddAnchor("TOPLEFT", p4, 16, y)
-            local bg = root:CreateColorDrawable(i % 2 == 0 and 0.11 or 0.075, i % 2 == 0 and 0.11 or 0.075, i % 2 == 0 and 0.125 or 0.09, 0.74, "background")
-            bg:AddAnchor("TOPLEFT", root, 0, 0)
-            bg:AddAnchor("BOTTOMRIGHT", root, 0, 0)
-            bg:Show(true)
-            local rowIcon = createIcon(root, prefix .. "_icon_" .. i, 3, 2, 22)
-            local nameLabel = label(root, prefix .. "_name_" .. i, "", 32, 6, 136, 14, 10, COLORS.white, ALIGN.LEFT)
-            local sourceLabel = label(root, prefix .. "_source_" .. i, "", 172, 6, 122, 14, 10, COLORS.muted, ALIGN.LEFT)
-            local cdField = cooldownEdit(root, prefix .. "_cd_" .. i, 302, 3, 40, 20)
-            local rowIndex = i
-            local upBtn = flatButton(root, prefix .. "_up_" .. i, "^", 350, 2, 28, 22, COLORS.button, function() moveCooldownSetting(rowIndex, -1, group) end)
-            local downBtn = flatButton(root, prefix .. "_down_" .. i, "v", 382, 2, 28, 22, COLORS.button, function() moveCooldownSetting(rowIndex, 1, group) end)
-            local btn = flatButton(root, prefix .. "_toggle_" .. i, "", 418, 2, 72, 22, COLORS.active, function() toggleCooldownSetting(rowIndex, group) end)
-            local removeBtn = flatButton(root, prefix .. "_remove_" .. i, "Del", 498, 2, 42, 22, {0.24, 0.09, 0.09, 0.95}, function() removeCooldownSetting(rowIndex, group) end)
-            nameLabel:Clickable(false)
-            sourceLabel:Clickable(false)
-            removeBtn:Show(false)
-            rows[i] = { root = root, icon = rowIcon, name = nameLabel, source = sourceLabel, cd = cdField, up = upBtn, down = downBtn, button = btn, remove = removeBtn }
-        end
-    end
-    createCooldownSettingRows(settingsWnd.cooldownGliderRows, "power_ranger_cd_glider", "glider", 112)
-    createCooldownSettingRows(settingsWnd.cooldownOtherRows, "power_ranger_cd_other", "other", 220)
+    settingsSections.BuildSelfCooldowns(settingsWnd, {
+        colors = COLORS,
+        sectionPanel = sectionPanel,
+        label = label,
+        flatButton = flatButton,
+        createIcon = createIcon,
+        cooldownEdit = cooldownEdit,
+        toggleSetting = toggleSetting,
+        shiftUiScale = shiftUiScale,
+        toggleProbeLogging = toggleProbeLogging,
+        openDetectedSkillsWindow = openDetectedSkillsWindow,
+        shiftCooldownSettingsPage = shiftCooldownSettingsPage,
+        moveCooldownSetting = moveCooldownSetting,
+        toggleCooldownSetting = toggleCooldownSetting,
+        removeCooldownSetting = removeCooldownSetting
+    })
+    settingsSections.BuildHotSwapLauncher(settingsWnd, {
+        colors = COLORS,
+        sectionPanel = sectionPanel,
+        label = label,
+        flatButton = flatButton
+    }, 803)
 
     refreshSettingsButtons()
     settingsWnd:Show(false)
@@ -3582,92 +2600,24 @@ function TargetOverlay.init()
     loadSettings()
     playerName = TargetOverlay.getPlayerName()
 
-    mainCanvas = api.Interface:CreateEmptyWindow("TargetOverlayMain")
-    mainCanvas:SetExtent(1, 1)
-    mainCanvas:Show(true)
-
-    armorBuffIcon = CreateItemIconButton("armorBuffIcon", mainCanvas)
-    F_SLOT.ApplySlotSkin(armorBuffIcon, armorBuffIcon.back, SLOT_STYLE.DEFAULT)
-    armorBuffIcon:Clickable(false)
-    armorBuffIcon:SetExtent(CONFIG.buffIconSize, CONFIG.buffIconSize)
-    armorBuffIcon:AddAnchor("LEFT", mainCanvas, "RIGHT", CONFIG.armorBuffOffset, 0)
-    armorBuffIcon:Show(false)
-
-    weaponBuffIcon = CreateItemIconButton("weaponBuffIcon", mainCanvas)
-    F_SLOT.ApplySlotSkin(weaponBuffIcon, weaponBuffIcon.back, SLOT_STYLE.DEFAULT)
-    weaponBuffIcon:Clickable(false)
-    weaponBuffIcon:SetExtent(CONFIG.buffIconSize, CONFIG.buffIconSize)
-    weaponBuffIcon:AddAnchor("RIGHT", mainCanvas, "LEFT", CONFIG.weaponBuffOffset, 0)
-    weaponBuffIcon:Show(false)
-
-    targetPdefTitleLabel = mainCanvas:CreateChildWidget("label", "targetPdefTitle", 0, true)
-    targetPdefTitleLabel:SetExtent(54, 13)
-    targetPdefTitleLabel.style:SetFontSize(10)
-    TargetOverlay.applyReadableTextStyle(targetPdefTitleLabel, true)
-    targetPdefTitleLabel.style:SetAlign(ALIGN.CENTER)
-    targetPdefTitleLabel.style:SetColor(1, 1, 1, 1)
-    targetPdefTitleLabel:AddAnchor("RIGHT", weaponBuffIcon, "LEFT", 0, -5)
-    targetPdefTitleLabel:SetText("PDef")
-    targetPdefTitleLabel:Show(false)
-
-    targetPdefValueLabel = mainCanvas:CreateChildWidget("label", "targetPdefValue", 0, true)
-    targetPdefValueLabel:SetExtent(54, 13)
-    targetPdefValueLabel.style:SetFontSize(10)
-    TargetOverlay.applyReadableTextStyle(targetPdefValueLabel, true)
-    targetPdefValueLabel.style:SetAlign(ALIGN.CENTER)
-    targetPdefValueLabel.style:SetColor(1, 1, 1, 1)
-    targetPdefValueLabel:AddAnchor("TOP", targetPdefTitleLabel, "BOTTOM", 0, -1)
-    targetPdefValueLabel:Show(false)
-
-    targetMdefTitleLabel = mainCanvas:CreateChildWidget("label", "targetMdefTitle", 0, true)
-    targetMdefTitleLabel:SetExtent(54, 13)
-    targetMdefTitleLabel.style:SetFontSize(10)
-    TargetOverlay.applyReadableTextStyle(targetMdefTitleLabel, true)
-    targetMdefTitleLabel.style:SetAlign(ALIGN.CENTER)
-    targetMdefTitleLabel.style:SetColor(1, 1, 1, 1)
-    targetMdefTitleLabel:AddAnchor("LEFT", armorBuffIcon, "RIGHT", -3, -5)
-    targetMdefTitleLabel:SetText("MDef")
-    targetMdefTitleLabel:Show(false)
-
-    targetMdefValueLabel = mainCanvas:CreateChildWidget("label", "targetMdefValue", 0, true)
-    targetMdefValueLabel:SetExtent(54, 13)
-    targetMdefValueLabel.style:SetFontSize(10)
-    TargetOverlay.applyReadableTextStyle(targetMdefValueLabel, true)
-    targetMdefValueLabel.style:SetAlign(ALIGN.CENTER)
-    targetMdefValueLabel.style:SetColor(1, 1, 1, 1)
-    targetMdefValueLabel:AddAnchor("TOP", targetMdefTitleLabel, "BOTTOM", 0, -1)
-    targetMdefValueLabel:Show(false)
-
-    targetRoleIcon = mainCanvas:CreateImageDrawable("Textures/Defaults/White.dds", "overlay")
-    targetRoleIcon:SetExtent(CONFIG.roleIconSize, CONFIG.roleIconSize)
-    targetRoleIcon:SetVisible(false)
-    targetRoleIcon:SetSRGB(false)
-
-    targetGearscoreLabel = mainCanvas:CreateChildWidget("label", "targetGearscore", 0, true)
-    targetGearscoreLabel:SetAutoResize(false)
-    targetGearscoreLabel:SetExtent(90, CONFIG.fontSize + 4)
-    targetGearscoreLabel.style:SetFontSize(CONFIG.fontSize)
-    TargetOverlay.applyReadableTextStyle(targetGearscoreLabel, true)
-    targetGearscoreLabel.style:SetAlign(ALIGN.CENTER)
-    targetGearscoreLabel:AddAnchor("TOP", mainCanvas, "BOTTOM", 0, CONFIG.gearscoreOffset)
-    targetGearscoreLabel:Show(false)
-
-    targetClassLabel = mainCanvas:CreateChildWidget("label", "targetClass", 0, true)
-    targetClassLabel:SetExtent(180, 16)
-    targetClassLabel.style:SetFontSize(CONFIG.fontSize)
-    TargetOverlay.applyReadableTextStyle(targetClassLabel, true)
-    targetClassLabel.style:SetAlign(ALIGN.CENTER)
-    targetClassLabel.style:SetColor(1, 1, 1, 1)
-    targetClassLabel:AddAnchor("TOP", targetGearscoreLabel, "BOTTOM", -10, -1)
-    targetClassLabel:Show(false)
-
-    targetRangeCanvas = api.Interface:CreateEmptyWindow("PowerRangerModelRange", "UIParent")
-    targetRangeCanvas:SetExtent(86, CONFIG.fontSize + 6)
-    if targetRangeCanvas.Clickable then targetRangeCanvas:Clickable(false) end
-    targetRangeLabel = label(targetRangeCanvas, "targetRange", "", 0, 0, 86, CONFIG.fontSize + 6, CONFIG.fontSize, COLORS.gold, ALIGN.CENTER)
-    TargetOverlay.applyReadableTextStyle(targetRangeLabel, true)
-    targetRangeLabel:Show(false)
-    targetRangeCanvas:Show(false)
+    local widgets = require("power_ranger_on/target_windows").CreateModelOverlay({
+        colors = COLORS,
+        config = CONFIG,
+        label = label,
+        applyReadableTextStyle = TargetOverlay.applyReadableTextStyle
+    })
+    mainCanvas = widgets.canvas
+    armorBuffIcon = widgets.armorBuffIcon
+    weaponBuffIcon = widgets.weaponBuffIcon
+    targetPdefTitleLabel = widgets.targetPdefTitleLabel
+    targetPdefValueLabel = widgets.targetPdefValueLabel
+    targetMdefTitleLabel = widgets.targetMdefTitleLabel
+    targetMdefValueLabel = widgets.targetMdefValueLabel
+    targetRoleIcon = widgets.targetRoleIcon
+    targetGearscoreLabel = widgets.targetGearscoreLabel
+    targetClassLabel = widgets.targetClassLabel
+    targetRangeCanvas = widgets.targetRangeCanvas
+    targetRangeLabel = widgets.targetRangeLabel
 
     createTargetInfoWindow()
     createOwnershipWindow()
@@ -3861,7 +2811,9 @@ local function updateFastModelRange()
     targetRangeLabel.style:SetFontSize(math.floor((CONFIG.fontSize * rangeScale) + 0.5))
     setModelLabel(targetRangeLabel, string.format("%.1fm", dist))
     setTextColor(targetRangeLabel, settingColor("modelRange"))
-    targetRangeCanvas:AddAnchor("BOTTOM", "UIParent", "TOPLEFT", sX, sY - math.floor((44 * scale) + 0.5))
+    local offsetX = math.floor(((tonumber(settings.modelRangeOffsetX) or 0) * scale) + 0.5)
+    local offsetY = math.floor(((tonumber(settings.modelRangeOffsetY) or 0) * scale) + 0.5)
+    targetRangeCanvas:AddAnchor("BOTTOM", "UIParent", "TOPLEFT", sX + offsetX, sY - math.floor((44 * scale) + 0.5) + offsetY)
     targetRangeCanvas:Show(true)
 end
 
@@ -4100,9 +3052,7 @@ function TargetOverlay.cleanup()
     NuziCooldownImport.Reset()
     buffState = {}
     triggerState = {}
-    buffIconCache = {}
-    buffTooltipCache = {}
-    skillIconCache = {}
+    TargetOverlay.resourceLookup.Clear()
     skillCooldowns = {}
     skillProbe = { entries = {}, maxEntries = 240 }
     skillProbeDirty = false
