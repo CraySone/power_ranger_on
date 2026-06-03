@@ -4,6 +4,8 @@ local BuffDetector = require("power_ranger_on/buff_detector")
 local OverlayUtils = require("power_ranger_on/overlay_utils")
 local Compat = require("power_ranger_on/compat")
 local NuziCooldownImport = require("power_ranger_on/nuzi_cooldown_import")
+local CooldownRecipes = require("power_ranger_on/cooldown_recipes")
+local CooldownCatalog = require("power_ranger_on/cooldown_catalog")
 
 local TargetOverlay = {}
 TargetOverlay.cooldawnBuffList = OverlayUtils.safeCall(function() return require("CooldawnBuffTracker/buff_helper") end)
@@ -58,6 +60,7 @@ local defaults = {
     overlayTextShadow = true,
     overlayTextStyle = "shadow",
     uiScaleLevel = 0,
+    modelRangeScaleLevel = 0,
     targetWindowScaleLevel = 0,
     selfScaleLevel = 0,
     showTargetWindow = true,
@@ -114,20 +117,7 @@ local defaults = {
     selfY = 470,
     settingsX = 650,
     settingsY = 210,
-    trackedBuffs = {
-        { unit = "player", id = 131, name = "Invinc", source = "Player", cooldown = 120, fixedCooldown = true },
-        { unit = "self", name = "Sloth Glider", source = "Sloth", buffName = "Star Divine Protection", buffNames = {"Star Divine Protection", "Star's Divine Protection", "Starfall"}, gliderPattern = {"sloth"}, cooldown = 10, cooldownStartsOnActive = true, cooldownOnlyOnActive = true, triggerMinTimeLeftMs = 5300, fixedCooldown = true },
-        { unit = "self", name = "Crystal Wings", source = "Crystal Wings", buffName = "Star Divine Protection", buffNames = {"Star Divine Protection", "Star's Divine Protection", "Starfall", "Charging"}, gliderPattern = {"crystal wings"}, cooldown = 60, cooldownStartsOnActive = true, cooldownOnlyOnActive = true, triggerMinTimeLeftMs = 5300, fixedCooldown = true },
-        { unit = "self", name = "Magicopter", source = "Cumulus Magithopter", buffName = "Star Divine Protection", buffNames = {"Star Divine Protection", "Star's Divine Protection", "Starfall"}, gliderPattern = {"cumulus magicopter", "cumulus magithopter", "magicopter", "magithopter"}, cooldown = 45, cooldownStartsOnActive = true, cooldownOnlyOnActive = true, triggerMinTimeLeftMs = 5300, fixedCooldown = true, icon = "Game\\ui\\icon\\icon_item_4138.dds" },
-        { unit = "self", id = 3636, name = "Ezi Glider", source = "Ezi", buffName = "Invincible Flight", buffNames = {"Invincible Flight", "Invincibility Flight"}, gliderPattern = {"ezi", "ezi's glider"}, cooldown = 60, cooldownStartsOnActive = true, fixedCooldown = true, itemType = 18174 },
-        { unit = "self", id = 3636, name = "Flamefeather", source = "Flamefeather Glider", buffName = "Invincible Flight", buffNames = {"Invincible Flight", "Invincibility Flight"}, gliderPattern = {"flamefeather glider", "enhanced flamefeather glider", "flamefeather"}, cooldown = 60, cooldownStartsOnActive = true, triggerMinTimeLeftMs = 500, fixedCooldown = true, itemType = 8001101, category = "glider" },
-        { unit = "self", id = 30570, name = "Snowflake", source = "Snowflake Wings", buffName = "Snowflake Flight", buffNames = {"Snowflake Flight"}, gliderPattern = {"snowflake wings", "snowflake"}, cooldown = 60, cooldownStartsOnActive = true, fixedCooldown = true, icon = "Game\\ui\\icon\\icon_skill_glider_snowflake02.dds" },
-        { unit = "self", id = 3523, name = "Dash", source = "Ser Meatball", cooldown = 30, preferMountIcon = true },
-        { unit = "self", id = 8000211, name = "Dash", source = "Mount", cooldown = 30, preferMountIcon = true, icon = "Game\\ui\\icon\\icon_skill_wild03.dds" },
-        { unit = "self", id = 21817, name = "Kirin Speed", source = "Kirin", cooldown = 35, cooldownStartsOnActive = true, fixedCooldown = true, preferMountIcon = true, icon = "Game\\ui\\icon\\icon_skill_karon01.dds" },
-        { unit = "playerpet", name = "Nui's Veil", source = "Mount", buffName = "Nui's Veil", buffNames = {"Nui's Veil"}, cooldown = 30, cooldownAura = true, fixedCooldown = true, preferMountIcon = true, icon = "Game\\ui\\icon\\icon_skill_tare01.dds" },
-        { unit = "self", id = 15068, name = "Golem Invinc", source = "Golem", cooldown = 33, cooldownStartsOnActive = true, fixedCooldown = true },
-    },
+    trackedBuffs = CooldownCatalog.BuildTrackedBuffRows(),
     trackedSkills = {},
     detectedSkills = {}
 }
@@ -357,6 +347,7 @@ end
 
 local function addMissingTrackedBuffDefaults()
     settings.trackedBuffs = settings.trackedBuffs or {}
+    local migrateHardcodedGliders = (tonumber(settings.hardcodedGliderDefaultsVersion) or 0) < 1
     local function copyRow(row)
         local copy = {}
         for k, v in pairs(row or {}) do copy[k] = v end
@@ -377,6 +368,7 @@ local function addMissingTrackedBuffDefaults()
             copy.buffNames = defaultRow.buffNames
             copy.gliderPattern = defaultRow.gliderPattern
             copy.itemType = defaultRow.itemType
+            copy.itemTypes = defaultRow.itemTypes
             copy.category = defaultRow.category
             copy.fixedCooldown = defaultRow.fixedCooldown
             copy.cooldownStartsOnActive = defaultRow.cooldownStartsOnActive
@@ -385,6 +377,9 @@ local function addMissingTrackedBuffDefaults()
             if defaultRow.name == "Sloth Glider" then
                 copy.source = defaultRow.source
                 if existing.icon == "Game\\ui\\icon\\icon_item_1648.dds" then copy.icon = nil end
+            end
+            if migrateHardcodedGliders and (defaultRow.name == "Sloth Glider" or defaultRow.name == "Flamefeather") then
+                copy.enabled = true
             end
         end
         return copy
@@ -442,6 +437,7 @@ local function addMissingTrackedBuffDefaults()
         if row.cooldownStartsOnActive == nil then row.cooldownStartsOnActive = true end
     end
     settings.trackedBuffs = ordered
+    if migrateHardcodedGliders then settings.hardcodedGliderDefaultsVersion = 1 end
 end
 
 local function trackedCooldownIsHardcoded(skillName, skillId)
@@ -523,6 +519,7 @@ local function loadSettings()
     if settings.overlayTextStyle ~= "outline" then settings.overlayTextStyle = "shadow" end
     settings.overlayTextShadow = settings.overlayTextStyle == "shadow"
     settings.compactModelLeftOffset = math.max(20, math.min(140, tonumber(settings.compactModelLeftOffset) or CONFIG.compactModelLeftOffset))
+    settings.modelRangeScaleLevel = math.max(0, math.min(10, tonumber(settings.modelRangeScaleLevel) or 0))
     settings.overlayShadowSize = nil
     settings.simpleColumnGap = math.max(0, math.min(73, tonumber(settings.simpleColumnGap) or 0))
     settings.simpleLineGap = math.max(0, math.min(23, tonumber(settings.simpleLineGap) or 0))
@@ -973,7 +970,8 @@ function TargetOverlay.equippedSnapshot(slot)
     local textInfo = OverlayUtils.safeCall(function() return api.Equipment:GetEquippedItemTooltipText("player", slot) end)
     return {
         name = OverlayUtils.itemName(info) or OverlayUtils.itemName(textInfo),
-        icon = OverlayUtils.iconPath(info) or OverlayUtils.iconPath(textInfo)
+        icon = OverlayUtils.iconPath(info) or OverlayUtils.iconPath(textInfo),
+        itemType = CooldownRecipes.ExtractItemType(info, textInfo)
     }
 end
 
@@ -1005,20 +1003,9 @@ function TargetOverlay.mountedPetSnapshot()
 end
 
 function TargetOverlay.trackedGliderMatches(row, glider)
-    local patterns = row and row.gliderPattern
-    if not patterns then return true end
-    local name = string.lower(tostring(glider and glider.name or ""))
-    if name == "" then return false end
-    local normalizedName = string.gsub(name, "^enhanced%s+", "")
-    if type(patterns) ~= "table" then patterns = {patterns} end
-    for _, pattern in ipairs(patterns) do
-        local wanted = string.lower(tostring(pattern or ""))
-        local normalizedWanted = string.gsub(wanted, "^enhanced%s+", "")
-        if wanted ~= "" and (name:find(wanted, 1, true) or normalizedName:find(normalizedWanted, 1, true)) then
-            return true
-        end
-    end
-    return false
+    local matched = CooldownRecipes.DeviceMatches(row, glider)
+    if matched ~= nil then return matched end
+    return true
 end
 
 function TargetOverlay.buffId(buff)
@@ -1081,8 +1068,9 @@ end
 
 function TargetOverlay.cooldownRowIcon(row)
     if not row then return nil end
-    if row.itemType then
-        local icon = TargetOverlay.itemIconByType(row.itemType)
+    local itemType = CooldownRecipes.FirstItemType(row)
+    if itemType then
+        local icon = TargetOverlay.itemIconByType(itemType)
         if icon then return icon end
     end
     return row.icon
@@ -2576,6 +2564,8 @@ function TargetOverlay.detectedRecipeRow(row, mode)
         recipe.name = gliderName
         recipe.source = gliderName
         recipe.icon = glider.icon or row.gliderIcon or recipe.icon
+        recipe.itemType = glider.itemType or row.gliderItemType
+        recipe.itemTypes = recipe.itemType and {recipe.itemType} or nil
         recipe.category = "glider"
         recipe.gliderPattern = {lowerPattern(gliderName)}
         if TargetOverlay.isStarTriggerCooldown(recipe) then
@@ -2678,6 +2668,7 @@ function recordDetectedSkill(skillName, skillId, sourceName, flatText, extra)
     if glider and glider.name then
         found.gliderName = glider.name
         found.gliderIcon = glider.icon or found.gliderIcon
+        found.gliderItemType = glider.itemType or found.gliderItemType
     end
     local mount = TargetOverlay.mountedPetSnapshot()
     if mount and mount.name then
@@ -3103,6 +3094,7 @@ local function detectedDetailText(row)
         "Pattern: " .. short(row.pattern, 58)
     }
     if row.gliderName then table.insert(pieces, "Glider: " .. short(row.gliderName, 58)) end
+    if row.gliderItemType then table.insert(pieces, "Glider item: " .. tostring(row.gliderItemType)) end
     if row.mountName then table.insert(pieces, "Mount: " .. short(row.mountName, 58)) end
     if row.description and row.description ~= "" then table.insert(pieces, "Desc: " .. short(row.description, 100)) end
     return table.concat(pieces, "\n")
@@ -3291,6 +3283,9 @@ function refreshSettingsButtons()
     if settingsWnd.scaleValue then
         settingsWnd.scaleValue:SetText(tostring(settings.uiScaleLevel or 0))
     end
+    if settingsWnd.modelRangeScaleValue then
+        settingsWnd.modelRangeScaleValue:SetText(tostring(settings.modelRangeScaleLevel or 0))
+    end
     if settingsWnd.modelLeftValue then
         settingsWnd.modelLeftValue:SetText(tostring(settings.compactModelLeftOffset or CONFIG.compactModelLeftOffset))
     end
@@ -3401,6 +3396,9 @@ local function shiftUiScale(delta, key)
     if settingsWnd and settingsWnd.scaleValue then
         settingsWnd.scaleValue:SetText(tostring(settings.uiScaleLevel or 0))
     end
+    if settingsWnd and settingsWnd.modelRangeScaleValue then
+        settingsWnd.modelRangeScaleValue:SetText(tostring(settings.modelRangeScaleLevel or 0))
+    end
     if settingsWnd and settingsWnd.intelScaleValue then
         settingsWnd.intelScaleValue:SetText(tostring(settings.targetWindowScaleLevel or 0))
     end
@@ -3431,8 +3429,8 @@ end
 
 local function createSettingsWindow()
     settingsWnd = api.Interface:CreateEmptyWindow("PowerRangerSettings", "UIParent")
-    settingsWnd:SetExtent(620, 783)
-    local x, y = TargetOverlay.safeWindowPosition(settings.settingsX, settings.settingsY, 620, 783)
+    settingsWnd:SetExtent(620, 811)
+    local x, y = TargetOverlay.safeWindowPosition(settings.settingsX, settings.settingsY, 620, 811)
     settingsWnd:AddAnchor("TOPLEFT", "UIParent", x, y)
     addBg(settingsWnd, 0, 0, 0, 0.96)
     local body = settingsWnd:CreateColorDrawable(COLORS.dark[1], COLORS.dark[2], COLORS.dark[3], COLORS.dark[4], "background")
@@ -3449,7 +3447,7 @@ local function createSettingsWindow()
     flatButton(settingsWnd, "power_ranger_close", "X", 584, 7, 22, 22, COLORS.button, function() settingsWnd:Show(false) end)
     settingsWnd.colorCubes = {}
 
-    local p1 = sectionPanel(settingsWnd, "power_ranger_model_panel", 18, 52, 584, 140, "Target Overhead")
+    local p1 = sectionPanel(settingsWnd, "power_ranger_model_panel", 18, 52, 584, 168, "Target Overhead")
     settingsWnd.modelCompactBtn = flatButton(p1, "power_ranger_toggle_model_compact", "", 16, 32, 116, 20, COLORS.active, function() toggleSetting("compactModelOverlay") end)
     label(p1, "power_ranger_scale_label", "Scale", 144, 35, 36, 14, 10, COLORS.muted, ALIGN.LEFT)
     flatButton(p1, "power_ranger_scale_down", "-", 182, 32, 22, 20, COLORS.button, function() shiftUiScale(-1) end)
@@ -3475,8 +3473,12 @@ local function createSettingsWindow()
     settingsWnd.colorCubes.modelGearscore = colorCube(p1, "power_ranger_model_color_gs_cube", 156, 112, "modelGearscore")
     label(p1, "power_ranger_model_color_class", "Class", 188, 116, 42, 14, 10, COLORS.white, ALIGN.LEFT)
     settingsWnd.colorCubes.modelClass = colorCube(p1, "power_ranger_model_color_class_cube", 230, 112, "modelClass")
+    label(p1, "power_ranger_model_range_scale_label", "Range size", 16, 144, 70, 14, 10, COLORS.muted, ALIGN.LEFT)
+    flatButton(p1, "power_ranger_model_range_scale_down", "-", 92, 140, 24, 20, COLORS.button, function() shiftUiScale(-1, "modelRangeScaleLevel") end)
+    settingsWnd.modelRangeScaleValue = label(p1, "power_ranger_model_range_scale_value", "0", 120, 143, 24, 14, 10, COLORS.white, ALIGN.CENTER)
+    flatButton(p1, "power_ranger_model_range_scale_up", "+", 148, 140, 24, 20, COLORS.button, function() shiftUiScale(1, "modelRangeScaleLevel") end)
 
-    local p2 = sectionPanel(settingsWnd, "power_ranger_window_panel", 18, 204, 584, 229, "Intel Window")
+    local p2 = sectionPanel(settingsWnd, "power_ranger_window_panel", 18, 232, 584, 229, "Intel Window")
     settingsWnd.targetWindowBtn = flatButton(p2, "power_ranger_toggle_window", "", 16, 32, 124, 22, COLORS.active, function() toggleSetting("showTargetWindow") end)
     settingsWnd.compactWindowBtn = flatButton(p2, "power_ranger_toggle_compact_window", "", 148, 32, 96, 22, COLORS.active, function() toggleSetting("compactTargetWindow") end)
     settingsWnd.testWindowBtn = flatButton(p2, "power_ranger_toggle_test_window", "", 252, 32, 142, 22, COLORS.active, function() toggleSetting("testTargetWindow") end)
@@ -3513,7 +3515,7 @@ local function createSettingsWindow()
         settingsWnd.colorCubes[field.key] = colorCube(p2, "power_ranger_info_color_" .. field.key, x + 106, y, field.key)
     end
 
-    local p4 = sectionPanel(settingsWnd, "power_ranger_self_panel", 18, 445, 584, 318, "Self Cooldowns & Gear")
+    local p4 = sectionPanel(settingsWnd, "power_ranger_self_panel", 18, 473, 584, 318, "Self Cooldowns & Gear")
     label(p4, "power_ranger_self_hint", "Known cooldown auras stay ID-based.", 14, 32, 264, 14, 10, COLORS.muted, ALIGN.LEFT)
     settingsWnd.nuziImportBtn = flatButton(p4, "power_ranger_toggle_nuzi_cd_import", "", 286, 29, 104, 20, COLORS.blue, function() toggleSetting("importNuziCooldowns") end)
     label(p4, "power_ranger_self_scale_label", "Scale", 410, 32, 40, 14, 10, COLORS.muted, ALIGN.LEFT)
@@ -3770,10 +3772,19 @@ end
 local function applyModelLayout()
     local scale = uiScaleFactor()
     local textStyle = settings.overlayTextStyle or "shadow"
-    if not mainCanvas or (mainCanvas._compactLayout == settings.compactModelOverlay and mainCanvas._layoutScale == scale and mainCanvas._layoutTextStyle == textStyle) then return end
+    local armorEnabled = settings.showArmorIcon ~= false
+    local weaponEnabled = settings.showWeaponIcon ~= false
+    if not mainCanvas
+        or (mainCanvas._compactLayout == settings.compactModelOverlay
+            and mainCanvas._layoutScale == scale
+            and mainCanvas._layoutTextStyle == textStyle
+            and mainCanvas._layoutArmorEnabled == armorEnabled
+            and mainCanvas._layoutWeaponEnabled == weaponEnabled) then return end
     mainCanvas._compactLayout = settings.compactModelOverlay
     mainCanvas._layoutScale = scale
     mainCanvas._layoutTextStyle = textStyle
+    mainCanvas._layoutArmorEnabled = armorEnabled
+    mainCanvas._layoutWeaponEnabled = weaponEnabled
     local buffSize = math.floor((CONFIG.buffIconSize * scale) + 0.5)
     armorBuffIcon:SetExtent(buffSize, buffSize)
     weaponBuffIcon:SetExtent(buffSize, buffSize)
@@ -3801,14 +3812,19 @@ local function applyModelLayout()
         local leftOffset = -(tonumber(settings.compactModelLeftOffset) or CONFIG.compactModelLeftOffset)
         local compactIconGap = math.floor((2 * scale) + 0.5)
         local outlineOffset = TargetOverlay.useOutlineText() and math.floor((4 * scale) + 0.5) or 0
+        local compactTextRight = leftOffset - outlineOffset
         targetGearscoreLabel.style:SetAlign(ALIGN.RIGHT)
         targetClassLabel.style:SetAlign(ALIGN.RIGHT)
         armorBuffIcon:AddAnchor("RIGHT", mainCanvas, "LEFT", leftOffset, 0)
-        weaponBuffIcon:AddAnchor("RIGHT", armorBuffIcon, "LEFT", -compactIconGap, 0)
+        if armorEnabled then
+            weaponBuffIcon:AddAnchor("RIGHT", armorBuffIcon, "LEFT", -compactIconGap, 0)
+        else
+            weaponBuffIcon:AddAnchor("RIGHT", mainCanvas, "LEFT", leftOffset, 0)
+        end
         targetGearscoreLabel:SetHeight(math.floor(((CONFIG.fontSize + 7) * scale) + 0.5))
         targetGearscoreLabel.style:SetFontSize(math.floor(((CONFIG.fontSize + 3) * scale) + 0.5))
-        targetGearscoreLabel:AddAnchor("BOTTOMRIGHT", armorBuffIcon, "TOPRIGHT", -outlineOffset, math.floor((-4 * scale) + 0.5))
-        targetClassLabel:AddAnchor("TOPRIGHT", armorBuffIcon, "BOTTOMRIGHT", -outlineOffset, math.floor((4 * scale) + 0.5))
+        targetGearscoreLabel:AddAnchor("BOTTOMRIGHT", mainCanvas, "LEFT", compactTextRight, math.floor((-16 * scale) + 0.5))
+        targetClassLabel:AddAnchor("TOPRIGHT", mainCanvas, "LEFT", compactTextRight, math.floor((16 * scale) + 0.5))
     else
         targetGearscoreLabel.style:SetAlign(ALIGN.CENTER)
         targetClassLabel.style:SetAlign(ALIGN.CENTER)
@@ -3839,9 +3855,10 @@ local function updateFastModelRange()
     local dist = tonumber(OverlayUtils.safeCall(function() return api.Unit:UnitDistance("target") end))
     if not dist or dist < 0 then dist = 0 end
     local scale = uiScaleFactor()
-    targetRangeCanvas:SetExtent(math.floor((86 * scale) + 0.5), math.floor(((CONFIG.fontSize + 6) * scale) + 0.5))
-    targetRangeLabel:SetExtent(math.floor((86 * scale) + 0.5), math.floor(((CONFIG.fontSize + 6) * scale) + 0.5))
-    targetRangeLabel.style:SetFontSize(math.floor((CONFIG.fontSize * scale) + 0.5))
+    local rangeScale = scale * uiScaleFactor("modelRangeScaleLevel")
+    targetRangeCanvas:SetExtent(math.floor((86 * rangeScale) + 0.5), math.floor(((CONFIG.fontSize + 6) * rangeScale) + 0.5))
+    targetRangeLabel:SetExtent(math.floor((86 * rangeScale) + 0.5), math.floor(((CONFIG.fontSize + 6) * rangeScale) + 0.5))
+    targetRangeLabel.style:SetFontSize(math.floor((CONFIG.fontSize * rangeScale) + 0.5))
     setModelLabel(targetRangeLabel, string.format("%.1fm", dist))
     setTextColor(targetRangeLabel, settingColor("modelRange"))
     targetRangeCanvas:AddAnchor("BOTTOM", "UIParent", "TOPLEFT", sX, sY - math.floor((44 * scale) + 0.5))
