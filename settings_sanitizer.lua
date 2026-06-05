@@ -2,12 +2,36 @@ local SettingsSanitizer = {}
 
 local function allowedScalar(value)
     local kind = type(value)
-    return kind == "string" or kind == "number" or kind == "boolean"
+    if kind == "string" or kind == "boolean" then return true end
+    if kind == "number" then
+        -- Reject NaN and +/-Infinity. The game serializer writes numbers with bare
+        -- tostring(), so a non-finite value becomes "nan" / "1.#INF" / "-1.#IND" --
+        -- none of which are valid Lua. That makes loadstring() fail on read, so the
+        -- ENTIRE addon_settings file deserializes to nil and InitAddons resets every
+        -- addon to {enabled=true}. Dropping the value lets defaults refill it instead.
+        return value == value and value ~= math.huge and value ~= -math.huge
+    end
+    return false
 end
+
+local RESERVED = {
+    ["and"] = true, ["break"] = true, ["do"] = true, ["else"] = true, ["elseif"] = true,
+    ["end"] = true, ["false"] = true, ["for"] = true, ["function"] = true, ["goto"] = true,
+    ["if"] = true, ["in"] = true, ["local"] = true, ["nil"] = true, ["not"] = true,
+    ["or"] = true, ["repeat"] = true, ["return"] = true, ["then"] = true, ["true"] = true,
+    ["until"] = true, ["while"] = true
+}
 
 local function allowedKey(key)
     local kind = type(key)
-    return kind == "string" or kind == "number"
+    if kind == "number" then return true end
+    if kind ~= "string" then return false end
+    -- The game serializer emits string keys as bare `key = value`. A key that is not a
+    -- plain Lua identifier (e.g. contains ":", "-", a space, or starts with a digit) or
+    -- that is a reserved word turns the WHOLE addon_settings file into invalid Lua, so
+    -- on the next read every addon resets. Drop such keys; defaults refill them.
+    if RESERVED[key] then return false end
+    return key:match("^[A-Za-z_][A-Za-z0-9_]*$") ~= nil
 end
 
 local function sanitizeTable(tbl, depth, seen)

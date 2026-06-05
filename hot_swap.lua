@@ -146,8 +146,48 @@ local function copyTable(value, depth)
     return copy
 end
 
+local function hasGearSets(list)
+    return type(list) == "table" and #list > 0
+end
+
+local function backupHotSwapGearSets()
+    if type(rootSettings) ~= "table" or type(settings) ~= "table" then return end
+    if not hasGearSets(settings.gear_sets) then return end
+    rootSettings.hotSwapGearSetsBackup = {
+        gear_sets = copyTable(settings.gear_sets),
+        activeLoadoutName = settings.activeLoadoutName,
+        x = settings.x,
+        y = settings.y,
+        settings_x = settings.settings_x,
+        settings_y = settings.settings_y,
+        open_direction = settings.open_direction,
+        hidden = settings.hidden
+    }
+end
+
+local function restoreHotSwapGearSetsFromBackup()
+    if type(rootSettings) ~= "table" or type(settings) ~= "table" then return false end
+    if hasGearSets(settings.gear_sets) then return false end
+    local backup = rootSettings.hotSwapGearSetsBackup
+    if type(backup) ~= "table" or not hasGearSets(backup.gear_sets) then return false end
+    settings.gear_sets = copyTable(backup.gear_sets) or {}
+    settings.activeLoadoutName = settings.activeLoadoutName or backup.activeLoadoutName
+    settings.x = settings.x or backup.x
+    settings.y = settings.y or backup.y
+    settings.settings_x = settings.settings_x or backup.settings_x
+    settings.settings_y = settings.settings_y or backup.settings_y
+    settings.open_direction = settings.open_direction or backup.open_direction
+    if settings.hidden == nil then settings.hidden = backup.hidden end
+    return hasGearSets(settings.gear_sets)
+end
+
 local function saveSettings()
+    backupHotSwapGearSets()
     SettingsSanitizer.Clean(rootSettings)
+    if api.Log and api.Log.Info then
+        local count = type(settings) == "table" and type(settings.gear_sets) == "table" and #settings.gear_sets or -1
+        pcall(function() api.Log:Info("[PowerRangerON] HotSwap save gear_sets=" .. tostring(count)) end)
+    end
     safeCall(function() api.SaveSettings() end)
 end
 
@@ -607,10 +647,11 @@ local function ensureSettings(source)
     if settings.open_direction ~= "up" then settings.open_direction = "down" end
     if settings.hidden == nil then settings.hidden = false end
     local changed = false
+    if restoreHotSwapGearSetsFromBackup() then changed = true end
     if settings.migratedFromStandalone ~= true then
         local legacy = safeCall(function() return api.GetSettings(LEGACY_ADDON_ID) end)
         SettingsSanitizer.Clean(legacy)
-        if type(legacy) == "table" and type(legacy.gear_sets) == "table" and #settings.gear_sets == 0 then
+        if type(legacy) == "table" and hasGearSets(legacy.gear_sets) and not hasGearSets(settings.gear_sets) then
             settings.gear_sets = copyTable(legacy.gear_sets) or {}
             settings.x = legacy.x
             settings.y = legacy.y
@@ -619,8 +660,10 @@ local function ensureSettings(source)
             settings.settings_x = legacy.settings_x
             settings.settings_y = legacy.settings_y
         end
-        settings.migratedFromStandalone = true
-        changed = true
+        if hasGearSets(settings.gear_sets) then
+            settings.migratedFromStandalone = true
+            changed = true
+        end
     end
     if convertLegacyLoadouts(settings.gear_sets) then changed = true end
     if changed then saveSettings() end

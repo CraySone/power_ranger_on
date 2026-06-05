@@ -10,6 +10,7 @@ local HotSwap = require("power_ranger_on/hot_swap")
 local ClassIntelProfiles = require("power_ranger_on/class_intel_profiles")
 local SkillProbe = require("power_ranger_on/skill_probe")
 local SettingsSanitizer = require("power_ranger_on/settings_sanitizer")
+local SettingsProfile = require("power_ranger_on/settings_profile")
 
 local TargetOverlay = {}
 TargetOverlay.uiHelpers = require("power_ranger_on/ui_helpers")
@@ -285,6 +286,8 @@ local TARGET_INFO_FIELDS = {
 }
 
 local settings = nil
+local settingsRoot = nil
+local settingsProfileKey = nil
 local mainCanvas = nil
 local armorBuffIcon = nil
 local weaponBuffIcon = nil
@@ -708,8 +711,29 @@ local function cleanHardcodedDetectedSkills()
     settings.detectedSkills = cleaned
 end
 
+-- Compact one-line trace emitted before/instead of each global settings write, so
+-- save-timing and data-shape regressions are visible in the client log. Saves are
+-- user-triggered (infrequent), so this is not a per-frame cost.
+function TargetOverlay.logSettingsSave(reason)
+    if not (api.Log and api.Log.Info) then return end
+    local hs = type(settings) == "table" and settings.hotSwap
+    local gearSets = type(hs) == "table" and hs.gear_sets
+    local gearCount = type(gearSets) == "table" and #gearSets or -1
+    local buffCount = type(settings) == "table" and type(settings.trackedBuffs) == "table" and #settings.trackedBuffs or -1
+    local hasProfiles = type(settingsRoot) == "table" and type(settingsRoot.characterProfiles) == "table"
+    local key = (type(settingsRoot) == "table" and settingsRoot.activeProfileKey) or "?"
+    pcall(function()
+        api.Log:Info("[PowerRangerON] settings " .. tostring(reason)
+            .. " profile=" .. tostring(key)
+            .. " hotSwap.gear_sets=" .. tostring(gearCount)
+            .. " trackedBuffs=" .. tostring(buffCount)
+            .. " characterProfiles=" .. tostring(hasProfiles))
+    end)
+end
+
 local function loadSettings()
-    settings = api.GetSettings(ADDON_ID) or {}
+    settingsRoot = api.GetSettings(ADDON_ID) or {}
+    settings, settingsProfileKey, playerName, settingsRoot = SettingsProfile.Resolve(api, settingsRoot)
     local simpleSpacingVersion = tonumber(settings.simpleSpacingVersion) or 1
     local hadSimpleSpacing = settings.simpleColumnGap ~= nil or settings.simpleLineGap ~= nil
     copyDefaults(settings, defaults)
@@ -769,10 +793,24 @@ local function loadSettings()
     settings.skillProbeLogging = false
     updateCompatState(true)
     refreshNuziCooldownRows(true)
+    SettingsSanitizer.Clean(settingsRoot or settings)
+    -- Do NOT api.SaveSettings() here. SaveAddonSettings() serializes EVERY addon's
+    -- live settings and rewrites the whole shared addon_settings file. Doing that
+    -- during the load window persisted other addons' transient/default state (the
+    -- "all addons reset + re-enabled on reload" bug). Migrations applied above stay
+    -- in memory and persist on the next genuine user-triggered save.
+    TargetOverlay.logSettingsSave("loaded (no write)")
 end
 
 local function saveSettings()
-    SettingsSanitizer.Clean(settings)
+    -- Guard: never write when our own settings table is missing/uninitialised --
+    -- that would push a default-shaped power_ranger_on branch into the shared file.
+    if type(settings) ~= "table" then
+        TargetOverlay.logSettingsSave("SKIPPED (settings not ready)")
+        return
+    end
+    SettingsSanitizer.Clean(settingsRoot or settings)
+    TargetOverlay.logSettingsSave("saving (user change)")
     pcall(function() api.SaveSettings() end)
 end
 
@@ -1096,6 +1134,14 @@ function TargetOverlay.getPlayerName()
     local id = OverlayUtils.safeCall(function() return api.Unit:GetUnitId("player") end)
     name = id and OverlayUtils.safeCall(function() return api.Unit:GetUnitNameById(id) end)
     return name and tostring(name) or nil
+end
+
+function TargetOverlay.getActiveSettings()
+    return settings
+end
+
+function TargetOverlay.getActiveProfileKey()
+    return settingsProfileKey
 end
 
 local function createIcon(parent, id, x, y, size)

@@ -23,7 +23,7 @@ local function Load()
     if active then return end
     active = true
     TargetOverlay.init()
-    HotSwap.init(api.GetSettings("power_ranger_on"))
+    HotSwap.init(TargetOverlay.getActiveSettings() or api.GetSettings("power_ranger_on"))
     pcall(function()
         michaelClientLib:initializeMichaelClient()
         local configMenu = ADDON:GetContent(UIC.SYSTEM_CONFIG_FRAME)
