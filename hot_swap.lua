@@ -1,6 +1,7 @@
 local api = require("api")
 local UiHelpers = require("power_ranger_on/ui_helpers")
 local HotSwapAuras = require("power_ranger_on/hot_swap_auras")
+local SettingsSanitizer = require("power_ranger_on/settings_sanitizer")
 
 local HotSwap = {}
 
@@ -143,6 +144,7 @@ local function copyTable(value, depth)
 end
 
 local function saveSettings()
+    SettingsSanitizer.Clean(rootSettings)
     safeCall(function() api.SaveSettings() end)
 end
 
@@ -548,6 +550,7 @@ local function ensureSettings(source)
     local changed = false
     if settings.migratedFromStandalone ~= true then
         local legacy = safeCall(function() return api.GetSettings(LEGACY_ADDON_ID) end)
+        SettingsSanitizer.Clean(legacy)
         if type(legacy) == "table" and type(legacy.gear_sets) == "table" and #settings.gear_sets == 0 then
             settings.gear_sets = copyTable(legacy.gear_sets) or {}
             settings.x = legacy.x

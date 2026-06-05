@@ -9,6 +9,7 @@ local CooldownLearning = require("power_ranger_on/cooldown_learning")
 local HotSwap = require("power_ranger_on/hot_swap")
 local ClassIntelProfiles = require("power_ranger_on/class_intel_profiles")
 local SkillProbe = require("power_ranger_on/skill_probe")
+local SettingsSanitizer = require("power_ranger_on/settings_sanitizer")
 
 local TargetOverlay = {}
 TargetOverlay.uiHelpers = require("power_ranger_on/ui_helpers")
@@ -772,6 +773,7 @@ local function loadSettings()
 end
 
 local function saveSettings()
+    SettingsSanitizer.Clean(settings)
     pcall(function() api.SaveSettings() end)
 end
 
