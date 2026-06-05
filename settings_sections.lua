@@ -115,12 +115,11 @@ function SettingsSections.BuildIntelWindow(wnd, ctx)
     wnd.colorCubes.guildFamilyFamily = colorCube(p, "power_ranger_guild_family_family_color", 500, 108, "guildFamilyFamily")
 
     band("profiles", 158, 120)
-    label(p, "power_ranger_class_profile_title", "Class profile stats", 24, 164, 126, 14, 10, colors.gold, ALIGN.LEFT)
-    wnd.classIntelBtn = flatButton(p, "power_ranger_toggle_class_profiles", "", 154, 160, 124, 20, colors.active, function() toggleSetting("classIntelEnabled") end)
-    label(p, "power_ranger_class_profile_label", "Edit", 306, 164, 28, 14, 10, colors.muted, ALIGN.LEFT)
-    flatButton(p, "power_ranger_class_profile_prev", "<", 338, 160, 24, 20, colors.button, function() cycleClassProfile(-1) end)
-    wnd.classIntelProfileLabel = label(p, "power_ranger_class_profile_value", "Melee", 368, 163, 94, 14, 10, colors.white, ALIGN.CENTER)
-    flatButton(p, "power_ranger_class_profile_next", ">", 468, 160, 24, 20, colors.button, function() cycleClassProfile(1) end)
+    label(p, "power_ranger_class_profile_title", "Profile stats", 24, 164, 92, 14, 10, colors.gold, ALIGN.LEFT)
+    label(p, "power_ranger_class_profile_label", "Edit", 154, 164, 28, 14, 10, colors.muted, ALIGN.LEFT)
+    flatButton(p, "power_ranger_class_profile_prev", "<", 190, 160, 24, 20, colors.button, function() cycleClassProfile(-1) end)
+    wnd.classIntelProfileLabel = label(p, "power_ranger_class_profile_value", "General", 220, 163, 116, 14, 10, colors.white, ALIGN.CENTER)
+    flatButton(p, "power_ranger_class_profile_next", ">", 342, 160, 24, 20, colors.button, function() cycleClassProfile(1) end)
     wnd.classIntelFieldButtons = {}
     if classProfiles then
         for i, field in ipairs(classProfiles.STATS or {}) do

@@ -105,8 +105,7 @@ local defaults = {
     showInfoToughness = false,
     showInfoResilience = false,
     showInfoCritRate = false,
-    classIntelEnabled = true,
-    classIntelEditProfile = "melee",
+    classIntelEditProfile = "general",
     classIntelProfiles = require("power_ranger_on/class_intel_profiles").DefaultProfiles(),
     showSelfPanel = true,
     showSelfCooldowns = true,
@@ -1224,10 +1223,9 @@ function TargetOverlay.fitCompactSummaryParts(widget, parts, maxWidth)
     return TargetOverlay.fitTextToWidth(widget, TargetOverlay.compactSummaryText(parts, 8, 4), maxWidth, 6)
 end
 
-local function classProfileStatVisible(targetInfo, className, statKey, settingKey)
+local function classProfileStatVisible(targetInfo, className, statKey)
     local profileValue = ClassIntelProfiles.ShouldShow(settings, targetInfo, className, statKey)
-    if profileValue ~= nil then return profileValue end
-    return settings[settingKey] ~= false
+    return profileValue == true
 end
 
 local function buildInfoRows(targetInfo, className, gearscore, pdef, mdef, pdefPct, mdefPct, extraStats, ownershipOnly)
@@ -1306,17 +1304,17 @@ local function buildInfoRows(targetInfo, className, gearscore, pdef, mdef, pdefP
         local range = TargetOverlay.getDistance("target")
         if range then rangeHeader = "  |  " .. tostring(range) .. "m" end
     end
-    if classProfileStatVisible(targetInfo, className, "pdef", "showInfoPdef") then addRow(defense, "pdef", "PDef: " .. OverlayUtils.defenseText(pdef, pdefPct)) end
-    if classProfileStatVisible(targetInfo, className, "mdef", "showInfoMdef") then addRow(defense, "mdef", "MDef: " .. OverlayUtils.defenseText(mdef, mdefPct)) end
+    if classProfileStatVisible(targetInfo, className, "pdef") then addRow(defense, "pdef", "PDef: " .. OverlayUtils.defenseText(pdef, pdefPct)) end
+    if classProfileStatVisible(targetInfo, className, "mdef") then addRow(defense, "mdef", "MDef: " .. OverlayUtils.defenseText(mdef, mdefPct)) end
     extraStats = extraStats or {}
-    if classProfileStatVisible(targetInfo, className, "block", "showInfoBlock") then addRow(defense, "block", extraStats.block and ("Block: " .. extraStats.block) or nil) end
-    if classProfileStatVisible(targetInfo, className, "parry", "showInfoParry") then addRow(defense, "parry", extraStats.parry and ("Parry: " .. extraStats.parry) or nil) end
-    if classProfileStatVisible(targetInfo, className, "evasion", "showInfoEvasion") then addRow(defense, "evasion", extraStats.evasion and ("Evasion: " .. extraStats.evasion) or nil) end
-    if classProfileStatVisible(targetInfo, className, "toughness", "showInfoToughness") then addRow(defense, "toughness", extraStats.toughness and ("Tough: " .. extraStats.toughness) or nil) end
-    if classProfileStatVisible(targetInfo, className, "resilience", "showInfoResilience") then
+    if classProfileStatVisible(targetInfo, className, "block") then addRow(defense, "block", extraStats.block and ("Block: " .. extraStats.block) or nil) end
+    if classProfileStatVisible(targetInfo, className, "parry") then addRow(defense, "parry", extraStats.parry and ("Parry: " .. extraStats.parry) or nil) end
+    if classProfileStatVisible(targetInfo, className, "evasion") then addRow(defense, "evasion", extraStats.evasion and ("Evasion: " .. extraStats.evasion) or nil) end
+    if classProfileStatVisible(targetInfo, className, "toughness") then addRow(defense, "toughness", extraStats.toughness and ("Tough: " .. extraStats.toughness) or nil) end
+    if classProfileStatVisible(targetInfo, className, "resilience") then
         addRow(defense, "resilience", extraStats.resilience and ("Resil: " .. extraStats.resilience) or nil)
     end
-    if classProfileStatVisible(targetInfo, className, "critRate", "showInfoCritRate") then addRow(defense, "critRate", extraStats.critRate and ("Crit: " .. extraStats.critRate) or nil) end
+    if classProfileStatVisible(targetInfo, className, "critRate") then addRow(defense, "critRate", extraStats.critRate and ("Crit: " .. extraStats.critRate) or nil) end
 
     local rows = {}
     if not compact and (#identity > 0 or rangeHeader ~= "") then
@@ -2972,12 +2970,11 @@ function refreshSettingsButtons()
         settingsWnd.shadowBtn:SetTone(COLORS.active)
     end
     setToggleButton(settingsWnd.targetWindowBtn, settings.showTargetWindow, "Stats window")
-    setToggleButton(settingsWnd.classIntelBtn, settings.classIntelEnabled == true, "Class profiles")
     if settingsWnd.classIntelProfileLabel then
         settingsWnd.classIntelProfileLabel:SetText(ClassIntelProfiles.Label(settings.classIntelEditProfile))
     end
     if settingsWnd.classIntelFieldButtons then
-        local profile = settings.classIntelProfiles and settings.classIntelProfiles[settings.classIntelEditProfile or "melee"] or {}
+        local profile = settings.classIntelProfiles and settings.classIntelProfiles[settings.classIntelEditProfile or "general"] or {}
         for _, field in ipairs(ClassIntelProfiles.STATS) do
             local btn = settingsWnd.classIntelFieldButtons[field.key]
             if btn then setToggleButton(btn, profile[field.key] == true, field.label) end
@@ -3739,7 +3736,7 @@ function TargetOverlay.update(dt)
     local className = TargetOverlay.getClassName(usableInfo) or "Unknown"
     local pdef, mdef, pdefPct, mdefPct = TargetOverlay.fillDefense(nil, nil, nil, nil, tokenInfo)
     pdef, mdef, pdefPct, mdefPct = TargetOverlay.fillDefense(pdef, mdef, pdefPct, mdefPct, targetInfo or usableInfo)
-    local needsExtraStats = settings.classIntelEnabled == true or settings.showInfoBlock or settings.showInfoParry or settings.showInfoEvasion or settings.showInfoToughness or settings.showInfoResilience or settings.showInfoCritRate
+    local needsExtraStats = ClassIntelProfiles.NeedsExtraStats(settings)
     local modifierInfo = nil
     if needsExtraStats or not pdef or not mdef or not pdefPct or not mdefPct then
         modifierInfo = OverlayUtils.safeCall(function() return api.Unit:UnitModifierInfo("target") end)

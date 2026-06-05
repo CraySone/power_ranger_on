@@ -13,6 +13,7 @@ local TITLE_RETRY_COUNT = 3
 local AUTO_CHECK_MS = 150
 local EQUIP_VERIFY_DELAY_MS = 700
 local BAG_SLOT_COUNT = 150
+local SWIMMING_BLOCKED_ZONE_HINTS = {"growlgate", "freedich"}
 
 local MAIN = {
     width = 160,
@@ -93,6 +94,8 @@ local pendingCheck = nil
 local pendingCheckDelay = 0
 local autoElapsed = 0
 local autoActiveKey = nil
+local autoZoneMs = 1000
+local autoZoneName = ""
 local selectedSetIndex = nil
 local selectedCustomIndex = nil
 local gearViewWnd = nil
@@ -102,7 +105,7 @@ local selectedLoadout
 local createSettingsWindow
 
 local DEFAULT_CUSTOM_TRIGGERS = {
-    swimming = { enabled = true, loadoutName = "" },
+    swimming = { enabled = true, loadoutName = "", blockFreedichGrowlgate = true },
     captain = { enabled = true, loadoutName = "" },
     sleep = { enabled = true, loadoutName = "" },
     wakeup = { enabled = true, loadoutName = "" }
@@ -414,6 +417,9 @@ local function ensureAutoSettings()
     if type(settings.autoTriggers.swimming) ~= "table" then
         settings.autoTriggers.swimming = copyTable(DEFAULT_CUSTOM_TRIGGERS.swimming)
     end
+    if settings.autoTriggers.swimming.blockFreedichGrowlgate == nil then
+        settings.autoTriggers.swimming.blockFreedichGrowlgate = true
+    end
     if type(settings.autoTriggers.captain) ~= "table" then
         settings.autoTriggers.captain = copyTable(DEFAULT_CUSTOM_TRIGGERS.captain)
     end
@@ -434,6 +440,59 @@ local anyAuraMatches = HotSwapAuras.anyAuraMatches
 local swimmingActive = HotSwapAuras.swimmingActive
 local sleepActive = HotSwapAuras.sleepActive
 local wakeupActive = HotSwapAuras.wakeupActive
+
+local function refreshCurrentZoneName()
+    autoZoneMs = (tonumber(autoZoneMs) or 0) + AUTO_CHECK_MS
+    if autoZoneMs < 1000 and trim(autoZoneName) ~= "" then
+        return autoZoneName
+    end
+    autoZoneMs = 0
+    local zoneName = ""
+    if api.Unit and api.Unit.GetCurrentZoneGroup and api.Zone and api.Zone.GetZoneStateInfoByZoneId then
+        local currentZoneGroup = safeCall(function()
+            return api.Unit:GetCurrentZoneGroup()
+        end)
+        local candidates = {}
+        if type(currentZoneGroup) == "number" then
+            candidates[#candidates + 1] = currentZoneGroup
+        elseif type(currentZoneGroup) == "table" then
+            for _, value in ipairs(currentZoneGroup) do
+                local zoneId = tonumber(value)
+                if zoneId and zoneId > 0 then
+                    candidates[#candidates + 1] = zoneId
+                end
+            end
+        end
+        for _, zoneId in ipairs(candidates) do
+            local zoneInfo = safeCall(function()
+                return api.Zone:GetZoneStateInfoByZoneId(zoneId)
+            end)
+            if type(zoneInfo) == "table" and trim(zoneInfo.zoneName) ~= "" then
+                zoneName = trim(zoneInfo.zoneName)
+                if zoneInfo.isCurrentZone == true then
+                    break
+                end
+            end
+        end
+    end
+    autoZoneName = zoneName
+    return zoneName
+end
+
+local function isSwimmingZoneBlocked()
+    local trigger = settings and settings.autoTriggers and settings.autoTriggers.swimming
+    if type(trigger) == "table" and trigger.blockFreedichGrowlgate == false then
+        return false
+    end
+    local zoneName = lower(refreshCurrentZoneName())
+    if zoneName == "" then return false end
+    for _, blocked in ipairs(SWIMMING_BLOCKED_ZONE_HINTS) do
+        if zoneName:find(blocked, 1, true) then
+            return true
+        end
+    end
+    return false
+end
 
 local function isPlayerInCombat()
     if not api.Unit or not api.Unit.UnitCombatState then return false end
@@ -785,7 +844,7 @@ end
 local function activeAutoLoadout()
     ensureAutoSettings()
     local buffs, debuffs = readPlayerAuras()
-    if settings.autoTriggers.swimming.enabled ~= false and swimmingActive(buffs, debuffs) then
+    if settings.autoTriggers.swimming.enabled ~= false and not isSwimmingZoneBlocked() and swimmingActive(buffs, debuffs) then
         local set = gearSetByName(settings.autoTriggers.swimming.loadoutName)
         if set then return "swimming:" .. tostring(set.name), set, "Swimming" end
     end
@@ -1117,6 +1176,11 @@ local function addSettingsControls()
             return shortText(name, 18)
         end
         ui.swimValue:SetText(triggerText(settings.autoTriggers.swimming))
+        if ui.swimBlockBtn then
+            local blocked = settings.autoTriggers.swimming.blockFreedichGrowlgate ~= false
+            ui.swimBlockBtn:SetCleanText(blocked and "FD/GG Block" or "FD/GG Allow")
+            ui.swimBlockBtn:SetTone(blocked and COLORS.active or COLORS.button)
+        end
         ui.captainValue:SetText(triggerText(settings.autoTriggers.captain))
         ui.sleepValue:SetText(triggerText(settings.autoTriggers.sleep))
         ui.wakeupValue:SetText(triggerText(settings.autoTriggers.wakeup))
@@ -1200,6 +1264,11 @@ local function addSettingsControls()
         assignOrToggleTrigger("swimming")
     end, ALIGN.CENTER)
     ui.swimValue = label(ui.autoPanel, "power_ranger_hs_auto_swim_value", "-", 76, 58, 100, 14, 10, COLORS.muted, ALIGN.LEFT)
+    ui.swimBlockBtn = flatButton(ui.autoPanel, "power_ranger_hs_auto_swim_block", "", 414, 54, 106, 20, COLORS.active, function()
+        settings.autoTriggers.swimming.blockFreedichGrowlgate = settings.autoTriggers.swimming.blockFreedichGrowlgate == false
+        saveSettings()
+        refreshAll()
+    end, ALIGN.CENTER)
     flatButton(ui.autoPanel, "power_ranger_hs_auto_captain", "Captain", 206, 54, 70, 20, COLORS.active, function()
         assignOrToggleTrigger("captain")
     end, ALIGN.CENTER)

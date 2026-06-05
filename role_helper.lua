@@ -153,6 +153,16 @@ function RoleHelper.getClassName(classTable)
     return classes[key]
 end
 
+function RoleHelper.getClassKey(className)
+    if not className then return nil end
+    local needle = string.lower(tostring(className or ""))
+    if needle == "" then return nil end
+    for key, name in pairs(classes) do
+        if string.lower(tostring(name or "")) == needle then return key end
+    end
+    return nil
+end
+
 -- Check if a value exists in a table (case-insensitive)
 local function hasValue(tab, val)
     if not tab or not val then return false end
