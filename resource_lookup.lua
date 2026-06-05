@@ -7,12 +7,18 @@ local ResourceLookup = {}
 local buffIconCache = {}
 local buffTooltipCache = {}
 local skillIconCache = {}
+local iconOverrides = {
+    [8000798] = "game/ui/icon/icon_skill_seahorse02.dds"
+}
 
 function ResourceLookup.BuffTooltipById(id, optionalBuffHelper)
     if id == nil then return nil end
     local key = tostring(id or "")
     if buffTooltipCache[key] ~= nil then return buffTooltipCache[key] or nil end
-    local tooltip = OverlayUtils.safeCall(function() return api.Ability:GetBuffTooltip(tonumber(id), 1) end)
+    local tooltip = OverlayUtils.safeCall(function() return api.Ability:GetBuffTooltip(tonumber(id), 0) end)
+    if not tooltip then
+        tooltip = OverlayUtils.safeCall(function() return api.Ability:GetBuffTooltip(tonumber(id), 1) end)
+    end
     if not tooltip then
         tooltip = OverlayUtils.safeCall(function() return api.Ability.GetBuffTooltip(tonumber(id)) end)
     end
@@ -45,14 +51,58 @@ function ResourceLookup.ItemIconByType(itemType)
     return path
 end
 
-function ResourceLookup.CooldownRowIcon(row)
+function ResourceLookup.CooldownAbilityIcon(row)
     if not row then return nil end
+    local iconType = string.lower(tostring(row.icon_type or row.iconType or ""))
+    local iconId = row.icon_id or row.iconId
+    if iconId then
+        local icon = ResourceLookup.IconPathByType(iconType, iconId)
+        if icon then return icon end
+    end
+    local skillId = row.skillId or row.skill_id or row.id
+    if skillId then
+        local icon = ResourceLookup.SkillIconById(skillId) or ResourceLookup.BuffIconById(skillId)
+        if icon then return icon end
+    end
+    if type(row.buffIds) == "table" and row.buffIds[1] then
+        local icon = ResourceLookup.BuffIconById(row.buffIds[1])
+        if icon then return icon end
+    end
+    if row.icon and row.icon ~= row.recipeDeviceIcon then return row.icon end
+    return nil
+end
+
+function ResourceLookup.CooldownDeviceIcon(row)
+    if not row then return nil end
+    if row.recipeDeviceIconLocked and row.recipeDeviceIcon then return row.recipeDeviceIcon end
+    if row.recipeDeviceItemType then
+        local icon = ResourceLookup.ItemIconByType(row.recipeDeviceItemType)
+        if icon then return icon end
+    end
+    if row.recipeDeviceIcon then return row.recipeDeviceIcon end
+    if row.deviceIcon then return row.deviceIcon end
     local itemType = CooldownRecipes.FirstItemType(row)
     if itemType then
         local icon = ResourceLookup.ItemIconByType(itemType)
         if icon then return icon end
     end
-    return row.icon
+    if row.icon and row.icon == row.recipeDeviceIcon then return row.icon end
+    return nil
+end
+
+function ResourceLookup.CooldownRowIcon(row)
+    return ResourceLookup.CooldownAbilityIcon(row) or ResourceLookup.CooldownDeviceIcon(row)
+end
+
+function ResourceLookup.IconPathByType(iconType, iconId)
+    iconId = tonumber(iconId)
+    if not iconId or iconId <= 0 then return nil end
+    local override = iconOverrides[iconId]
+    if override then return override end
+    iconType = string.lower(tostring(iconType or "buff"))
+    if iconType == "item" then return ResourceLookup.ItemIconByType(iconId) end
+    if iconType == "skill" then return ResourceLookup.SkillIconById(iconId) end
+    return ResourceLookup.BuffIconById(iconId) or ResourceLookup.SkillIconById(iconId) or ResourceLookup.ItemIconByType(iconId)
 end
 
 function ResourceLookup.BuffCooldownById(id, optionalBuffHelper)
@@ -91,8 +141,17 @@ function ResourceLookup.SkillIconById(id)
     if id == nil then return nil end
     local key = tostring(id or "")
     if skillIconCache[key] ~= nil then return skillIconCache[key] end
-    local tooltip = OverlayUtils.safeCall(function() return api.Skill:GetSkillTooltip(tonumber(id)) end)
+    local override = iconOverrides[tonumber(id)]
+    if override then
+        OverlayUtils.cachePut(skillIconCache, key, override)
+        return override
+    end
+    local tooltip = OverlayUtils.safeCall(function() return api.Ability:GetBuffTooltip(tonumber(id), 0) end)
     local path = OverlayUtils.iconPath(tooltip)
+    if not path then
+        tooltip = OverlayUtils.safeCall(function() return api.Skill:GetSkillTooltip(tonumber(id)) end)
+        path = OverlayUtils.iconPath(tooltip)
+    end
     if not path then
         tooltip = OverlayUtils.safeCall(function() return api.Ability:GetBuffTooltip(tonumber(id), 1) end)
         path = OverlayUtils.iconPath(tooltip)

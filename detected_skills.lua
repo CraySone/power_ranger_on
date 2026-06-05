@@ -26,6 +26,8 @@ function DetectedSkills.DetailText(row)
     if row.gliderName then table.insert(pieces, "Glider: " .. short(row.gliderName, 58)) end
     if row.gliderItemType then table.insert(pieces, "Glider item: " .. tostring(row.gliderItemType)) end
     if row.mountName then table.insert(pieces, "Mount: " .. short(row.mountName, 58)) end
+    if row.mountUnitId then table.insert(pieces, "Mount unit: " .. tostring(row.mountUnitId)) end
+    if row.mountItemType then table.insert(pieces, "Mount item: " .. tostring(row.mountItemType)) end
     if row.description and row.description ~= "" then table.insert(pieces, "Desc: " .. short(row.description, 100)) end
     return table.concat(pieces, "\n")
 end
@@ -42,22 +44,121 @@ function DetectedSkills.ShowDetails(ctx, index)
     ctx.refreshRows()
 end
 
+local function detectionSummary(row)
+    if not row then return "" end
+    local parts = {}
+    if row.id then parts[#parts + 1] = "ID " .. tostring(row.id) end
+    local auraKind = tostring(row.auraKind or row.kind or "")
+    local name = row.name or row.pattern
+    if auraKind ~= "" and auraKind ~= "skill" then
+        local prettyKind = auraKind:sub(1, 1):upper() .. auraKind:sub(2)
+        parts[#parts + 1] = prettyKind .. " " .. tostring(name or "-")
+    elseif name then
+        parts[#parts + 1] = "Skill " .. tostring(name)
+    end
+    local mana = tonumber(row.manaSpent or row.petManaSpent or row.mountManaSpent)
+    local playerMana = tonumber(row.playerManaSpent)
+    if mana and mana > 0 then parts[#parts + 1] = "Pet mana " .. tostring(mana) end
+    if playerMana and playerMana > 0 then parts[#parts + 1] = "Mana " .. tostring(playerMana) end
+    if not mana and not playerMana then parts[#parts + 1] = "Mana -" end
+    return table.concat(parts, " | ")
+end
+
+local function hasManaTrigger(row)
+    local value = tonumber(row and (row.manaSpent or row.petManaSpent or row.mountManaSpent or row.playerManaSpent))
+    return value ~= nil and value > 0
+end
+
+local function lowerPattern(value)
+    value = string.lower(tostring(value or ""))
+    value = value:gsub("^%s+", ""):gsub("%s+$", "")
+    value = value:gsub("%s+", " ")
+    return value
+end
+
+local function buildTrackedSkill(ctx, row, mode)
+    local tracked = {
+        enabled = true,
+        name = row.name or row.pattern or tostring(row.id),
+        pattern = row.pattern or string.lower(tostring(row.name or "")),
+        id = row.id,
+        icon = row.icon,
+        source = row.source,
+        category = row.category,
+        cooldown = tonumber(row.cooldown) or 30
+    }
+    if mode == "mount" then
+        local mountName = row.mountName or row.source or "Mount"
+        local canonical = ctx.canonicalMountDevice and ctx.canonicalMountDevice(mountName)
+        local key = canonical and canonical.key
+        local name = canonical and canonical.name
+        local names = canonical and canonical.names
+        tracked.category = "mount"
+        tracked.source = name or mountName
+        tracked.recipeDeviceKind = "mount"
+        tracked.recipeDeviceName = name or mountName
+        tracked.recipeDeviceKey = key or ("custom_mount_" .. lowerPattern(mountName))
+        tracked.mountName = name or mountName
+        tracked.mountNames = names or {mountName}
+        tracked.recipeDeviceItemType = canonical and (canonical.displayItemType or canonical.itemType)
+        tracked.recipeDeviceIcon = canonical and canonical.icon
+    elseif mode == "glider" then
+        local gliderName = row.gliderName or row.source or "Glider"
+        local canonical = ctx.canonicalGliderDevice and ctx.canonicalGliderDevice(gliderName)
+        tracked.category = "glider"
+        tracked.source = canonical and canonical.name or gliderName
+        tracked.recipeDeviceKind = "glider"
+        tracked.recipeDeviceName = canonical and canonical.name or gliderName
+        tracked.recipeDeviceKey = canonical and canonical.key or ("custom_glider_" .. lowerPattern(gliderName))
+        tracked.gliderPattern = canonical and canonical.patterns or {lowerPattern(gliderName)}
+        tracked.itemTypes = canonical and canonical.itemTypes
+        tracked.recipeDeviceItemType = canonical and canonical.displayItemType
+        tracked.recipeDeviceIcon = canonical and canonical.icon
+    end
+    return tracked
+end
+
 function DetectedSkills.ToggleTracking(ctx, index, mode)
     local settings = ctx.settings
     local row = settings.detectedSkills and settings.detectedSkills[index]
     if not row then return end
-    if row.kind == "buff" then
+    if row.kind == "buff" or ((mode == "glider" or mode == "mount") and hasManaTrigger(row)) then
         settings.trackedBuffs = settings.trackedBuffs or {}
         mode = mode or "aura"
         local trackedIndex = ctx.detectedBuffTrackedIndex(row, mode)
         if trackedIndex then
-            ctx.buffState[ctx.trackedBuffKey(settings.trackedBuffs[trackedIndex])] = nil
-            table.remove(settings.trackedBuffs, trackedIndex)
+            local tracked = settings.trackedBuffs[trackedIndex]
+            if ctx.trackedBuffIsDefault and ctx.trackedBuffIsDefault(tracked) then
+                if row.icon then
+                    tracked.icon = row.icon
+                    tracked.icon_type = nil
+                    tracked.icon_id = nil
+                    tracked.iconType = nil
+                    tracked.iconId = nil
+                end
+                if row.mountItemType and not tracked.recipeDeviceItemType then
+                    tracked.recipeDeviceItemType = row.mountItemType
+                    tracked.recipeDeviceIcon = nil
+                end
+                if row.gliderItemType and not tracked.recipeDeviceItemType then
+                    tracked.recipeDeviceItemType = row.gliderItemType
+                    tracked.recipeDeviceIcon = nil
+                end
+                if row.mountIcon and not tracked.recipeDeviceItemType then tracked.recipeDeviceIcon = row.mountIcon end
+                if row.gliderIcon and not tracked.recipeDeviceItemType then tracked.recipeDeviceIcon = row.gliderIcon end
+                table.remove(settings.detectedSkills, index)
+            else
+                ctx.buffState[ctx.trackedBuffKey(tracked)] = nil
+                table.remove(settings.trackedBuffs, trackedIndex)
+            end
         elseif mode == "aura" and ctx.trackedCooldownIsHardcoded(row.name or row.pattern, row.id) then
             table.remove(settings.detectedSkills, index)
         else
             local recipe = ctx.detectedRecipeRow(row, mode)
-            if recipe then table.insert(settings.trackedBuffs, recipe) end
+            if recipe then
+                table.insert(settings.trackedBuffs, recipe)
+                if ctx.learnCooldownDevice then ctx.learnCooldownDevice(recipe) end
+            end
         end
         ctx.refreshEventSubscriptions()
         ctx.saveSettings()
@@ -75,16 +176,7 @@ function DetectedSkills.ToggleTracking(ctx, index, mode)
     elseif ctx.trackedCooldownIsHardcoded(row.name or row.pattern, row.id) then
         table.remove(settings.detectedSkills, index)
     else
-        table.insert(settings.trackedSkills, {
-            enabled = true,
-            name = row.name or row.pattern or tostring(row.id),
-            pattern = row.pattern or string.lower(tostring(row.name or "")),
-            id = row.id,
-            icon = row.icon,
-            source = row.source,
-            category = row.category,
-            cooldown = tonumber(row.cooldown) or 30
-        })
+        table.insert(settings.trackedSkills, buildTrackedSkill(ctx, row, mode))
     end
     ctx.refreshEventSubscriptions()
     ctx.saveSettings()
@@ -104,32 +196,34 @@ function DetectedSkills.RefreshRows(ctx)
                 ctx.setToggleButton(ui.auraButton, ctx.detectedBuffTrackedIndex(row, "aura") ~= nil, "Aura")
                 ctx.setToggleButton(ui.gliderButton, ctx.detectedBuffTrackedIndex(row, "glider") ~= nil, "Glid")
                 ctx.setToggleButton(ui.mountButton, ctx.detectedBuffTrackedIndex(row, "mount") ~= nil, "Mount")
-                ui.gliderButton:Show(true)
-                ui.mountButton:Show(true)
+                ui.gliderButton:Show(row.kind == "buff" or row.gliderName or row.category == "glider")
+                ui.mountButton:Show(row.kind == "buff" or row.mountName or row.category == "mount")
+            elseif row.mountName or row.gliderName or row.category == "mount" or row.category == "glider" then
+                local skillTracked = ctx.trackedSkillIndex(row.name or row.pattern, row.id) ~= nil
+                ctx.setToggleButton(ui.auraButton, skillTracked, "Skill")
+                ctx.setToggleButton(ui.gliderButton, skillTracked and (row.gliderName or row.category == "glider"), "Glid")
+                ctx.setToggleButton(ui.mountButton, skillTracked and (row.mountName or row.category == "mount"), "Mount")
+                ui.gliderButton:Show(row.gliderName ~= nil or row.category == "glider")
+                ui.mountButton:Show(row.mountName ~= nil or row.category == "mount")
             else
                 ctx.setToggleButton(ui.auraButton, ctx.trackedSkillIndex(row.name or row.pattern, row.id) ~= nil, "Skill")
                 ui.gliderButton:Show(false)
                 ui.mountButton:Show(false)
             end
-            ctx.setToggleButton(ui.detailsButton, settings.detectedDetailsIndex == i, "Info")
             ctx.setEquipIcon(ui.icon, row.icon or (row.kind == "buff" and ctx.buffIconById(row.id) or ctx.skillIconById(row.id)))
-            ui.name:SetText(OverlayUtils.shortText(row.name or row.pattern or tostring(row.id or "Unknown"), 22))
-            local context = row.source or "Unknown"
+            ui.name:SetText(OverlayUtils.shortText(row.name or row.pattern or tostring(row.id or "Unknown"), 17))
+            local context = detectionSummary(row)
             if row.gliderName then
                 context = context .. " | G:" .. tostring(row.gliderName)
             elseif row.mountName then
                 context = context .. " | M:" .. tostring(row.mountName)
             end
-            ui.meta:SetText(OverlayUtils.shortText((row.kind == "buff" and "Aura " or "Skill ") .. (row.id and ("ID " .. tostring(row.id) .. " | ") or "") .. context, 26))
+            ui.meta:SetText(OverlayUtils.shortText(context, 48))
             ui.seen:SetText("x" .. tostring(row.seen or 1))
             ui.root:Show(true)
         else
             ui.root:Show(false)
         end
-    end
-    if wnd.details then
-        local detailRow = settings.detectedSkills and settings.detectedSkills[settings.detectedDetailsIndex or 0]
-        wnd.details:SetText(DetectedSkills.DetailText(detailRow))
     end
 end
 

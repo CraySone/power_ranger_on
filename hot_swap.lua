@@ -1,5 +1,6 @@
 local api = require("api")
 local UiHelpers = require("power_ranger_on/ui_helpers")
+local HotSwapAuras = require("power_ranger_on/hot_swap_auras")
 
 local HotSwap = {}
 
@@ -71,6 +72,7 @@ local COLORS = {
     danger = {0.24, 0.09, 0.09, 0.95},
     blue = {0.10, 0.18, 0.30, 0.95},
     gold = {1, 0.84, 0, 1},
+    green = {0.38, 0.95, 0.44, 1},
     white = {1, 1, 1, 1},
     muted = {0.68, 0.70, 0.74, 1}
 }
@@ -97,11 +99,6 @@ local customPage = 1
 local detectedPage = 1
 local selectedLoadout
 local createSettingsWindow
-local anyAuraMatches
-
-local AUTO_SWIMMING_HINTS = {
-    "rough sea winds"
-}
 
 local DEFAULT_CUSTOM_TRIGGERS = {
     swimming = { enabled = true, loadoutName = "" },
@@ -157,6 +154,39 @@ local function setStatus(text, isError)
         settingsWnd.status:SetText(value)
         settingsWnd.status.style:SetColor(color[1], color[2], color[3], color[4])
     end
+end
+
+local function chatWarning(text)
+    local value = tostring(text or "")
+    if value == "" then return end
+    if api.Log and api.Log.Warning then
+        local ok = pcall(function() api.Log:Warning(value) end)
+        if ok then return end
+    end
+    if api.Log and api.Log.Info then
+        safeCall(function() api.Log:Info(value) end)
+    end
+end
+
+local function refreshActiveLabel()
+    if canvas and canvas.activeLabel then
+        local name = settings and settings.activeLoadoutName or ""
+        name = tostring(name or "")
+        if #name > 11 then name = name:sub(1, 10) .. "." end
+        canvas.activeLabel:SetText(name ~= "" and ("Active: " .. name) or "Active: -")
+        if name ~= "" then
+            canvas.activeLabel.style:SetColor(COLORS.green[1], COLORS.green[2], COLORS.green[3], COLORS.green[4])
+        else
+            canvas.activeLabel.style:SetColor(COLORS.muted[1], COLORS.muted[2], COLORS.muted[3], COLORS.muted[4])
+        end
+    end
+end
+
+local function setActiveLoadout(set)
+    if not settings or type(set) ~= "table" then return end
+    settings.activeLoadoutName = tostring(set.name or "")
+    saveSettings()
+    refreshActiveLabel()
 end
 
 local function shortText(value, maxLen)
@@ -369,69 +399,12 @@ local function gearSetByName(name)
     return nil
 end
 
-local function customAuraKey(row)
-    if type(row) ~= "table" then return nil end
-    if tonumber(row.id) then return "id:" .. tostring(math.floor(tonumber(row.id))) end
-    local name = lower(row.name or row.pattern or row.buffName)
-    if name == "" then return nil end
-    return "name:" .. name
-end
-
-local function auraMatchFromRow(row)
-    if type(row) ~= "table" then return nil end
-    local name = trim(row.name or row.pattern or row.buffName or tostring(row.id or ""))
-    local id = tonumber(row.id)
-    if name == "" and not id then return nil end
-    return {
-        id = id,
-        name = name,
-        query = trim(row.pattern or row.buffName or row.name or tostring(row.id or "")),
-        source = row.source or "Detected"
-    }
-end
-
-local function auraMatchKey(match)
-    if type(match) ~= "table" then return nil end
-    if tonumber(match.id) then return "id:" .. tostring(math.floor(tonumber(match.id))) end
-    local name = lower(match.query or match.name)
-    if name == "" then return nil end
-    return "name:" .. name
-end
-
-local function normalizeCustomAura(entry)
-    if type(entry) ~= "table" then return false end
-    local changed = false
-    if type(entry.matches) ~= "table" then
-        entry.matches = {}
-        local match = auraMatchFromRow(entry)
-        if match then entry.matches[1] = match end
-        changed = true
-    end
-    if not entry.key then
-        local first = entry.matches and entry.matches[1]
-        entry.key = auraMatchKey(first) or customAuraKey(entry)
-        changed = true
-    end
-    return changed
-end
-
-local function customAuraHasMatch(entry, key)
-    if type(entry) ~= "table" or not key then return false end
-    if entry.key == key then return true end
-    for _, match in ipairs(entry.matches or {}) do
-        if auraMatchKey(match) == key then return true end
-    end
-    return false
-end
-
-local function customAuraMatches(entry, buffs, debuffs)
-    if type(entry) ~= "table" then return false end
-    normalizeCustomAura(entry)
-    for _, match in ipairs(entry.matches or {}) do
-        if anyAuraMatches(buffs, debuffs, match.query or match.name, match.id) then return true end
-    end
-    return anyAuraMatches(buffs, debuffs, entry.query or entry.name, entry.id)
-end
+local customAuraKey = HotSwapAuras.customAuraKey
+local auraMatchFromRow = HotSwapAuras.auraMatchFromRow
+local auraMatchKey = HotSwapAuras.auraMatchKey
+local normalizeCustomAura = HotSwapAuras.normalizeCustomAura
+local customAuraHasMatch = HotSwapAuras.customAuraHasMatch
+local customAuraMatches = HotSwapAuras.customAuraMatches
 
 local function ensureAutoSettings()
     if not settings then return end
@@ -454,86 +427,11 @@ local function ensureAutoSettings()
     end
 end
 
-local function auraId(aura)
-    if type(aura) ~= "table" then return nil end
-    return tonumber(aura.buff_id or aura.buffId or aura.id or aura.spellId or aura.spell_id)
-end
-
-local function auraName(aura)
-    if type(aura) ~= "table" then return "" end
-    for _, key in ipairs({"name", "buff_name", "buffName", "skill_name", "skillName", "title"}) do
-        local value = trim(aura[key])
-        if value ~= "" then return lower(value) end
-    end
-    local id = auraId(aura)
-    if id and api.Ability and api.Ability.GetBuffTooltip then
-        local tip = safeCall(function() return api.Ability:GetBuffTooltip(id, 1) end)
-        if type(tip) == "table" then
-            for _, key in ipairs({"name", "buffName", "buff_name", "title", "skillName", "skill_name"}) do
-                local value = trim(tip[key])
-                if value ~= "" then return lower(value) end
-            end
-        elseif type(tip) == "string" then
-            return lower(tip)
-        end
-    end
-    return ""
-end
-
-local function readPlayerAuras()
-    local buffs, debuffs = {}, {}
-    if not api.Unit then return buffs, debuffs end
-    if api.Unit.UnitBuffCount and api.Unit.UnitBuff then
-        local count = tonumber(safeCall(function() return api.Unit:UnitBuffCount("player") end)) or 0
-        for i = 1, count do
-            local aura = safeCall(function() return api.Unit:UnitBuff("player", i) end)
-            if type(aura) == "table" then buffs[#buffs + 1] = aura end
-        end
-    end
-    if api.Unit.UnitDeBuffCount and api.Unit.UnitDeBuff then
-        local count = tonumber(safeCall(function() return api.Unit:UnitDeBuffCount("player") end)) or 0
-        for i = 1, count do
-            local aura = safeCall(function() return api.Unit:UnitDeBuff("player", i) end)
-            if type(aura) == "table" then debuffs[#debuffs + 1] = aura end
-        end
-    end
-    return buffs, debuffs
-end
-
-local function auraMatches(aura, query, wantedId)
-    local id = auraId(aura)
-    if wantedId and id and tonumber(wantedId) == id then return true end
-    local text = lower(query)
-    if text == "" then return false end
-    local queryId = tonumber(text)
-    if queryId and id and queryId == id then return true end
-    local name = auraName(aura)
-    return name ~= "" and name:find(text, 1, true) ~= nil
-end
-
-function anyAuraMatches(buffs, debuffs, query, wantedId)
-    for _, aura in ipairs(buffs or {}) do
-        if auraMatches(aura, query, wantedId) then return true end
-    end
-    for _, aura in ipairs(debuffs or {}) do
-        if auraMatches(aura, query, wantedId) then return true end
-    end
-    return false
-end
-
-local function swimmingActive(buffs, debuffs)
-    return anyAuraMatches(buffs, debuffs, AUTO_SWIMMING_HINTS[1] or "rough sea winds")
-end
-
-local function sleepActive(buffs, debuffs)
-    return anyAuraMatches(buffs, debuffs, "counting sheep", 4895)
-        or anyAuraMatches(buffs, debuffs, "counting sheep", 7280)
-        or anyAuraMatches(buffs, debuffs, "bat nap")
-end
-
-local function wakeupActive(buffs, debuffs)
-    return anyAuraMatches(buffs, debuffs, "good day to work", 5207)
-end
+local readPlayerAuras = HotSwapAuras.readPlayerAuras
+local anyAuraMatches = HotSwapAuras.anyAuraMatches
+local swimmingActive = HotSwapAuras.swimmingActive
+local sleepActive = HotSwapAuras.sleepActive
+local wakeupActive = HotSwapAuras.wakeupActive
 
 local function isPlayerInCombat()
     if not api.Unit or not api.Unit.UnitCombatState then return false end
@@ -643,6 +541,8 @@ local function ensureSettings(source)
     settings = rootSettings.hotSwap
     if type(settings.gear_sets) ~= "table" then settings.gear_sets = {} end
     ensureAutoSettings()
+    if settings.enabled == nil then settings.enabled = true end
+    if settings.floatShown == nil then settings.floatShown = true end
     if settings.open_direction ~= "up" then settings.open_direction = "down" end
     if settings.hidden == nil then settings.hidden = false end
     local changed = false
@@ -710,14 +610,21 @@ local function verifyLoadout(set)
         end
     end
     if #missing > 0 then
-        setStatus("Missing/unequipped: " .. table.concat(missing, ", "), true)
+        local text = "Missing/unequipped: " .. table.concat(missing, ", ")
+        setStatus(text, true)
+        chatWarning("[Power Ranger HotSwap] " .. tostring(set.name or "gear set") .. " missing: " .. table.concat(missing, ", "))
     else
         setStatus("Equipped " .. tostring(set.name or "gear set") .. ".", false)
+        setActiveLoadout(set)
     end
 end
 
 local function queueSet(set, reason)
     if type(set) ~= "table" then return end
+    if settings and settings.enabled == false then
+        setStatus("Hot Swap is OFF.", true)
+        return
+    end
     gearQueue = {}
     pendingTitle = set.title_id
     titleDelay = 0
@@ -753,6 +660,7 @@ local function queueSet(set, reason)
         pendingCheckDelay = #gearQueue > 0 and 0 or EQUIP_VERIFY_DELAY_MS
         if #missing > 0 then
             setStatus("Queued " .. tostring(set.name or "set") .. "; missing: " .. table.concat(missing, ", "), true)
+            chatWarning("[Power Ranger HotSwap] " .. tostring(set.name or "set") .. " missing: " .. table.concat(missing, ", "))
         elseif reason and reason ~= "" then
             setStatus("Queued " .. tostring(set.name or "set") .. " from " .. tostring(reason) .. ".", false)
         else
@@ -773,6 +681,7 @@ local function queueSet(set, reason)
         end
     end
     setStatus("Queued legacy set " .. tostring(set.name or "set") .. ".", false)
+    setActiveLoadout(set)
 end
 
 local function createSetButton(set, index, rowStartY)
@@ -796,6 +705,7 @@ function HotSwap.createMain()
     titleDelay = 0
     titleAttempts = 0
     queueDelay = 0
+    if settings.floatShown == false then return end
 
     local gearSets = settings.gear_sets or {}
     local height = settings.hidden and MAIN.headerH or panelHeight(#gearSets)
@@ -820,7 +730,10 @@ function HotSwap.createMain()
     header:SetExtent(MAIN.width, MAIN.headerH)
     header:AddAnchor("TOPLEFT", canvas, 0, headerWidgetY)
     header:Show(true)
-    label(canvas, "power_ranger_hot_swap_title", "Hot Swap", 8, headerWidgetY + 4, 110, 15, 11, COLORS.gold, ALIGN.LEFT):Clickable(false)
+    label(canvas, "power_ranger_hot_swap_title", "Hot Swap", 8, headerWidgetY + 4, 54, 15, 11, COLORS.gold, ALIGN.LEFT):Clickable(false)
+    canvas.activeLabel = label(canvas, "power_ranger_hot_swap_active", "", 62, headerWidgetY + 5, 70, 14, 9, COLORS.muted, ALIGN.LEFT)
+    canvas.activeLabel:Clickable(false)
+    refreshActiveLabel()
 
     canvas:SetHandler("OnDragStart", function()
         if api.Input:IsShiftKeyDown() then
@@ -1194,12 +1107,33 @@ local function addSettingsControls()
             end
         end
         ui.selectedLabel:SetText("Selected: " .. shortText(selectedLoadout() and selectedLoadout().name or "-", 40))
-        ui.swimValue:SetText(shortText(settings.autoTriggers.swimming.loadoutName or "-", 18))
-        ui.captainValue:SetText(shortText(settings.autoTriggers.captain.loadoutName or "-", 18))
-        ui.sleepValue:SetText(shortText(settings.autoTriggers.sleep.loadoutName or "-", 18))
-        ui.wakeupValue:SetText(shortText(settings.autoTriggers.wakeup.loadoutName or "-", 18))
+        local function triggerText(trigger)
+            local name = trigger and trigger.loadoutName or "-"
+            if name == "" then name = "-" end
+            if trigger and trigger.enabled == false and name ~= "-" then name = "OFF: " .. name end
+            return shortText(name, 18)
+        end
+        ui.swimValue:SetText(triggerText(settings.autoTriggers.swimming))
+        ui.captainValue:SetText(triggerText(settings.autoTriggers.captain))
+        ui.sleepValue:SetText(triggerText(settings.autoTriggers.sleep))
+        ui.wakeupValue:SetText(triggerText(settings.autoTriggers.wakeup))
         refreshCustom()
         refreshDetected()
+    end
+
+    local function assignOrToggleTrigger(key)
+        local set = selectedLoadout()
+        if not set then setStatus("Select a gear set first.", true) return end
+        local trigger = settings.autoTriggers[key]
+        if not trigger then return end
+        if trigger.loadoutName == set.name and trigger.enabled ~= false then
+            trigger.enabled = false
+        else
+            trigger.loadoutName = set.name
+            trigger.enabled = true
+        end
+        saveSettings()
+        refreshAll()
     end
 
     flatButton(savePanel, "power_ranger_hot_swap_save_button", "Save", SETTINGS.actionX, 54, SETTINGS.actionW, 24, COLORS.active, function()
@@ -1260,39 +1194,19 @@ local function addSettingsControls()
 
     label(ui.autoPanel, "power_ranger_hs_auto_hint", "Assign selected set to triggers. Auto swaps wait for combat.", 16, 34, 360, 14, 10, COLORS.muted, ALIGN.LEFT)
     flatButton(ui.autoPanel, "power_ranger_hs_auto_swim", "Swim", 16, 54, 54, 20, COLORS.active, function()
-        local set = selectedLoadout()
-        if not set then setStatus("Select a gear set first.", true) return end
-        settings.autoTriggers.swimming.loadoutName = set.name
-        settings.autoTriggers.swimming.enabled = true
-        saveSettings()
-        refreshAll()
+        assignOrToggleTrigger("swimming")
     end, ALIGN.CENTER)
     ui.swimValue = label(ui.autoPanel, "power_ranger_hs_auto_swim_value", "-", 76, 58, 100, 14, 10, COLORS.muted, ALIGN.LEFT)
     flatButton(ui.autoPanel, "power_ranger_hs_auto_captain", "Captain", 206, 54, 70, 20, COLORS.active, function()
-        local set = selectedLoadout()
-        if not set then setStatus("Select a gear set first.", true) return end
-        settings.autoTriggers.captain.loadoutName = set.name
-        settings.autoTriggers.captain.enabled = true
-        saveSettings()
-        refreshAll()
+        assignOrToggleTrigger("captain")
     end, ALIGN.CENTER)
     ui.captainValue = label(ui.autoPanel, "power_ranger_hs_auto_captain_value", "-", 284, 58, 120, 14, 10, COLORS.muted, ALIGN.LEFT)
     flatButton(ui.autoPanel, "power_ranger_hs_auto_sleep", "Sleep", 16, 78, 54, 20, COLORS.active, function()
-        local set = selectedLoadout()
-        if not set then setStatus("Select a gear set first.", true) return end
-        settings.autoTriggers.sleep.loadoutName = set.name
-        settings.autoTriggers.sleep.enabled = true
-        saveSettings()
-        refreshAll()
+        assignOrToggleTrigger("sleep")
     end, ALIGN.CENTER)
     ui.sleepValue = label(ui.autoPanel, "power_ranger_hs_auto_sleep_value", "-", 76, 82, 100, 14, 10, COLORS.muted, ALIGN.LEFT)
     flatButton(ui.autoPanel, "power_ranger_hs_auto_wakeup", "WakeUp", 206, 78, 70, 20, COLORS.active, function()
-        local set = selectedLoadout()
-        if not set then setStatus("Select a gear set first.", true) return end
-        settings.autoTriggers.wakeup.loadoutName = set.name
-        settings.autoTriggers.wakeup.enabled = true
-        saveSettings()
-        refreshAll()
+        assignOrToggleTrigger("wakeup")
     end, ALIGN.CENTER)
     ui.wakeupValue = label(ui.autoPanel, "power_ranger_hs_auto_wakeup_value", "-", 284, 82, 120, 14, 10, COLORS.muted, ALIGN.LEFT)
     label(ui.autoPanel, "power_ranger_hs_custom_title", "Custom Triggers", 16, 110, 120, 14, 10, COLORS.gold, ALIGN.LEFT)
@@ -1419,8 +1333,40 @@ function HotSwap.RefreshSettings()
     settingsWnd.hotSwapUi.refreshAll()
 end
 
+function HotSwap.IsEnabled()
+    if not settings then ensureSettings() end
+    return settings.enabled ~= false
+end
+
+function HotSwap.IsFloatShown()
+    if not settings then ensureSettings() end
+    return settings.floatShown ~= false
+end
+
+function HotSwap.SetEnabled(value)
+    if not settings then ensureSettings() end
+    settings.enabled = value ~= false
+    if settings.enabled == false then
+        gearQueue = {}
+        pendingTitle = nil
+        pendingCheck = nil
+        autoActiveKey = nil
+    end
+    saveSettings()
+    HotSwap.RefreshSettings()
+end
+
+function HotSwap.SetFloatShown(value)
+    if not settings then ensureSettings() end
+    settings.floatShown = value ~= false
+    saveSettings()
+    refreshMain()
+    HotSwap.RefreshSettings()
+end
+
 function HotSwap.update(dt)
     if not settings then return end
+    if settings.enabled == false then return end
     processAutoTriggers(dt)
     if #gearQueue > 0 then
         for _, button in ipairs(buttons) do button:Enable(false) end

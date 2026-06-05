@@ -5,7 +5,10 @@ local OverlayUtils = require("power_ranger_on/overlay_utils")
 local Compat = require("power_ranger_on/compat")
 local NuziCooldownImport = require("power_ranger_on/nuzi_cooldown_import")
 local CooldownRecipes = require("power_ranger_on/cooldown_recipes")
+local CooldownLearning = require("power_ranger_on/cooldown_learning")
 local HotSwap = require("power_ranger_on/hot_swap")
+local ClassIntelProfiles = require("power_ranger_on/class_intel_profiles")
+local SkillProbe = require("power_ranger_on/skill_probe")
 
 local TargetOverlay = {}
 TargetOverlay.uiHelpers = require("power_ranger_on/ui_helpers")
@@ -76,6 +79,8 @@ local defaults = {
     modelRangeScaleLevel = 0,
     targetWindowScaleLevel = 0,
     selfScaleLevel = 0,
+    selfOpacityLevel = 8,
+    guildFamilyLabelScaleLevel = 0,
     showTargetWindow = true,
     compactTargetWindow = true,
     testTargetWindow = false,
@@ -89,6 +94,7 @@ local defaults = {
     showInfoGuild = true,
     showInfoFamily = true,
     showOwnershipLabels = true,
+    showGuildFamilyLabel = false,
     showInfoDefense = true,
     showInfoPdef = true,
     showInfoMdef = true,
@@ -98,9 +104,13 @@ local defaults = {
     showInfoToughness = false,
     showInfoResilience = false,
     showInfoCritRate = false,
+    classIntelEnabled = true,
+    classIntelEditProfile = "melee",
+    classIntelProfiles = require("power_ranger_on/class_intel_profiles").DefaultProfiles(),
     showSelfPanel = true,
     showSelfCooldowns = true,
     showSelfEquipment = true,
+    showSelfBorder = true,
     cooldownSettingsPage = 1,
     skillProbeLogging = false,
     detectedSkillsX = 760,
@@ -117,6 +127,8 @@ local defaults = {
         modelGearscore = {1, 1, 1, 1},
         guild = {0.62, 0.82, 1, 1},
         family = {1, 0.78, 0.52, 1},
+        guildFamilyGuild = {1, 1, 1, 1},
+        guildFamilyFamily = {0.76, 0.82, 0.95, 1},
         pdef = {1, 1, 1, 1},
         mdef = {0.72, 0.86, 1, 1},
         block = {0.78, 0.92, 1, 1},
@@ -130,11 +142,14 @@ local defaults = {
     targetWindowY = 330,
     selfX = 860,
     selfY = 470,
+    cooldownSkillsX = 720,
+    cooldownSkillsY = 270,
     settingsX = 650,
     settingsY = 210,
     trackedBuffs = require("power_ranger_on/cooldown_catalog").BuildTrackedBuffRows(),
     trackedSkills = {},
-    detectedSkills = {}
+    detectedSkills = {},
+    learnedCooldownDevices = {}
 }
 
 local DEPRECATED_TRACKED_BUFFS = {
@@ -146,7 +161,15 @@ local DEPRECATED_TRACKED_BUFFS = {
     ["self:20121"] = true,
     ["self:8000208"] = true,
     ["self:name:nui's veil:nui's veil"] = true,
-    ["self:name:star divine protection:flamefeather"] = true
+    ["self:name:star divine protection:flamefeather"] = true,
+    ["self:name:star divine protection:sloth glider"] = true,
+    ["self:name:star divine protection:crystal wings"] = true,
+    ["self:3636:glider:ezi glider"] = true,
+    ["self:8000165:glider:ezi_glider"] = true,
+    ["self:8000165:glider:ezi glider"] = true,
+    ["self:3636:glider:flamefeather"] = true,
+    ["self:8000290:glider:flamefeather_glider"] = true,
+    ["self:8000286:glider:phoenix"] = true
 }
 
 local DEPRECATED_TRACKED_SKILL_PATTERNS = {
@@ -154,19 +177,55 @@ local DEPRECATED_TRACKED_SKILL_PATTERNS = {
     ["invincible flight"] = true
 }
 
+function TargetOverlay.isDeprecatedTrackedBuffRow(row)
+    if not row then return false end
+    local deviceName = string.lower(tostring(row.recipeDeviceName or row.mountName or row.source or ""))
+    local source = string.lower(tostring(row.source or row.recipeDeviceName or row.name or row.buffName or ""))
+    local buffName = string.lower(tostring(row.buffName or ""))
+    if row.recipeDeviceKey == "phoenix_glider" then return true end
+    if row.recipeDeviceKey == "general_mount" then return true end
+    if row.recipeDeviceKey == "nuis_veil_mount" then return true end
+    if row.recipeDeviceKey == "cloud_glider" then return true end
+    if row.recipeDeviceKey == "cloud_mount" then return true end
+    if row.recipeDeviceKey == "frozen_glider" then return true end
+    if (row.recipeDeviceKey == "crystal_wings" or deviceName:find("crystal wings", 1, true) or source:find("crystal wings", 1, true))
+        and buffName:find("star", 1, true) then return true end
+    if (row.recipeDeviceKey == "flamefeather_glider" or deviceName:find("flamefeather", 1, true) or source:find("flamefeather", 1, true)) then
+        local id = tonumber(row.id or row.buff_id)
+        if id == 8000290 then return true end
+        if buffName:find("flamefeather", 1, true) and not buffName:find("invincible", 1, true) then return true end
+    end
+    if (row.recipeDeviceKey == "ezi_glider" or deviceName:find("ezi", 1, true) or source:find("ezi", 1, true))
+        and tonumber(row.id or row.buff_id) == 8000165 then return true end
+    if row.recipeAbilityKey == "rajani_sprint" then return true end
+    if row.recipeAbilityKey == "meatball_bite" or row.recipeAbilityKey == "rajani_bite" or row.recipeAbilityKey == "kirin_bite" then return true end
+    if (row.recipeDeviceKey == "ser_meatball" or deviceName:find("ser meatball", 1, true) or source:find("ser meatball", 1, true))
+        and string.lower(tostring(row.name or row.buffName or "")):find("bite", 1, true) then return true end
+    if (row.recipeDeviceKey == "rajani" or row.recipeDeviceKey == "kirin" or deviceName:find("raijin", 1, true)
+        or deviceName:find("rajani", 1, true) or deviceName:find("kirin", 1, true))
+        and string.lower(tostring(row.name or row.buffName or "")):find("bite", 1, true) then return true end
+    if not row.recipeDeviceKey and tonumber(row.id or row.buff_id) == 3523 and string.lower(tostring(row.source or "")):find("ser meatball", 1, true) then return true end
+    if row.recipeDeviceKey == "custom_mount_mount/pet" or deviceName == "mount/pet" or deviceName == "mount" then return true end
+    if row.recipeDeviceKey ~= "sloth_glider" and deviceName:find("sloth", 1, true) and (tonumber(row.id or row.buff_id) == 8000138 or string.lower(tostring(row.buffName or "")):find("star", 1, true)) then return true end
+    return source:find("phoenix", 1, true) ~= nil and tonumber(row.id or row.buff_id) == 8000286
+end
+
 local function trackedBuffSettingKey(row)
     if row and row.importKey then return tostring(row.importKey) end
     local unit = tostring(row and row.unit or "player")
+    local devicePart = ""
+    if row and (row.recipeDeviceKind == "mount" or row.category == "mount" or row.mountNames or row.mountName or row.mount_name) then
+        devicePart = ":mount:" .. string.lower(tostring(row.recipeDeviceKey or row.recipeDeviceName or row.source or row.mountName or row.mount_name or ""))
+    elseif row and (row.gliderPattern or row.category == "glider" or row.recipeDeviceKind == "glider") then
+        devicePart = ":glider:" .. string.lower(tostring(row.recipeDeviceKey or row.recipeDeviceName or row.name or row.source or ""))
+    end
     if row and row.id then
-        if row.gliderPattern or row.category == "glider" then
-            return unit .. ":" .. tostring(row.id) .. ":glider:" .. string.lower(tostring(row.name or row.source or ""))
-        end
-        return unit .. ":" .. tostring(row.id)
+        return unit .. ":" .. tostring(row.id) .. devicePart
     end
     if row and row.buffName then
-        return unit .. ":name:" .. string.lower(tostring(row.buffName)) .. ":" .. string.lower(tostring(row.name or ""))
+        return unit .. ":name:" .. string.lower(tostring(row.buffName)) .. ":" .. string.lower(tostring(row.name or "")) .. devicePart
     end
-    return unit .. ":name:" .. string.lower(tostring(row and row.name or ""))
+    return unit .. ":name:" .. string.lower(tostring(row and row.name or "")) .. devicePart
 end
 
 local CONFIG = {
@@ -222,15 +281,7 @@ local TARGET_INFO_FIELDS = {
     { key = "family", setting = "showInfoFamily", label = "Family" },
     { key = "class", setting = "showInfoClass", label = "Class" },
     { key = "gearscore", setting = "showInfoGearscore", label = "Gearscore" },
-    { key = "range", setting = "showInfoRange", label = "Range" },
-    { key = "pdef", setting = "showInfoPdef", label = "PDef" },
-    { key = "mdef", setting = "showInfoMdef", label = "MDef" },
-    { key = "block", setting = "showInfoBlock", label = "Block" },
-    { key = "parry", setting = "showInfoParry", label = "Parry" },
-    { key = "evasion", setting = "showInfoEvasion", label = "Evasion" },
-    { key = "toughness", setting = "showInfoToughness", label = "Tough" },
-    { key = "resilience", setting = "showInfoResilience", label = "Resil" },
-    { key = "critRate", setting = "showInfoCritRate", label = "Crit" }
+    { key = "range", setting = "showInfoRange", label = "Range" }
 }
 
 local settings = nil
@@ -248,6 +299,7 @@ local targetRangeCanvas = nil
 local targetRangeLabel = nil
 local targetInfoWnd = nil
 local ownershipWnd = nil
+local guildFamilyWnd = nil
 local selfWnd = nil
 local settingsWnd = nil
 local detectedSkillsWnd = nil
@@ -272,11 +324,10 @@ local skillProbe = { entries = {}, maxEntries = 240 }
 local skillProbeDirty = false
 local lastSkillProbeSave = 0
 local probeLogElapsed = 0
+local detectManaState = { init = false, mountKey = nil, mountMana = 0, playerMana = 0, mountSpent = 0, playerSpent = 0 }
 local lastSelfEquipmentUpdate = 0
-local unpackArgs = unpack or (table and table.unpack)
 local recordSkillProbe
 local recordDetectedSkill
-local serialValue
 local refreshSettingsButtons
 local refreshDetectedSkillRows
 
@@ -360,8 +411,51 @@ local function copyDefaults(dst, src)
     end
 end
 
+local function normalizeRemovedCooldownDefaults()
+    local source = settings and settings.removedCooldownDefaults
+    local out = {}
+    local seen = {}
+    if type(source) == "table" then
+        for _, value in ipairs(source) do
+            value = tostring(value or "")
+            if value ~= "" and not seen[value] then
+                out[#out + 1] = value
+                seen[value] = true
+            end
+        end
+        for key, value in pairs(source) do
+            if type(key) == "string" and value == true and not seen[key] then
+                out[#out + 1] = key
+                seen[key] = true
+            elseif type(value) == "string" and value ~= "" and not seen[value] then
+                out[#out + 1] = value
+                seen[value] = true
+            end
+        end
+    end
+    settings.removedCooldownDefaults = out
+    return out, seen
+end
+
+local function cooldownDefaultRemoved(key)
+    if not key or key == "" then return false end
+    local _, seen = normalizeRemovedCooldownDefaults()
+    return seen[tostring(key)] == true
+end
+
+local function markCooldownDefaultRemoved(row)
+    local key = trackedBuffSettingKey(row)
+    if not key or key == "" then return end
+    local out, seen = normalizeRemovedCooldownDefaults()
+    if not seen[key] then
+        out[#out + 1] = key
+        seen[key] = true
+    end
+end
+
 local function addMissingTrackedBuffDefaults()
     settings.trackedBuffs = settings.trackedBuffs or {}
+    normalizeRemovedCooldownDefaults()
     local migrateHardcodedGliders = (tonumber(settings.hardcodedGliderDefaultsVersion) or 0) < 1
     local function copyRow(row)
         local copy = {}
@@ -374,21 +468,58 @@ local function addMissingTrackedBuffDefaults()
             if existing.cooldown ~= nil and not defaultRow.fixedCooldown then copy.cooldown = existing.cooldown end
             if existing.enabled ~= nil then copy.enabled = existing.enabled end
             if existing.source ~= nil then copy.source = existing.source end
-            if existing.icon ~= nil and copy.icon == nil then copy.icon = existing.icon end
+            if existing.icon ~= nil
+                and copy.icon == nil
+                and defaultRow.recipeDeviceKind == nil
+                and not tostring(existing.icon):find("icon_skill_", 1, true) then
+                copy.icon = existing.icon
+            end
             if defaultRow.icon ~= nil then copy.icon = defaultRow.icon end
             if existing.mount ~= nil and copy.source == nil then copy.source = existing.mount end
             copy.unit = defaultRow.unit
             copy.id = defaultRow.id
             copy.buffName = defaultRow.buffName
             copy.buffNames = defaultRow.buffNames
+            copy.buffIds = defaultRow.buffIds
+            copy.genericBuffIds = defaultRow.genericBuffIds
+            copy.generic_buff_ids = defaultRow.generic_buff_ids
+            copy.icon_type = defaultRow.icon_type
+            copy.icon_id = defaultRow.icon_id
+            copy.iconType = defaultRow.iconType
+            copy.iconId = defaultRow.iconId
             copy.gliderPattern = defaultRow.gliderPattern
             copy.itemType = defaultRow.itemType
             copy.itemTypes = defaultRow.itemTypes
+            copy.mountName = defaultRow.mountName
+            copy.mountNames = defaultRow.mountNames
+            copy.requiredBuffId = defaultRow.requiredBuffId
+            copy.requiredBuffIds = defaultRow.requiredBuffIds
+            copy.requiredBuffName = defaultRow.requiredBuffName
+            copy.requiredBuffNames = defaultRow.requiredBuffNames
+            copy.mountManaSpent = defaultRow.mountManaSpent
+            copy.petManaSpent = defaultRow.petManaSpent
+            copy.playerManaSpent = defaultRow.playerManaSpent
             copy.category = defaultRow.category
+            copy.recipeDeviceKey = defaultRow.recipeDeviceKey
+            copy.recipeDeviceName = defaultRow.recipeDeviceName
+            copy.recipeDeviceKind = defaultRow.recipeDeviceKind
+            copy.recipeDeviceItemType = defaultRow.recipeDeviceItemType or existing.recipeDeviceItemType
+            copy.recipeDeviceIconLocked = defaultRow.recipeDeviceIconLocked == true
+            copy.recipeDeviceIcon = defaultRow.recipeDeviceIcon
+            if copy.recipeDeviceIcon == nil and copy.recipeDeviceItemType == nil then
+                copy.recipeDeviceIcon = existing.recipeDeviceIcon
+            end
+            copy.recipeAbilityKey = defaultRow.recipeAbilityKey
+            copy.recipeAbilityLabel = defaultRow.recipeAbilityLabel
             copy.fixedCooldown = defaultRow.fixedCooldown
             copy.cooldownStartsOnActive = defaultRow.cooldownStartsOnActive
             copy.cooldownOnlyOnActive = defaultRow.cooldownOnlyOnActive
             copy.triggerMinTimeLeftMs = defaultRow.triggerMinTimeLeftMs
+            if existing.dynamicDisplay ~= nil then
+                copy.dynamicDisplay = existing.dynamicDisplay == true
+            else
+                copy.dynamicDisplay = defaultRow.dynamicDisplay == true
+            end
             if defaultRow.name == "Sloth Glider" then
                 copy.source = defaultRow.source
                 if existing.icon == "Game\\ui\\icon\\icon_item_1648.dds" then copy.icon = nil end
@@ -398,6 +529,64 @@ local function addMissingTrackedBuffDefaults()
             end
         end
         return copy
+    end
+    local function normalizeKnownMountDeviceIcon(row, key, name, itemType, patterns)
+        if not row then return end
+        local text = string.lower(tostring(row.recipeDeviceKey or "") .. " "
+            .. tostring(row.recipeDeviceName or "") .. " "
+            .. tostring(row.source or "") .. " "
+            .. tostring(row.mountName or "") .. " "
+            .. tostring(row.name or ""))
+        for _, mountName in ipairs(row.mountNames or {}) do
+            text = text .. " " .. string.lower(tostring(mountName or ""))
+        end
+        local matched = text:find(string.lower(tostring(key or "")), 1, true) ~= nil
+        for _, pattern in ipairs(patterns or {}) do
+            if text:find(string.lower(tostring(pattern or "")), 1, true) then
+                matched = true
+                break
+            end
+        end
+        if matched then
+            row.category = "mount"
+            row.recipeDeviceKey = key
+            row.recipeDeviceName = name
+            row.recipeDeviceKind = "mount"
+            row.itemType = row.itemType or itemType
+            row.recipeDeviceItemType = itemType
+            row.recipeDeviceIcon = nil
+            row.recipeDeviceIconLocked = false
+        end
+    end
+    local function normalizeKnownGliderDeviceIcon(row, key, name, itemTypes, displayItemType, patterns)
+        if not row then return end
+        local text = string.lower(tostring(row.recipeDeviceKey or "") .. " "
+            .. tostring(row.recipeDeviceName or "") .. " "
+            .. tostring(row.source or "") .. " "
+            .. tostring(row.name or "") .. " "
+            .. tostring(row.buffName or ""))
+        for _, pattern in ipairs(row.gliderPattern or {}) do
+            text = text .. " " .. string.lower(tostring(pattern or ""))
+        end
+        local matched = text:find(string.lower(tostring(key or "")), 1, true) ~= nil
+        for _, pattern in ipairs(patterns or {}) do
+            if text:find(string.lower(tostring(pattern or "")), 1, true) then
+                matched = true
+                break
+            end
+        end
+        if matched then
+            row.category = "glider"
+            row.recipeDeviceKey = key
+            row.recipeDeviceName = name
+            row.recipeDeviceKind = "glider"
+            row.gliderPattern = patterns
+            row.itemTypes = itemTypes
+            row.itemType = row.itemType or (itemTypes and itemTypes[1])
+            row.recipeDeviceItemType = displayItemType or row.itemType
+            row.recipeDeviceIcon = nil
+            row.recipeDeviceIconLocked = false
+        end
     end
     local defaultsByKey = {}
     for _, row in ipairs(defaults.trackedBuffs or {}) do
@@ -419,7 +608,7 @@ local function addMissingTrackedBuffDefaults()
         end
         local key = trackedBuffSettingKey(existing)
         local staleGenericStar = existing.buffName == "Star Divine Protection" and not existing.gliderPattern and not recoverableStarRecipe
-        if not usedKeys[key] and not DEPRECATED_TRACKED_BUFFS[key] and not staleGenericStar then
+        if not usedKeys[key] and not DEPRECATED_TRACKED_BUFFS[key] and not staleGenericStar and not TargetOverlay.isDeprecatedTrackedBuffRow(existing) then
             local defaultRow = defaultsByKey[key]
             if defaultRow or existing.id or existing.buffName then
                 if not defaultRow and existing.gliderPattern and not existing.fixedCooldown and existing.recipeType ~= "glider" and existing.category ~= "glider" then
@@ -443,13 +632,26 @@ local function addMissingTrackedBuffDefaults()
     end
     for _, row in ipairs(defaults.trackedBuffs or {}) do
         local key = trackedBuffSettingKey(row)
-        if not usedKeys[key] then
+        if not usedKeys[key] and not cooldownDefaultRemoved(key) then
             table.insert(ordered, copyRow(row))
             usedKeys[key] = true
         end
     end
     for _, row in ipairs(ordered) do
         if row.cooldownStartsOnActive == nil then row.cooldownStartsOnActive = true end
+        normalizeKnownMountDeviceIcon(row, "ser_meatball", "Ser Meatball", 9000375, {"meatball"})
+        normalizeKnownMountDeviceIcon(row, "bouncy_cow", "Bouncy Cow", 53939, {"bouncy cow", "asianbunnyx"})
+        normalizeKnownMountDeviceIcon(row, "golem", "Golem", 37136, {"golem", "andelph", "patrol mech"})
+        normalizeKnownGliderDeviceIcon(row, "stormduster_1000", "Stormduster 1000", {
+            42736,
+            8001544,
+            8001545,
+            8001546,
+            8001547,
+            8001548,
+            8001549,
+            8001550
+        }, 8001544, {"stormduster", "stormduster 1000", "storm duster", "enhanced stormduster 1000"})
     end
     settings.trackedBuffs = ordered
     if migrateHardcodedGliders then settings.hardcodedGliderDefaultsVersion = 1 end
@@ -511,6 +713,12 @@ local function loadSettings()
     local simpleSpacingVersion = tonumber(settings.simpleSpacingVersion) or 1
     local hadSimpleSpacing = settings.simpleColumnGap ~= nil or settings.simpleLineGap ~= nil
     copyDefaults(settings, defaults)
+    ClassIntelProfiles.Ensure(settings)
+    CooldownLearning.Ensure(settings)
+    if (tonumber(settings.removedCooldownDefaultsVersion) or 0) < 2 then
+        settings.removedCooldownDefaults = {}
+        settings.removedCooldownDefaultsVersion = 2
+    end
     if simpleSpacingVersion < 2 and hadSimpleSpacing then
         settings.simpleColumnGap = (tonumber(settings.simpleColumnGap) or 0) + 8
         settings.simpleLineGap = (tonumber(settings.simpleLineGap) or 0) + 4
@@ -676,21 +884,24 @@ local function uiScaleFactor(key)
 end
 
 local function trackedBuffKey(row)
+    if row and row.sharedCooldownKey then return "shared:" .. tostring(row.sharedCooldownKey) end
     return trackedBuffSettingKey(row)
 end
 
 local function trackedBuffTriggerKey(row)
     if row and row.importKey then return "trigger:" .. tostring(row.importKey) end
     local unit = tostring(row and row.unit or "player")
-    local gliderPart = ""
+    local devicePart = ""
     if row and (row.gliderPattern or row.category == "glider") then
-        gliderPart = ":glider:" .. string.lower(tostring(row.name or row.source or ""))
+        devicePart = ":glider:" .. string.lower(tostring(row.recipeDeviceKey or row.recipeDeviceName or row.name or row.source or ""))
+    elseif row and (row.recipeDeviceKind == "mount" or row.category == "mount" or row.mountNames or row.mountName or row.mount_name) then
+        devicePart = ":mount:" .. string.lower(tostring(row.recipeDeviceKey or row.recipeDeviceName or row.source or row.mountName or row.mount_name or ""))
     end
     if row and row.buffNames and row.buffNames[1] then
-        return unit .. ":trigger:" .. string.lower(tostring(row.buffNames[1])) .. gliderPart
+        return unit .. ":trigger:" .. string.lower(tostring(row.buffNames[1])) .. devicePart
     end
-    if row and row.buffName then return unit .. ":trigger:" .. string.lower(tostring(row.buffName)) .. gliderPart end
-    if row and row.id then return unit .. ":trigger:" .. tostring(row.id) .. gliderPart end
+    if row and row.buffName then return unit .. ":trigger:" .. string.lower(tostring(row.buffName)) .. devicePart end
+    if row and row.id then return unit .. ":trigger:" .. tostring(row.id) .. devicePart end
     return trackedBuffKey(row)
 end
 
@@ -804,6 +1015,20 @@ function TargetOverlay.trackedGliderMatches(row, glider)
     return TargetOverlay.equipmentReader.DeviceMatches(row, glider)
 end
 
+function TargetOverlay.trackedMountMatches(row, mount)
+    if not row then return false end
+    if not mount or tostring(mount.name or "") == "" then return false end
+    local mountName = string.lower(tostring(mount.name or ""))
+    local names = row.mountNames or row.mount_names or row.mountName or row.mount_name
+    if type(names) ~= "table" then names = {names} end
+    if #names == 0 then return row.category == "mount" or row.recipeDeviceKind == "mount" or row.preferMountIcon == true end
+    for _, name in ipairs(names) do
+        local wanted = string.lower(tostring(name or ""))
+        if wanted ~= "" and (mountName:find(wanted, 1, true) or wanted:find(mountName, 1, true)) then return true end
+    end
+    return false
+end
+
 function TargetOverlay.buffId(buff)
     if type(buff) ~= "table" then return nil end
     return tonumber(buff.buff_id or buff.buffId or buff.buff_id_string or buff.buffType or buff.buff_type)
@@ -839,6 +1064,10 @@ end
 
 function TargetOverlay.cooldownRowIcon(row)
     return TargetOverlay.resourceLookup.CooldownRowIcon(row)
+end
+
+function TargetOverlay.cooldownDeviceIcon(row)
+    return TargetOverlay.resourceLookup.CooldownDeviceIcon(row)
 end
 
 function TargetOverlay.buffCooldownById(id)
@@ -890,6 +1119,10 @@ end
 
 local function setCooldownSkillIcon(icon, path, state, seconds)
     TargetOverlay.iconWidgets.SetCooldownSkill(icon, path, state, seconds)
+end
+
+local function clearCooldownIcon(icon)
+    TargetOverlay.iconWidgets.ClearCooldown(icon)
 end
 
 local function setInfoCell(row, value, color)
@@ -989,6 +1222,12 @@ function TargetOverlay.fitCompactSummaryParts(widget, parts, maxWidth)
     return TargetOverlay.fitTextToWidth(widget, TargetOverlay.compactSummaryText(parts, 8, 4), maxWidth, 6)
 end
 
+local function classProfileStatVisible(targetInfo, className, statKey, settingKey)
+    local profileValue = ClassIntelProfiles.ShouldShow(settings, targetInfo, className, statKey)
+    if profileValue ~= nil then return profileValue end
+    return settings[settingKey] ~= false
+end
+
 local function buildInfoRows(targetInfo, className, gearscore, pdef, mdef, pdefPct, mdefPct, extraStats, ownershipOnly)
     local identity = {}
     local defense = {}
@@ -1065,17 +1304,17 @@ local function buildInfoRows(targetInfo, className, gearscore, pdef, mdef, pdefP
         local range = TargetOverlay.getDistance("target")
         if range then rangeHeader = "  |  " .. tostring(range) .. "m" end
     end
-    if settings.showInfoPdef then addRow(defense, "pdef", "PDef: " .. OverlayUtils.defenseText(pdef, pdefPct)) end
-    if settings.showInfoMdef then addRow(defense, "mdef", "MDef: " .. OverlayUtils.defenseText(mdef, mdefPct)) end
+    if classProfileStatVisible(targetInfo, className, "pdef", "showInfoPdef") then addRow(defense, "pdef", "PDef: " .. OverlayUtils.defenseText(pdef, pdefPct)) end
+    if classProfileStatVisible(targetInfo, className, "mdef", "showInfoMdef") then addRow(defense, "mdef", "MDef: " .. OverlayUtils.defenseText(mdef, mdefPct)) end
     extraStats = extraStats or {}
-    if settings.showInfoBlock then addRow(defense, "block", extraStats.block and ("Block: " .. extraStats.block) or nil) end
-    if settings.showInfoParry then addRow(defense, "parry", extraStats.parry and ("Parry: " .. extraStats.parry) or nil) end
-    if settings.showInfoEvasion then addRow(defense, "evasion", extraStats.evasion and ("Evasion: " .. extraStats.evasion) or nil) end
-    if settings.showInfoToughness then addRow(defense, "toughness", extraStats.toughness and ("Tough: " .. extraStats.toughness) or nil) end
-    if settings.showInfoResilience then
+    if classProfileStatVisible(targetInfo, className, "block", "showInfoBlock") then addRow(defense, "block", extraStats.block and ("Block: " .. extraStats.block) or nil) end
+    if classProfileStatVisible(targetInfo, className, "parry", "showInfoParry") then addRow(defense, "parry", extraStats.parry and ("Parry: " .. extraStats.parry) or nil) end
+    if classProfileStatVisible(targetInfo, className, "evasion", "showInfoEvasion") then addRow(defense, "evasion", extraStats.evasion and ("Evasion: " .. extraStats.evasion) or nil) end
+    if classProfileStatVisible(targetInfo, className, "toughness", "showInfoToughness") then addRow(defense, "toughness", extraStats.toughness and ("Tough: " .. extraStats.toughness) or nil) end
+    if classProfileStatVisible(targetInfo, className, "resilience", "showInfoResilience") then
         addRow(defense, "resilience", extraStats.resilience and ("Resil: " .. extraStats.resilience) or nil)
     end
-    if settings.showInfoCritRate then addRow(defense, "critRate", extraStats.critRate and ("Crit: " .. extraStats.critRate) or nil) end
+    if classProfileStatVisible(targetInfo, className, "critRate", "showInfoCritRate") then addRow(defense, "critRate", extraStats.critRate and ("Crit: " .. extraStats.critRate) or nil) end
 
     local rows = {}
     if not compact and (#identity > 0 or rangeHeader ~= "") then
@@ -1159,8 +1398,23 @@ local function createOwnershipWindow()
     })
 end
 
+local function createGuildFamilyWindow()
+    guildFamilyWnd = require("power_ranger_on/target_windows").CreateGuildFamily({
+        colors = COLORS,
+        settings = settings,
+        label = label,
+        safePosition = TargetOverlay.safeWindowPosition,
+        applyReadableTextStyle = TargetOverlay.applyReadableTextStyle,
+        applyHandleDrag = applyHandleDrag
+    })
+end
+
 local function hideOwnershipWindow()
     if ownershipWnd then ownershipWnd:Show(false) end
+end
+
+local function hideGuildFamilyWindow()
+    if guildFamilyWnd then guildFamilyWnd:Show(false) end
 end
 
 function TargetOverlay.applyTextShadow()
@@ -1174,6 +1428,10 @@ function TargetOverlay.applyTextShadow()
     if ownershipWnd then
         TargetOverlay.applyReadableTextStyle(ownershipWnd.title, true)
         TargetOverlay.applyReadableTextStyle(ownershipWnd.meta, true)
+    end
+    if guildFamilyWnd then
+        TargetOverlay.applyReadableTextStyle(guildFamilyWnd.guild, true)
+        TargetOverlay.applyReadableTextStyle(guildFamilyWnd.family, true)
     end
     if targetInfoWnd then
         local simpleEnabled = settings.testTargetWindow == true
@@ -1235,6 +1493,50 @@ local function refreshOwnershipWindow(info)
         ownershipWnd._lastHeight = wantedHeight
     end
     ownershipWnd:Show(true)
+end
+
+local function refreshGuildFamilyWindow(info)
+    if not guildFamilyWnd or not info then return end
+    if settings.showGuildFamilyLabel ~= true then
+        hideGuildFamilyWindow()
+        return
+    end
+    local guild = TargetOverlay.ownershipField(info, {"expeditionName", "expedition", "guildName", "guild"})
+    local family = TargetOverlay.ownershipField(info, {"family_name", "familyName", "family"})
+    if not guild and not family then
+        hideGuildFamilyWindow()
+        return
+    end
+    local scale = uiScaleFactor("guildFamilyLabelScaleLevel")
+    local guildText = OverlayUtils.shortText(guild or "", 34)
+    local familyText = OverlayUtils.shortText(family or "", 36)
+    local guildHeight = math.floor((28 * scale) + 0.5)
+    local familyHeight = math.floor((16 * scale) + 0.5)
+    guildFamilyWnd.guild.style:SetFontSize(math.floor((22 * scale) + 0.5))
+    guildFamilyWnd.family.style:SetFontSize(math.floor((12 * scale) + 0.5))
+    guildFamilyWnd.guild:SetText(guildText)
+    guildFamilyWnd.family:SetText(familyText)
+    guildFamilyWnd.guild:Show(guildText ~= "")
+    guildFamilyWnd.family:Show(familyText ~= "")
+    setTextColor(guildFamilyWnd.guild, settingColor("guildFamilyGuild"))
+    setTextColor(guildFamilyWnd.family, settingColor("guildFamilyFamily"))
+    local guildWidth = guildText ~= "" and guildFamilyWnd.guild.style:GetTextWidth(guildText) or 0
+    local familyWidth = familyText ~= "" and guildFamilyWnd.family.style:GetTextWidth(familyText) or 0
+    local wantedWidth = math.max(140, math.ceil(math.max(guildWidth, familyWidth) + (24 * scale)))
+    local wantedHeight = guildHeight + (familyText ~= "" and familyHeight or 0)
+    if guildFamilyWnd._lastWidth ~= wantedWidth or guildFamilyWnd._lastHeight ~= wantedHeight then
+        guildFamilyWnd:SetExtent(wantedWidth, wantedHeight)
+        guildFamilyWnd.guild:RemoveAllAnchors()
+        guildFamilyWnd.guild:AddAnchor("TOPLEFT", guildFamilyWnd, 0, 0)
+        guildFamilyWnd.guild:SetExtent(wantedWidth, guildHeight)
+        guildFamilyWnd.family:RemoveAllAnchors()
+        guildFamilyWnd.family:AddAnchor("TOPLEFT", guildFamilyWnd, 0, guildHeight)
+        guildFamilyWnd.family:SetExtent(wantedWidth, familyHeight)
+        guildFamilyWnd.dragHandle:SetExtent(wantedWidth, wantedHeight)
+        guildFamilyWnd._lastWidth = wantedWidth
+        guildFamilyWnd._lastHeight = wantedHeight
+    end
+    guildFamilyWnd:Show(true)
 end
 
 local function refreshTargetInfoWindow(targetInfo, className, gearscore, pdef, mdef, pdefPct, mdefPct, extraStats, ownershipOnly)
@@ -1442,11 +1744,12 @@ local function updateTrackedBuffs()
         buffTooltipById = TargetOverlay.buffTooltipById,
         buffIconById = TargetOverlay.buffIconById,
         cooldownRowIcon = TargetOverlay.cooldownRowIcon,
+        cooldownDeviceIcon = TargetOverlay.cooldownDeviceIcon,
         trackedGliderMatches = TargetOverlay.trackedGliderMatches,
         equippedGliderSnapshot = TargetOverlay.equippedGliderSnapshot,
         mountedPetSnapshot = TargetOverlay.mountedPetSnapshot,
         isStarTriggerCooldown = TargetOverlay.isStarTriggerCooldown,
-        serialValue = serialValue,
+        serialValue = SkillProbe.serialValue,
         recordSkillProbe = recordSkillProbe,
         saveSettings = saveSettings
     })
@@ -1480,6 +1783,7 @@ local function updateSelfPanel()
         createIcon = createIcon,
         label = label,
         setCooldownSkillIcon = setCooldownSkillIcon,
+        clearCooldownIcon = clearCooldownIcon,
         setEquipIcon = setEquipIcon,
         shortText = OverlayUtils.shortText,
         buffRemainText = OverlayUtils.buffRemainText,
@@ -1491,7 +1795,9 @@ local function updateSelfPanel()
         skillCooldowns = skillCooldowns,
         isStarTriggerCooldown = TargetOverlay.isStarTriggerCooldown,
         cooldownRowIcon = TargetOverlay.cooldownRowIcon,
+        cooldownDeviceIcon = TargetOverlay.cooldownDeviceIcon,
         trackedGliderMatches = TargetOverlay.trackedGliderMatches,
+        trackedMountMatches = TargetOverlay.trackedMountMatches,
         buffIconById = TargetOverlay.buffIconById,
         skillIconById = TargetOverlay.skillIconById,
         equippedSnapshot = TargetOverlay.equippedSnapshot,
@@ -1503,58 +1809,6 @@ local function updateSelfPanel()
         lastEquipmentUpdate = function() return lastSelfEquipmentUpdate end,
         setLastEquipmentUpdate = function(value) lastSelfEquipmentUpdate = value end
     })
-end
-
-function serialValue(value)
-    local valueType = type(value)
-    if valueType == "number" or valueType == "string" or valueType == "boolean" then return value end
-    if valueType ~= "table" then return tostring(value) end
-    local out = {}
-    for k, v in pairs(value) do
-        if type(v) ~= "function" and type(v) ~= "table" then out[tostring(k)] = v end
-    end
-    return out
-end
-
-local PROBE_KEYWORDS = {
-    "dash", "glider", "flight", "invincible", "invincibility",
-    "invisible", "invisibility", "stealth", "stealthed", "camouflage",
-    "protection", "amarendra", "meatball", "mount", "debuff", "buff",
-    "charging", "charge", "veil", "kirin", "speed", "immunity", "immune", "wings"
-}
-
-local DETECTED_SKILL_KEYWORDS = {
-    "dash", "glider", "flight", "invincible", "invincibility",
-    "invisible", "invisibility", "stealth", "stealthed", "camouflage",
-    "protection", "amarendra", "meatball", "mount", "golem",
-    "charging", "charge", "veil", "kirin", "speed", "immunity", "immune", "wings"
-}
-
-local function appendProbeText(parts, value, depth)
-    if value == nil or depth > 2 then return end
-    local valueType = type(value)
-    if valueType == "string" or valueType == "number" or valueType == "boolean" then
-        table.insert(parts, tostring(value))
-    elseif valueType == "table" then
-        for k, v in pairs(value) do
-            appendProbeText(parts, k, depth + 1)
-            appendProbeText(parts, v, depth + 1)
-        end
-    end
-end
-
-local function probeText(result, args, source, target, combatEvent)
-    local parts = { tostring(combatEvent or ""), tostring(source or ""), tostring(target or "") }
-    appendProbeText(parts, result, 0)
-    appendProbeText(parts, args, 0)
-    return string.lower(table.concat(parts, " "))
-end
-
-local function hasProbeKeyword(text)
-    for _, keyword in ipairs(PROBE_KEYWORDS) do
-        if text:find(keyword, 1, true) then return true end
-    end
-    return false
 end
 
 local function auraSnapshot(unit, maxCount)
@@ -1589,47 +1843,67 @@ local function auraSnapshot(unit, maxCount)
     return out
 end
 
+local function detectedMountMana()
+    for _, unit in ipairs({"playerpet1", "playerpet", "slave", "playerpet2"}) do
+        local mana = tonumber(OverlayUtils.safeCall(function() return api.Unit:UnitMana(unit) end)) or 0
+        if mana > 0 then
+            local info = OverlayUtils.safeCall(function() return api.Unit:UnitInfo(unit) end) or {}
+            local name = OverlayUtils.textField(info, {"mate_npc_name", "mateNpcName", "name", "unitName", "unit_name"}) or unit
+            return unit .. ":" .. tostring(name or ""), mana
+        end
+    end
+    return nil, 0
+end
+
+local function detectedManaDelta()
+    local mountKey, mountMana = detectedMountMana()
+    local playerMana = tonumber(OverlayUtils.safeCall(function() return api.Unit:UnitMana("player") end)) or 0
+    if not detectManaState.init or tostring(mountKey or "") ~= tostring(detectManaState.mountKey or "") then
+        detectManaState.init = true
+        detectManaState.mountKey = mountKey
+        detectManaState.mountMana = mountMana
+        detectManaState.playerMana = playerMana
+        detectManaState.mountSpent = 0
+        detectManaState.playerSpent = 0
+    else
+        detectManaState.mountSpent = math.max(0, (tonumber(detectManaState.mountMana) or 0) - mountMana)
+        detectManaState.playerSpent = math.max(0, (tonumber(detectManaState.playerMana) or 0) - playerMana)
+        detectManaState.mountMana = mountMana
+        detectManaState.playerMana = playerMana
+    end
+    return {
+        mountKey = mountKey,
+        mountSpent = detectManaState.mountSpent,
+        playerSpent = detectManaState.playerSpent
+    }
+end
+
 local function probeSnapshot(eventName)
+    local mana = detectedManaDelta()
     return {
         event = eventName,
+        mana = mana,
         playerAuras = auraSnapshot("player", 64),
         playerPetAuras = auraSnapshot("playerpet", 64),
         targetAuras = auraSnapshot("target", 32),
         equipment = {
-            mainhand = serialValue(TargetOverlay.equippedSnapshot(EQUIP_SLOT and EQUIP_SLOT.MAINHAND) or {}),
-            offhand = serialValue(TargetOverlay.equippedSnapshot(EQUIP_SLOT and EQUIP_SLOT.OFFHAND) or {}),
-            back = serialValue(TargetOverlay.equippedSnapshot(EQUIP_SLOT and EQUIP_SLOT.BACK) or {}),
-            glider = serialValue(TargetOverlay.equippedSnapshot(TargetOverlay.gliderEquipSlot()) or {})
+            mainhand = SkillProbe.serialValue(TargetOverlay.equippedSnapshot(EQUIP_SLOT and EQUIP_SLOT.MAINHAND) or {}),
+            offhand = SkillProbe.serialValue(TargetOverlay.equippedSnapshot(EQUIP_SLOT and EQUIP_SLOT.OFFHAND) or {}),
+            back = SkillProbe.serialValue(TargetOverlay.equippedSnapshot(EQUIP_SLOT and EQUIP_SLOT.BACK) or {}),
+            glider = SkillProbe.serialValue(TargetOverlay.equippedSnapshot(TargetOverlay.gliderEquipSlot()) or {})
         }
     }
 end
 
-local function auraLooksLikeCooldownSkill(aura)
-    if type(aura) ~= "table" then return false end
-    local name = string.lower(tostring(aura.name or ""))
-    local desc = string.lower(tostring(aura.description or ""))
-    local haystack = name .. " " .. desc
-    local directNameHit = false
-    for _, keyword in ipairs(DETECTED_SKILL_KEYWORDS) do
-        if haystack:find(keyword, 1, true) then directNameHit = true break end
-    end
-    if not directNameHit then return false end
-    if name:find("equip ", 1, true) or name:find("leather set", 1, true) or name:find("armor", 1, true) then return false end
-    if name:find("eanna", 1, true) or name:find("blessing", 1, true) then return false end
-    local timeLeft = tonumber(aura.timeLeft)
-    if timeLeft and timeLeft > 0 and timeLeft <= 600000 then return true end
-    return haystack:find("cooldown", 1, true) or haystack:find("cannot be used", 1, true)
-end
-
 function TargetOverlay.auraLooksLikeUsefulCandidate(aura, source)
-    if auraLooksLikeCooldownSkill(aura) then return true end
+    if SkillProbe.auraLooksLikeCooldownSkill(aura) then return true end
     local timeLeft = tonumber(aura and aura.timeLeft)
     if not timeLeft or timeLeft <= 0 or timeLeft > 180000 then return false end
     if source == "Mount/Pet" then return true end
     return aura and aura.icon ~= nil
 end
 
-local function detectFromAuraList(list, source, unit)
+local function detectFromAuraList(list, source, unit, mana)
     for _, aura in ipairs(list or {}) do
         if TargetOverlay.auraLooksLikeUsefulCandidate(aura, source) and recordDetectedSkill then
             recordDetectedSkill(aura.name, aura.id, source, tostring(aura.name or "") .. " " .. tostring(aura.description or ""), {
@@ -1639,7 +1913,9 @@ local function detectFromAuraList(list, source, unit)
                 cooldown = aura.cooldown,
                 auraKind = aura.kind,
                 timeLeft = aura.timeLeft,
-                description = aura.description
+                description = aura.description,
+                manaSpent = mana and mana.mountSpent or nil,
+                playerManaSpent = mana and mana.playerSpent or nil
             })
         end
     end
@@ -1647,8 +1923,8 @@ end
 
 local function detectFromProbeSnapshot(snapshot)
     if settings.skillProbeLogging ~= true or type(snapshot) ~= "table" then return end
-    detectFromAuraList(snapshot.playerAuras, "Player", "player")
-    detectFromAuraList(snapshot.playerPetAuras, "Mount/Pet", "playerpet")
+    detectFromAuraList(snapshot.playerAuras, "Player", "player", snapshot.mana)
+    detectFromAuraList(snapshot.playerPetAuras, "Mount/Pet", "playerpet", snapshot.mana)
 end
 
 local function updateProbeLogging(dt)
@@ -1677,28 +1953,6 @@ function recordSkillProbe(entry)
     skillProbeDirty = true
 end
 
-local function parsedCombatMessage(combatEvent, args)
-    if not ParseCombatMessage or not unpackArgs then return nil end
-    return OverlayUtils.safeCall(function() return ParseCombatMessage(combatEvent, unpackArgs(args)) end)
-end
-
-local function extractSkillFields(result, args)
-    local name = OverlayUtils.textField(result, {"spellName", "skillName", "abilityName", "name"})
-    local id = tonumber(result and (result.spellId or result.abilityId or result.skillId or result.id))
-    if name or id then return name, id end
-    for _, value in ipairs(args or {}) do
-        if type(value) == "table" then
-            name = name or OverlayUtils.textField(value, {"spellName", "skillName", "abilityName", "name"})
-            id = id or tonumber(value.spellId or value.abilityId or value.skillId or value.id)
-        elseif type(value) == "string" and not name and #value > 1 then
-            name = value
-        elseif type(value) == "number" and not id then
-            id = value
-        end
-    end
-    return name, id
-end
-
 local function findTrackedSkill(skillName, skillId)
     local lowerName = string.lower(tostring(skillName or ""))
     for _, row in ipairs(allTrackedSkillRows()) do
@@ -1712,19 +1966,11 @@ local function findTrackedSkill(skillName, skillId)
     return nil
 end
 
-local function detectedSkillKey(skillName, skillId)
-    local id = tonumber(skillId)
-    if id then return "id:" .. tostring(id) end
-    local name = string.lower(tostring(skillName or ""))
-    if name == "" then return nil end
-    return "name:" .. name
-end
-
 local function trackedSkillIndex(skillName, skillId)
-    local key = detectedSkillKey(skillName, skillId)
+    local key = SkillProbe.detectedSkillKey(skillName, skillId)
     if not key then return nil end
     for i, row in ipairs(settings.trackedSkills or {}) do
-        if detectedSkillKey(row.name or row.pattern, row.id or row.skillId) == key then return i end
+        if SkillProbe.detectedSkillKey(row.name or row.pattern, row.id or row.skillId) == key then return i end
     end
     return nil
 end
@@ -1733,6 +1979,180 @@ local function lowerPattern(value)
     value = string.lower(tostring(value or ""))
     value = value:gsub("^%s+", ""):gsub("%s+$", "")
     return value
+end
+
+function TargetOverlay.isGenericMountName(value)
+    local name = lowerPattern(value)
+    return name == "" or name == "mount" or name == "mount/pet" or name == "pet" or name == "playerpet" or name == "unknown" or name == "detected"
+end
+
+function TargetOverlay.firstRealMountName(...)
+    local values = {...}
+    for _, value in ipairs(values) do
+        if not TargetOverlay.isGenericMountName(value) then return tostring(value) end
+    end
+    return nil
+end
+
+function TargetOverlay.canonicalGliderDevice(name)
+    local text = lowerPattern(name)
+    if text:find("sloth", 1, true) then
+        return {
+            key = "sloth_glider",
+            name = "Sloth Glider",
+            patterns = {"sloth", "glider companion: sloth", "sloth glider companion", "enhanced sloth glider companion"},
+            itemTypes = {30621},
+            displayItemType = 8000412
+        }
+    end
+    if text:find("crystal wings", 1, true) then
+        return {
+            key = "crystal_wings",
+            name = "Crystal Wings",
+            patterns = {"crystal wings"},
+            itemTypes = nil,
+            displayItemType = 44649
+        }
+    end
+    if text:find("flamefeather", 1, true) then
+        return {
+            key = "flamefeather_glider",
+            name = "Flamefeather Glider",
+            patterns = {
+                "flamefeather",
+                "flamefeather glider",
+                "enhanced flamefeather glider",
+                "glider companion: flamefeather",
+                "flamefeather glider companion",
+                "enhanced flamefeather glider companion"
+            },
+            itemTypes = nil,
+            displayItemType = 8001102
+        }
+    end
+    if text:find("snowflake", 1, true) then
+        return {
+            key = "snowflake_wings",
+            name = "Snowflake Wings",
+            patterns = {"snowflake wings", "snowflake"},
+            itemTypes = nil
+        }
+    end
+    if text:find("ezi", 1, true) then
+        return {
+            key = "ezi_glider",
+            name = "Ezi Glider",
+            patterns = {
+                "ezi",
+                "ezi's glider",
+                "ezi glider",
+                "glider companion: ezi",
+                "ezi glider companion",
+                "enhanced ezi glider",
+                "enhanced ezi glider companion"
+            },
+            itemTypes = {18174, 8000399},
+            displayItemType = 8000399
+        }
+    end
+    if text:find("cumulus", 1, true) or text:find("magicopter", 1, true) or text:find("magithopter", 1, true) then
+        return {
+            key = "cumulus_magithopter",
+            name = "Cumulus Magithopter",
+            patterns = {"cumulus magicopter", "cumulus magithopter", "magicopter", "magithopter"},
+            itemTypes = nil
+        }
+    end
+    if text:find("stormduster", 1, true) or text:find("storm duster", 1, true) then
+        return {
+            key = "stormduster_1000",
+            name = "Stormduster 1000",
+            patterns = {
+                "stormduster",
+                "stormduster 1000",
+                "storm duster",
+                "enhanced stormduster 1000"
+            },
+            itemTypes = {
+                42736,
+                8001544,
+                8001545,
+                8001546,
+                8001547,
+                8001548,
+                8001549,
+                8001550
+            },
+            displayItemType = 8001544
+        }
+    end
+    local learned = CooldownLearning.Find(settings, "glider", name)
+    if learned then return learned end
+    return nil
+end
+
+function TargetOverlay.canonicalMountDevice(name)
+    local text = lowerPattern(name)
+    if text:find("meatball", 1, true) then
+        return {
+            key = "ser_meatball",
+            name = "Ser Meatball",
+            names = {"Ser Meatball", "Ser Meatball (Vanity)", "Gallant Ser Meatball"},
+            itemType = 9000375,
+            displayItemType = 9000375
+        }
+    end
+    if text:find("kirin", 1, true) then
+        return {
+            key = "kirin",
+            name = "Kirin",
+            names = {"Kirin", "Hellwraith Kirin"},
+            itemType = 9001789
+        }
+    end
+    if text:find("rajin", 1, true) or text:find("raijin", 1, true) or text:find("rajani", 1, true) then
+        return {
+            key = "rajani",
+            name = "Raijin",
+            names = {"Rajani", "Raijin"},
+            itemType = 8000618
+        }
+    end
+    if text:find("stormrose", 1, true) then
+        return {
+            key = "stormrose",
+            name = "Stormrose",
+            names = {"Stormrose"},
+            itemType = 8001042,
+            displayItemType = 8001042
+        }
+    end
+    if text:find("golem", 1, true) or text:find("andelph", 1, true) or text:find("patrol mech", 1, true) then
+        return {
+            key = "golem",
+            name = "Golem",
+            names = {"Golem", "Andelph Patrol Mech", "Andelph Mech", "Patrol Mech"},
+            itemType = 37136,
+            displayItemType = 37136
+        }
+    end
+    if text:find("bouncy cow", 1, true) or text:find("asianbunnyx", 1, true) then
+        return {
+            key = "bouncy_cow",
+            name = "Bouncy Cow",
+            names = {"Bouncy Cow", "Asianbunnyx"},
+            itemType = 53939,
+            displayItemType = 53939,
+            icon = "Game\\ui\\icon\\icon_skill_snowman03.dds"
+        }
+    end
+    local learned = CooldownLearning.Find(settings, "mount", name)
+    if learned then return learned end
+    return nil
+end
+
+function TargetOverlay.learnCooldownDevice(recipe)
+    return CooldownLearning.Learn(settings, recipe)
 end
 
 function TargetOverlay.detectedRecipeRow(row, mode)
@@ -1756,25 +2176,55 @@ function TargetOverlay.detectedRecipeRow(row, mode)
     if mode == "glider" then
         local glider = TargetOverlay.equippedGliderSnapshot()
         local gliderName = glider.name or row.gliderName or row.source or "Glider"
-        recipe.name = gliderName
-        recipe.source = gliderName
-        recipe.icon = glider.icon or row.gliderIcon or recipe.icon
-        recipe.itemType = glider.itemType or row.gliderItemType
-        recipe.itemTypes = recipe.itemType and {recipe.itemType} or nil
+        local canonical = TargetOverlay.canonicalGliderDevice(gliderName)
+        recipe.name = canonical and canonical.name or gliderName
+        recipe.source = canonical and canonical.name or gliderName
+        recipe.itemType = glider.itemType or row.gliderItemType or (canonical and canonical.itemTypes and canonical.itemTypes[1])
+        recipe.itemTypes = canonical and canonical.itemTypes or (recipe.itemType and {recipe.itemType} or nil)
+        recipe.recipeDeviceItemType = canonical and canonical.displayItemType or recipe.itemType
         recipe.category = "glider"
-        recipe.gliderPattern = {lowerPattern(gliderName)}
+        recipe.gliderPattern = canonical and canonical.patterns or {lowerPattern(gliderName)}
+        recipe.recipeDeviceName = canonical and canonical.name or gliderName
+        recipe.recipeDeviceKey = canonical and canonical.key or ("custom_glider_" .. lowerPattern(gliderName))
+        recipe.recipeDeviceKind = "glider"
+        recipe.recipeDeviceIcon = row.gliderIcon or (canonical and canonical.icon)
+        if not canonical then
+            recipe.recipeDeviceIcon = recipe.recipeDeviceIcon or glider.icon
+        end
         if TargetOverlay.isStarTriggerCooldown(recipe) then
             recipe.cooldownOnlyOnActive = true
             recipe.triggerMinTimeLeftMs = 5300
         end
     elseif mode == "mount" then
         local mount = TargetOverlay.mountedPetSnapshot()
-        local mountName = mount.name or row.mountName or row.source or "Mount"
-        recipe.name = row.name or mountName
-        recipe.source = mountName
-        recipe.icon = mount.icon or row.mountIcon or recipe.icon
+        local mountName = TargetOverlay.firstRealMountName(mount.name, row.mountName, row.source)
+        if not mountName then
+            if api.Log and api.Log.Info then api.Log:Info("[Power Ranger ON] Mount name unavailable. Summon/target the mount until its real name is exposed, then add again.") end
+            return nil
+        end
+        local canonical = TargetOverlay.canonicalMountDevice(mountName)
+        recipe.name = row.name or (canonical and canonical.name) or mountName
+        recipe.source = canonical and canonical.name or mountName
         recipe.category = "mount"
         recipe.preferMountIcon = true
+        recipe.mountName = canonical and canonical.name or mountName
+        recipe.mountNames = canonical and canonical.names or {mountName}
+        recipe.recipeDeviceName = canonical and canonical.name or mountName
+        recipe.recipeDeviceKey = canonical and canonical.key or ("custom_mount_" .. lowerPattern(mountName))
+        recipe.recipeDeviceKind = "mount"
+        recipe.itemType = canonical and canonical.itemType or mount.itemType or row.mountItemType or recipe.itemType
+        recipe.recipeDeviceItemType = canonical and (canonical.displayItemType or canonical.itemType) or mount.itemType or row.mountItemType or recipe.itemType
+        recipe.recipeDeviceIcon = row.mountIcon or (canonical and canonical.icon)
+        if not canonical then
+            recipe.recipeDeviceIcon = recipe.recipeDeviceIcon or mount.icon
+        end
+        recipe.dynamicDisplay = false
+        if tonumber(row.manaSpent) and tonumber(row.manaSpent) > 0 then
+            recipe.petManaSpent = math.floor(tonumber(row.manaSpent) + 0.5)
+        end
+        if tonumber(row.playerManaSpent) and tonumber(row.playerManaSpent) > 0 then
+            recipe.playerManaSpent = math.floor(tonumber(row.playerManaSpent) + 0.5)
+        end
     end
     return recipe
 end
@@ -1783,8 +2233,18 @@ function TargetOverlay.detectedBuffTrackedIndex(row, mode)
     local probe = TargetOverlay.detectedRecipeRow(row, mode or "aura")
     if not probe then return nil end
     local key = trackedBuffSettingKey(probe)
+    local probeDevice = lowerPattern(probe.recipeDeviceKey or probe.recipeDeviceName or probe.source or "")
+    local probeTriggerId = tonumber(probe.id or probe.buff_id)
+    local probeTriggerName = lowerPattern((probe.buffNames and probe.buffNames[1]) or probe.buffName or probe.name or "")
     for i, tracked in ipairs(settings.trackedBuffs or {}) do
         if trackedBuffSettingKey(tracked) == key then return i end
+        local trackedDevice = lowerPattern(tracked.recipeDeviceKey or tracked.recipeDeviceName or tracked.source or "")
+        local trackedTriggerId = tonumber(tracked.id or tracked.buff_id)
+        local trackedTriggerName = lowerPattern((tracked.buffNames and tracked.buffNames[1]) or tracked.buffName or tracked.name or "")
+        if probeDevice ~= "" and trackedDevice == probeDevice then
+            if probeTriggerId and trackedTriggerId and probeTriggerId == trackedTriggerId then return i end
+            if probeTriggerName ~= "" and trackedTriggerName ~= "" and probeTriggerName == trackedTriggerName then return i end
+        end
     end
     return nil
 end
@@ -1793,8 +2253,8 @@ local function inferSkillSource(skillName, sourceName, flatText)
     local lower = string.lower(tostring(flatText or "") .. " " .. tostring(skillName or "") .. " " .. tostring(sourceName or ""))
     if lower:find("meatball", 1, true) then return "Ser Meatball" end
     if lower:find("kirin", 1, true) then return "Kirin" end
-    if lower:find("nui's veil", 1, true) or lower:find("nuis veil", 1, true) then return "Mount" end
-    if lower:find("golem", 1, true) then return "Golem" end
+    if lower:find("nui's veil", 1, true) or lower:find("nuis veil", 1, true) then return "Stormrose" end
+    if lower:find("golem", 1, true) or lower:find("andelph", 1, true) or lower:find("patrol mech", 1, true) then return "Golem" end
     if lower:find("glider", 1, true) or lower:find("flight", 1, true) then return "Glider" end
     if sourceName and sourceName ~= "" and sourceName ~= playerName then return tostring(sourceName) end
     return "Unknown"
@@ -1806,31 +2266,40 @@ function TargetOverlay.detectedCooldownCategory(name, sourceName, unit, flatText
         return "glider"
     end
     if unit == "playerpet" or lower:find("mount", 1, true) or lower:find("meatball", 1, true)
-        or lower:find("kirin", 1, true) or lower:find("golem", 1, true) or lower:find("nui", 1, true) then
+        or lower:find("kirin", 1, true) or lower:find("golem", 1, true)
+        or lower:find("andelph", 1, true) or lower:find("patrol mech", 1, true) or lower:find("nui", 1, true) then
         return "mount"
-    end
-    return nil
-end
-
-local function detectFallbackSkillName(flatText)
-    for _, keyword in ipairs(DETECTED_SKILL_KEYWORDS) do
-        if flatText and flatText:find(keyword, 1, true) then
-            if keyword == "invincible" or keyword == "invincibility" then return "Invincibility" end
-            return keyword:sub(1, 1):upper() .. keyword:sub(2)
-        end
     end
     return nil
 end
 
 function recordDetectedSkill(skillName, skillId, sourceName, flatText, extra)
     if settings.skillProbeLogging ~= true then return end
-    local name = skillName or detectFallbackSkillName(flatText) or TargetOverlay.buffNameById(skillId)
-    local key = detectedSkillKey(name, skillId)
+    extra = extra or {}
+    local glider = TargetOverlay.equippedGliderSnapshot()
+    if glider and glider.name then
+        extra.gliderName = extra.gliderName or glider.name
+        extra.gliderIcon = extra.gliderIcon or glider.icon
+        extra.gliderItemType = extra.gliderItemType or glider.itemType
+    end
+    local mount = TargetOverlay.mountedPetSnapshot()
+    if mount and mount.name and not TargetOverlay.isGenericMountName(mount.name) then
+        extra.mountName = extra.mountName or mount.name
+        extra.mountIcon = extra.mountIcon or mount.icon
+        extra.mountItemType = extra.mountItemType or mount.itemType
+        extra.mountUnitId = extra.mountUnitId or mount.id
+    end
+    local name = skillName or SkillProbe.detectFallbackSkillName(flatText) or TargetOverlay.buffNameById(skillId)
+    local key = SkillProbe.detectedSkillKey(name, skillId)
     if not key then return end
     settings.detectedSkills = settings.detectedSkills or {}
-    local detectedCategory = TargetOverlay.detectedCooldownCategory(name, sourceName, extra and extra.unit, flatText)
+    local detectedCategory = TargetOverlay.detectedCooldownCategory(name, sourceName, extra.unit, flatText)
     local lowerDetectedName = string.lower(tostring(name or ""))
-    local recipeCandidate = extra and extra.kind == "buff" and (detectedCategory == "glider" or lowerDetectedName:find("star", 1, true) ~= nil)
+    local deviceCandidate = detectedCategory == "glider"
+        or detectedCategory == "mount"
+        or extra.gliderName ~= nil
+        or extra.mountName ~= nil
+    local recipeCandidate = deviceCandidate or (extra.kind == "buff" and lowerDetectedName:find("star", 1, true) ~= nil)
     if trackedCooldownIsHardcoded(name, skillId) and not recipeCandidate then
         for i = #settings.detectedSkills, 1, -1 do
             if settings.detectedSkills[i].key == key then table.remove(settings.detectedSkills, i) end
@@ -1844,32 +2313,38 @@ function recordDetectedSkill(skillName, skillId, sourceName, flatText, extra)
         if row.key == key then found = row break end
     end
     if not found then
-        found = { key = key, firstSeen = api.Time:GetUiMsec(), seen = 0, cooldown = TargetOverlay.detectedCooldown(name, skillId, extra and extra.cooldown) }
+        found = { key = key, firstSeen = api.Time:GetUiMsec(), seen = 0, cooldown = TargetOverlay.detectedCooldown(name, skillId, extra.cooldown) }
         table.insert(settings.detectedSkills, 1, found)
         while #settings.detectedSkills > 24 do table.remove(settings.detectedSkills) end
     end
-    found.kind = extra and extra.kind or found.kind or "skill"
+    found.kind = extra.kind or found.kind or "skill"
     found.name = name
     found.id = tonumber(skillId) or found.id
     found.pattern = string.lower(tostring(name or ""))
-    found.unit = extra and extra.unit or found.unit
-    found.auraKind = extra and extra.auraKind or found.auraKind
-    found.timeLeft = extra and extra.timeLeft or found.timeLeft
-    found.description = extra and extra.description or found.description
-    found.category = detectedCategory or found.category
-    found.cooldown = TargetOverlay.detectedCooldown(name, skillId, extra and extra.cooldown or found.cooldown)
-    found.source = inferSkillSource(name, sourceName, flatText)
-    found.icon = (extra and extra.icon) or found.icon or (found.kind == "buff" and TargetOverlay.buffIconById(found.id) or TargetOverlay.skillIconById(found.id))
-    local glider = TargetOverlay.equippedGliderSnapshot()
-    if glider and glider.name then
-        found.gliderName = glider.name
-        found.gliderIcon = glider.icon or found.gliderIcon
-        found.gliderItemType = glider.itemType or found.gliderItemType
+    found.unit = extra.unit or found.unit
+    found.auraKind = extra.auraKind or found.auraKind
+    found.timeLeft = extra.timeLeft or found.timeLeft
+    found.description = extra.description or found.description
+    if tonumber(extra.manaSpent) and tonumber(extra.manaSpent) > 0 then
+        found.manaSpent = math.floor(tonumber(extra.manaSpent) + 0.5)
     end
-    local mount = TargetOverlay.mountedPetSnapshot()
-    if mount and mount.name then
-        found.mountName = mount.name
-        found.mountIcon = mount.icon or found.mountIcon
+    if tonumber(extra.playerManaSpent) and tonumber(extra.playerManaSpent) > 0 then
+        found.playerManaSpent = math.floor(tonumber(extra.playerManaSpent) + 0.5)
+    end
+    found.category = detectedCategory or found.category
+    found.cooldown = TargetOverlay.detectedCooldown(name, skillId, extra.cooldown or found.cooldown)
+    found.source = inferSkillSource(name, sourceName, flatText)
+    found.icon = extra.icon or found.icon or (found.kind == "buff" and TargetOverlay.buffIconById(found.id) or TargetOverlay.skillIconById(found.id))
+    if extra.gliderName then
+        found.gliderName = extra.gliderName
+        found.gliderIcon = extra.gliderIcon or found.gliderIcon
+        found.gliderItemType = extra.gliderItemType or found.gliderItemType
+    end
+    if extra.mountName then
+        found.mountName = extra.mountName
+        found.mountIcon = extra.mountIcon or found.mountIcon
+        found.mountItemType = extra.mountItemType or found.mountItemType
+        found.mountUnitId = extra.mountUnitId or found.mountUnitId
     end
     found.seen = (tonumber(found.seen) or 0) + 1
     found.lastSeen = api.Time:GetUiMsec()
@@ -1884,7 +2359,7 @@ local function startSkillCooldown(row, skillName, skillId)
     skillCooldowns[key] = {
         name = row.name or skillName or tostring(skillId),
         id = skillId or row.id or row.skillId,
-        icon = TargetOverlay.cooldownRowIcon(row) or TargetOverlay.skillIconById(skillId or row.id or row.skillId),
+        icon = TargetOverlay.skillIconById(skillId or row.id or row.skillId) or TargetOverlay.cooldownRowIcon(row),
         readyAt = api.Time:GetUiMsec() + (cooldown * 1000)
     }
 end
@@ -1893,16 +2368,16 @@ local function onCombatMessage(targetUnitId, combatEvent, source, target, ...)
     local logging = settings.skillProbeLogging == true
     if not logging and not TargetOverlay.hasEnabledTrackedSkills() then return end
     local args = {...}
-    local result = parsedCombatMessage(combatEvent, args)
-    local skillName, skillId = extractSkillFields(result, args)
+    local result = SkillProbe.parsedCombatMessage(combatEvent, args)
+    local skillName, skillId = SkillProbe.extractSkillFields(result, args)
     local row = findTrackedSkill(skillName, skillId)
     if row then startSkillCooldown(row, skillName, skillId) end
     if not logging then return end
     if not playerName then playerName = TargetOverlay.getPlayerName() end
     local sourceName = tostring(source or "")
     local targetName = tostring(target or "")
-    local flat = probeText(result, args, sourceName, targetName, combatEvent)
-    local keywordHit = hasProbeKeyword(flat)
+    local flat = SkillProbe.probeText(result, args, sourceName, targetName, combatEvent)
+    local keywordHit = SkillProbe.hasProbeKeyword(flat)
     if skillName or skillId or keywordHit then
         local entry = {
             event = "COMBAT_MSG",
@@ -1913,8 +2388,8 @@ local function onCombatMessage(targetUnitId, combatEvent, source, target, ...)
             skillName = skillName,
             skillId = skillId,
             keywordHit = keywordHit,
-            parsed = serialValue(result),
-            args = serialValue(args)
+            parsed = SkillProbe.serialValue(result),
+            args = SkillProbe.serialValue(args)
         }
         if keywordHit then
             entry.playerAuras = auraSnapshot("player", 16)
@@ -1930,19 +2405,19 @@ local function onSkillEvent(event, ...)
     local logging = settings.skillProbeLogging == true
     if not logging and not TargetOverlay.hasEnabledTrackedSkills() then return end
     local args = {...}
-    local skillName, skillId = extractSkillFields(nil, args)
+    local skillName, skillId = SkillProbe.extractSkillFields(nil, args)
     local row = findTrackedSkill(skillName, skillId)
     if row then startSkillCooldown(row, skillName, skillId) end
     if not logging then return end
-    local flat = probeText(nil, args, "", "", event)
-    local keywordHit = hasProbeKeyword(flat)
+    local flat = SkillProbe.probeText(nil, args, "", "", event)
+    local keywordHit = SkillProbe.hasProbeKeyword(flat)
     if skillName or skillId or keywordHit then
         local entry = {
             event = tostring(event or ""),
             skillName = skillName,
             skillId = skillId,
             keywordHit = keywordHit,
-            args = serialValue(args)
+            args = SkillProbe.serialValue(args)
         }
         if keywordHit then
             entry.playerAuras = auraSnapshot("player", 16)
@@ -2012,15 +2487,84 @@ local function cooldownSettingEntries(group)
     return out
 end
 
-local function cooldownSettingIcon(entry)
+local function cooldownEntryIsGlider(entry)
     local row = entry and entry.row
-    if not row then return nil end
-    if entry.kind == "skill" then return TargetOverlay.cooldownRowIcon(row) or TargetOverlay.skillIconById(row.id or row.skillId) end
-    if row.gliderPattern then
-        local glider = TargetOverlay.equippedGliderSnapshot()
-        if TargetOverlay.trackedGliderMatches(row, glider) then return TargetOverlay.cooldownRowIcon(row) or glider.icon or TargetOverlay.buffIconById(row.id) end
-        return TargetOverlay.cooldownRowIcon(row) or TargetOverlay.buffIconById(row.id)
+    return row and (row.gliderPattern ~= nil or row.category == "glider" or row.recipeDeviceKind == "glider")
+end
+
+local function cooldownDeviceKey(entry)
+    local row = entry and entry.row
+    if not row then return "" end
+    local kind = cooldownEntryIsGlider(entry) and "glider" or "mount"
+    if kind == "mount" and TargetOverlay.canonicalMountDevice then
+        local canonical = TargetOverlay.canonicalMountDevice(row.recipeDeviceName or row.mountName or row.mount_name or row.source or row.mount or row.name or "")
+        if canonical then return kind .. ":" .. lowerPattern(canonical.key) end
     end
+    local name = row.recipeDeviceKey or row.recipeDeviceName or row.mountName or row.mount_name or row.source or row.mount or row.name or row.buffName or row.pattern or tostring(row.id or row.skillId or "")
+    return kind .. ":" .. lowerPattern(name)
+end
+
+local function cooldownDeviceTitle(entry)
+    local row = entry and entry.row
+    if not row then return "" end
+    if TargetOverlay.canonicalMountDevice then
+        local canonical = TargetOverlay.canonicalMountDevice(row.recipeDeviceName or row.mountName or row.mount_name or row.source or row.mount or row.name or "")
+        if canonical then return canonical.name end
+    end
+    return row.recipeDeviceName or row.mountName or row.mount_name or row.source or row.mount or row.name or row.buffName or row.pattern or tostring(row.id or row.skillId or "")
+end
+
+local function cooldownDeviceEntries(group)
+    local byKey = {}
+    local out = {}
+    for _, entry in ipairs(cooldownSettingEntries(group)) do
+        local key = cooldownDeviceKey(entry)
+        if key ~= "" then
+            local device = byKey[key]
+            if not device then
+                device = {
+                    key = key,
+                    group = group,
+                    title = cooldownDeviceTitle(entry),
+                    first = entry,
+                    refs = {},
+                    anyEnabled = false
+                }
+                byKey[key] = device
+                out[#out + 1] = device
+            end
+            device.refs[#device.refs + 1] = entry
+            if entry.row and entry.row.enabled ~= false then device.anyEnabled = true end
+        end
+    end
+    return out
+end
+
+local function cooldownSettingIcon(entry)
+    local ref = entry and (entry.first or entry)
+    local row = ref and ref.row
+    if not row then return nil end
+    if entry and entry.first then
+        local deviceIcon = TargetOverlay.cooldownDeviceIcon(row)
+        if deviceIcon then return deviceIcon end
+        for _, ref in ipairs(entry.refs or {}) do
+            local refIcon = ref and ref.row and TargetOverlay.cooldownDeviceIcon(ref.row)
+            if refIcon then return refIcon end
+        end
+        if row.recipeDeviceKind == "mount" or row.category == "mount" then
+            local mount = TargetOverlay.mountedPetSnapshot()
+            if TargetOverlay.trackedMountMatches(row, mount) and mount and mount.icon then
+                return mount.icon
+            end
+            return nil
+        end
+        if row.gliderPattern or row.category == "glider" or row.recipeDeviceKind == "glider" then
+            local glider = TargetOverlay.equippedGliderSnapshot()
+            if TargetOverlay.trackedGliderMatches(row, glider) and glider and glider.icon then return glider.icon end
+        end
+        return nil
+    end
+    if ref.kind == "skill" then return TargetOverlay.skillIconById(row.id or row.skillId) or TargetOverlay.cooldownRowIcon(row) end
     return TargetOverlay.cooldownRowIcon(row) or TargetOverlay.buffIconById(row.id)
 end
 
@@ -2090,7 +2634,7 @@ end
 local function refreshCooldownSettingGroup(group, title)
     local rows = cooldownSettingRowSet(group)
     if not settingsWnd or not rows then return end
-    local entries = cooldownSettingEntries(group)
+    local entries = cooldownDeviceEntries(group)
     local pageSize = #rows
     local total = #entries
     local pages = math.max(1, math.ceil(total / math.max(1, pageSize)))
@@ -2099,65 +2643,67 @@ local function refreshCooldownSettingGroup(group, title)
     local startIndex = ((settings[pageKey] - 1) * pageSize) + 1
     for i, ui in ipairs(rows) do
         local entry = entries[startIndex + i - 1]
-        if entry and entry.row then
-            local enabled = entry.row.enabled ~= false
-            ui.entryKind = entry.kind
-            ui.entryIndex = entry.index
+        if entry and entry.first and entry.first.row then
+            local enabled = entry.anyEnabled == true
+            ui.deviceKey = entry.key
+            ui.deviceTitle = entry.title
+            ui.abilityRefs = entry.refs
             ui.entryGroup = group
             ui.entryFilteredIndex = startIndex + i - 1
             setEquipIcon(ui.icon, cooldownSettingIcon(entry))
-            ui.name:SetText(OverlayUtils.shortText(cooldownSettingName(entry), 18))
-            ui.source:SetText(OverlayUtils.shortText(cooldownSettingSource(entry), 18))
-            ui.cd.entryKind = entry.kind
-            ui.cd.entryIndex = entry.index
-            ui.cd._settingText = true
-            ui.cd:SetText(tostring(entry.row.cooldown or entry.row.cooldownSeconds or ""))
-            ui.cd._settingText = false
-            ui.cd:Show(true)
+            ui.name:SetText(OverlayUtils.shortText(entry.title, 18))
+            ui.source:SetText(tostring(#entry.refs) .. " skills")
+            if ui.info then
+                ui.info.deviceKey = entry.key
+                ui.info.deviceTitle = entry.title
+                ui.info.entryGroup = group
+            end
+            if ui.skills then
+                ui.skills.deviceKey = entry.key
+                ui.skills.deviceTitle = entry.title
+                ui.skills.entryGroup = group
+            end
             setToggleButton(ui.button, enabled, "Show")
-            if ui.remove then
-                ui.remove.entryKind = entry.kind
-                ui.remove.entryIndex = entry.index
-                ui.remove:SetCleanText("Del")
-                ui.remove:SetTone({0.24, 0.09, 0.09, 0.95})
-                ui.remove:Show(cooldownSettingCanRemove(entry))
+            if ui.del then
+                local removable = false
+                for _, ref in ipairs(entry.refs or {}) do
+                    if ref.kind == "skill" or (ref.kind == "buff" and not isDefaultTrackedBuff(ref.row)) then
+                        removable = true
+                        break
+                    end
+                end
+                ui.del:SetTone(removable and COLORS.danger or {0.08, 0.08, 0.09, 0.95})
             end
             if ui.up then
                 local prevEntry = entries[(startIndex + i - 1) - 1]
-                ui.up.entryKind = entry.kind
-                ui.up.entryIndex = entry.index
+                ui.up.deviceKey = entry.key
                 ui.up.entryGroup = group
                 ui.up:SetCleanText("^")
-                ui.up:SetTone(prevEntry and prevEntry.kind == entry.kind and COLORS.button or {0.08, 0.08, 0.09, 0.95})
+                ui.up:SetTone(prevEntry and COLORS.button or {0.08, 0.08, 0.09, 0.95})
             end
             if ui.down then
                 local nextEntry = entries[(startIndex + i - 1) + 1]
-                ui.down.entryKind = entry.kind
-                ui.down.entryIndex = entry.index
+                ui.down.deviceKey = entry.key
                 ui.down.entryGroup = group
                 ui.down:SetCleanText("v")
-                ui.down:SetTone(nextEntry and nextEntry.kind == entry.kind and COLORS.button or {0.08, 0.08, 0.09, 0.95})
+                ui.down:SetTone(nextEntry and COLORS.button or {0.08, 0.08, 0.09, 0.95})
             end
             ui.root:Show(true)
         else
-            ui.entryKind = nil
-            ui.entryIndex = nil
+            ui.deviceKey = nil
+            ui.deviceTitle = nil
+            ui.abilityRefs = nil
             ui.entryGroup = nil
             ui.entryFilteredIndex = nil
-            if ui.remove then
-                ui.remove.entryKind = nil
-                ui.remove.entryIndex = nil
-                ui.remove.entryGroup = nil
-                ui.remove:Show(false)
-            end
+            if ui.info then ui.info.deviceKey = nil end
+            if ui.skills then ui.skills.deviceKey = nil end
+            if ui.del then ui.del:SetTone({0.08, 0.08, 0.09, 0.95}) end
             if ui.up then
-                ui.up.entryKind = nil
-                ui.up.entryIndex = nil
+                ui.up.deviceKey = nil
                 ui.up.entryGroup = nil
             end
             if ui.down then
-                ui.down.entryKind = nil
-                ui.down.entryIndex = nil
+                ui.down.deviceKey = nil
                 ui.down.entryGroup = nil
             end
             if ui.cd then
@@ -2185,6 +2731,26 @@ local function refreshCooldownSettingGroup(group, title)
         nextBtn:SetCleanText(">")
         nextBtn:SetTone(settings[pageKey] < pages and COLORS.button or {0.08, 0.08, 0.09, 0.95})
     end
+    if group == "glider" and settingsWnd.cooldownGliderShowAllBtn then
+        local allOn = total > 0
+        for _, device in ipairs(entries) do
+            if not device.anyEnabled then
+                allOn = false
+                break
+            end
+        end
+        setToggleButton(settingsWnd.cooldownGliderShowAllBtn, allOn, "Show All")
+    end
+    if group == "other" and settingsWnd.cooldownOtherShowAllBtn then
+        local allOn = total > 0
+        for _, device in ipairs(entries) do
+            if not device.anyEnabled then
+                allOn = false
+                break
+            end
+        end
+        setToggleButton(settingsWnd.cooldownOtherShowAllBtn, allOn, "Show All")
+    end
 end
 
 local function refreshCooldownSettingRows()
@@ -2195,16 +2761,25 @@ end
 local function toggleCooldownSetting(rowIndex, group)
     local rows = cooldownSettingRowSet(group)
     local ui = rows and rows[rowIndex]
-    if not ui or not ui.entryKind or not ui.entryIndex then return end
-    local list = ui.entryKind == "skill" and settings.trackedSkills or settings.trackedBuffs
-    local row = list and list[ui.entryIndex]
-    if not row then return end
-    row.enabled = row.enabled == false
-    if row.enabled == false then
-        if ui.entryKind == "skill" then
-            clearSkillCooldownForRow(row)
-        else
-            buffState[trackedBuffKey(row)] = nil
+    if not ui or not ui.abilityRefs then return end
+    local nextEnabled = true
+    for _, ref in ipairs(ui.abilityRefs) do
+        if ref.row and ref.row.enabled ~= false then
+            nextEnabled = false
+            break
+        end
+    end
+    for _, ref in ipairs(ui.abilityRefs) do
+        if ref.row then
+            ref.row.enabled = nextEnabled
+            if nextEnabled then ref.row.dynamicDisplay = false end
+            if not nextEnabled then
+                if ref.kind == "skill" then
+                    clearSkillCooldownForRow(ref.row)
+                else
+                    buffState[trackedBuffKey(ref.row)] = nil
+                end
+            end
         end
     end
     TargetOverlay.refreshEventSubscriptions()
@@ -2215,7 +2790,29 @@ end
 local function removeCooldownSetting(rowIndex, group)
     local rows = cooldownSettingRowSet(group)
     local ui = rows and rows[rowIndex]
-    if not ui or not ui.entryKind or not ui.entryIndex then return end
+    if not ui then return end
+    if ui.abilityRefs then
+        local removed = false
+        for i = #ui.abilityRefs, 1, -1 do
+            local ref = ui.abilityRefs[i]
+            if ref.kind == "skill" and settings.trackedSkills and settings.trackedSkills[ref.index] then
+                clearSkillCooldownForRow(ref.row)
+                table.remove(settings.trackedSkills, ref.index)
+                removed = true
+            elseif ref.kind == "buff" and settings.trackedBuffs and settings.trackedBuffs[ref.index] and not isDefaultTrackedBuff(ref.row) then
+                buffState[trackedBuffKey(ref.row)] = nil
+                table.remove(settings.trackedBuffs, ref.index)
+                removed = true
+            end
+        end
+        if removed then
+            TargetOverlay.refreshEventSubscriptions()
+            saveSettings()
+            refreshSettingsButtons()
+        end
+        return
+    end
+    if not ui.entryKind or not ui.entryIndex then return end
     if ui.entryKind == "skill" then
         local row = settings.trackedSkills and settings.trackedSkills[ui.entryIndex]
         clearSkillCooldownForRow(row)
@@ -2234,16 +2831,46 @@ end
 local function moveCooldownSetting(rowIndex, delta, group)
     local rows = cooldownSettingRowSet(group)
     local ui = rows and rows[rowIndex]
-    if not ui or not ui.entryKind or not ui.entryIndex then return end
-    local entries = cooldownSettingEntries(group)
+    if not ui or not ui.deviceKey then return end
+    local entries = cooldownDeviceEntries(group)
     local currentFiltered = tonumber(ui.entryFilteredIndex) or 0
     local targetEntry = entries[currentFiltered + delta]
-    if not targetEntry or targetEntry.kind ~= ui.entryKind then return end
-    local list = ui.entryKind == "skill" and settings.trackedSkills or settings.trackedBuffs
-    local fromIndex = ui.entryIndex
-    local toIndex = targetEntry.index
-    if not list or toIndex < 1 or toIndex > #list then return end
-    list[fromIndex], list[toIndex] = list[toIndex], list[fromIndex]
+    if not targetEntry or not targetEntry.key then return end
+    local function moveInList(list)
+        if not list then return end
+        local moving, rest = {}, {}
+        for i, row in ipairs(list) do
+            local entry = {kind = list == settings.trackedSkills and "skill" or "buff", index = i, row = row}
+            if cooldownDeviceKey(entry) == ui.deviceKey then
+                moving[#moving + 1] = row
+            else
+                rest[#rest + 1] = row
+            end
+        end
+        if #moving == 0 then return end
+        local rebuilt = {}
+        local inserted = false
+        for i, row in ipairs(rest) do
+            local entry = {kind = list == settings.trackedSkills and "skill" or "buff", index = i, row = row}
+            local key = cooldownDeviceKey(entry)
+            if not inserted and delta < 0 and key == targetEntry.key then
+                for _, movingRow in ipairs(moving) do rebuilt[#rebuilt + 1] = movingRow end
+                inserted = true
+            end
+            rebuilt[#rebuilt + 1] = row
+            if not inserted and delta > 0 and key == targetEntry.key then
+                for _, movingRow in ipairs(moving) do rebuilt[#rebuilt + 1] = movingRow end
+                inserted = true
+            end
+        end
+        if not inserted then
+            for _, movingRow in ipairs(moving) do rebuilt[#rebuilt + 1] = movingRow end
+        end
+        for i = 1, #rebuilt do list[i] = rebuilt[i] end
+        for i = #rebuilt + 1, #list do list[i] = nil end
+    end
+    moveInList(settings.trackedBuffs)
+    moveInList(settings.trackedSkills)
     saveSettings()
     refreshSettingsButtons()
 end
@@ -2273,8 +2900,12 @@ local function toggleDetectedSkillTracking(index, mode)
         buffState = buffState,
         trackedBuffKey = trackedBuffKey,
         detectedBuffTrackedIndex = TargetOverlay.detectedBuffTrackedIndex,
+        trackedBuffIsDefault = isDefaultTrackedBuff,
         trackedCooldownIsHardcoded = trackedCooldownIsHardcoded,
         detectedRecipeRow = TargetOverlay.detectedRecipeRow,
+        learnCooldownDevice = TargetOverlay.learnCooldownDevice,
+        canonicalMountDevice = TargetOverlay.canonicalMountDevice,
+        canonicalGliderDevice = TargetOverlay.canonicalGliderDevice,
         trackedSkillIndex = trackedSkillIndex,
         clearSkillCooldownForRow = clearSkillCooldownForRow,
         refreshEventSubscriptions = TargetOverlay.refreshEventSubscriptions,
@@ -2338,16 +2969,32 @@ function refreshSettingsButtons()
         settingsWnd.shadowBtn:SetCleanText(settings.overlayTextStyle == "outline" and "Text Border" or "Text Shadow")
         settingsWnd.shadowBtn:SetTone(COLORS.active)
     end
-    setToggleButton(settingsWnd.targetWindowBtn, settings.showTargetWindow, "Intel window")
+    setToggleButton(settingsWnd.targetWindowBtn, settings.showTargetWindow, "Stats window")
+    setToggleButton(settingsWnd.classIntelBtn, settings.classIntelEnabled == true, "Class profiles")
+    if settingsWnd.classIntelProfileLabel then
+        settingsWnd.classIntelProfileLabel:SetText(ClassIntelProfiles.Label(settings.classIntelEditProfile))
+    end
+    if settingsWnd.classIntelFieldButtons then
+        local profile = settings.classIntelProfiles and settings.classIntelProfiles[settings.classIntelEditProfile or "melee"] or {}
+        for _, field in ipairs(ClassIntelProfiles.STATS) do
+            local btn = settingsWnd.classIntelFieldButtons[field.key]
+            if btn then setToggleButton(btn, profile[field.key] == true, field.label) end
+        end
+    end
     setToggleButton(settingsWnd.compactWindowBtn, settings.compactTargetWindow, "Compact")
     setToggleButton(settingsWnd.testWindowBtn, settings.testTargetWindow, "Compact/Simple")
     setToggleButton(settingsWnd.ownershipBtn, settings.showOwnershipLabels ~= false, "Ownership")
+    setToggleButton(settingsWnd.guildFamilyLabelBtn, settings.showGuildFamilyLabel == true, "Guild/Fam")
     setToggleButton(settingsWnd.selfBtn, settings.showSelfPanel, "Self win")
     setToggleButton(settingsWnd.selfCdBtn, settings.showSelfCooldowns, "Cooldowns")
     setToggleButton(settingsWnd.selfEquipmentBtn, settings.showSelfEquipment ~= false, "Equipment")
+    setToggleButton(settingsWnd.selfBorderBtn, settings.showSelfBorder ~= false, "Border")
     setToggleButton(settingsWnd.nuziImportBtn, settings.importNuziCooldowns ~= false, "Nuzi CDs")
     settingsWnd.nuziImportBtn:Show(showNuziOptions)
     setToggleButton(settingsWnd.probeLogBtn, settings.skillProbeLogging, "Log")
+    local hotSwap = require("power_ranger_on/hot_swap")
+    setToggleButton(settingsWnd.hotSwapEnabledBtn, hotSwap.IsEnabled(), "HotSwap")
+    setToggleButton(settingsWnd.hotSwapFloatBtn, hotSwap.IsFloatShown(), "Float")
     if settingsWnd.scaleValue then
         settingsWnd.scaleValue:SetText(tostring(settings.uiScaleLevel or 0))
     end
@@ -2375,8 +3022,23 @@ function refreshSettingsButtons()
     if settingsWnd.selfScaleValue then
         settingsWnd.selfScaleValue:SetText(tostring(settings.selfScaleLevel or 0))
     end
+    if settingsWnd.selfOpacityValue then
+        local opacity = math.max(0, math.min(10, tonumber(settings.selfOpacityLevel) or 8))
+        settingsWnd.selfOpacityValue:SetText(string.format("%.2f", opacity / 10))
+        if settingsWnd.selfOpacityFill then
+            if opacity > 0 then
+                settingsWnd.selfOpacityFill:SetExtent(math.max(1, math.floor((opacity / 10) * 310)), 14)
+                settingsWnd.selfOpacityFill:Show(true)
+            else
+                settingsWnd.selfOpacityFill:Show(false)
+            end
+        end
+    end
     if settingsWnd.ownershipScaleValue then
         settingsWnd.ownershipScaleValue:SetText(tostring(settings.ownershipScaleLevel or 0))
+    end
+    if settingsWnd.guildFamilyScaleValue then
+        settingsWnd.guildFamilyScaleValue:SetText(tostring(settings.guildFamilyLabelScaleLevel or 0))
     end
     refreshCooldownSettingRows()
     if settingsWnd.fieldButtons then
@@ -2426,13 +3088,69 @@ local function toggleSetting(key)
         TargetOverlay.applyTextShadow()
     end
     if key == "showOwnershipLabels" and settings.showOwnershipLabels == false then hideOwnershipWindow() end
+    if key == "showGuildFamilyLabel" and settings.showGuildFamilyLabel ~= true then hideGuildFamilyWindow() end
     if key == "importNuziCooldowns" then
         refreshNuziCooldownRows(true)
         TargetOverlay.refreshEventSubscriptions()
     end
     saveSettings()
     refreshSettingsButtons()
-    if key == "showSelfEquipment" or key == "showSelfCooldowns" or key == "showSelfPanel" then updateSelfPanel() end
+    if key == "showSelfEquipment" or key == "showSelfCooldowns" or key == "showSelfPanel" or key == "showSelfBorder" then updateSelfPanel() end
+end
+
+function TargetOverlay.shiftSelfOpacity(delta)
+    local level = (tonumber(settings.selfOpacityLevel) or 8) + (tonumber(delta) or 0)
+    if level < 0 then level = 0 end
+    if level > 10 then level = 10 end
+    settings.selfOpacityLevel = level
+    saveSettings()
+    refreshSettingsButtons()
+    updateSelfPanel()
+end
+
+function TargetOverlay.toggleCooldownGroup(group)
+    local entries = cooldownDeviceEntries(group)
+    if #entries == 0 then return end
+    local nextEnabled = false
+    for _, entry in ipairs(entries) do
+        if not entry.anyEnabled then
+            nextEnabled = true
+            break
+        end
+    end
+    for _, entry in ipairs(entries) do
+        for _, ref in ipairs(entry.refs or {}) do
+            if ref.row then
+                ref.row.enabled = nextEnabled
+                if nextEnabled then ref.row.dynamicDisplay = false end
+                if not nextEnabled then
+                    if ref.kind == "skill" then
+                        clearSkillCooldownForRow(ref.row)
+                    else
+                        buffState[trackedBuffKey(ref.row)] = nil
+                    end
+                end
+            end
+        end
+    end
+    TargetOverlay.refreshEventSubscriptions()
+    saveSettings()
+    refreshSettingsButtons()
+    updateSelfPanel()
+end
+
+function TargetOverlay.setSelfOpacityFromMouse()
+    if not settingsWnd then return end
+    local okPos, mx = pcall(function() return api.Input:GetMousePos() end)
+    if not okPos or not mx then return end
+    local windowX = tonumber(settings.settingsX) or 650
+    local trackLeft = windowX + 18 + 78
+    local frac = (tonumber(mx) - trackLeft) / 312
+    if frac < 0 then frac = 0 elseif frac > 1 then frac = 1 end
+    settings.selfOpacityLevel = math.floor((frac * 10) + 0.5)
+    saveSettings()
+    refreshSettingsButtons()
+    updateSelfPanel()
 end
 
 function TargetOverlay.shiftSimpleSpacing(key, delta, minValue, maxValue)
@@ -2492,12 +3210,23 @@ local function shiftUiScale(delta, key)
     if settingsWnd and settingsWnd.selfScaleValue then
         settingsWnd.selfScaleValue:SetText(tostring(settings.selfScaleLevel or 0))
     end
+    if settingsWnd and settingsWnd.selfOpacityValue then
+        local opacity = math.max(0, math.min(10, tonumber(settings.selfOpacityLevel) or 8))
+        settingsWnd.selfOpacityValue:SetText(string.format("%.2f", opacity / 10))
+    end
     if settingsWnd and settingsWnd.ownershipScaleValue then
         settingsWnd.ownershipScaleValue:SetText(tostring(settings.ownershipScaleLevel or 0))
+    end
+    if settingsWnd and settingsWnd.guildFamilyScaleValue then
+        settingsWnd.guildFamilyScaleValue:SetText(tostring(settings.guildFamilyLabelScaleLevel or 0))
     end
     if ownershipWnd then
         ownershipWnd._lastWidth = nil
         ownershipWnd._lastHeight = nil
+    end
+    if guildFamilyWnd then
+        guildFamilyWnd._lastWidth = nil
+        guildFamilyWnd._lastHeight = nil
     end
     if tonumber(delta) and tonumber(delta) ~= 0 then
         saveSettings()
@@ -2521,7 +3250,7 @@ local function createSettingsWindow()
         id = "PowerRangerSettings",
         title = "Power Ranger ON",
         width = 620,
-        height = 875,
+        height = 1035,
         x = settings.settingsX,
         y = settings.settingsY,
         xKey = "settingsX",
@@ -2556,8 +3285,20 @@ local function createSettingsWindow()
         colorCube = colorCube,
         toggleSetting = toggleSetting,
         shiftUiScale = shiftUiScale,
+        shiftGuildFamilyScale = shiftUiScale,
         shiftSimpleSpacing = TargetOverlay.shiftSimpleSpacing,
-        fields = TARGET_INFO_FIELDS
+        fields = TARGET_INFO_FIELDS,
+        classProfiles = ClassIntelProfiles,
+        cycleClassProfile = function(delta)
+            ClassIntelProfiles.CycleEditProfile(settings, delta)
+            saveSettings()
+            refreshSettingsButtons()
+        end,
+        toggleClassProfileStat = function(statKey)
+            ClassIntelProfiles.ToggleStat(settings, statKey)
+            saveSettings()
+            refreshSettingsButtons()
+        end
     })
 
     settingsSections.BuildSelfCooldowns(settingsWnd, {
@@ -2569,19 +3310,25 @@ local function createSettingsWindow()
         cooldownEdit = cooldownEdit,
         toggleSetting = toggleSetting,
         shiftUiScale = shiftUiScale,
+        shiftSelfOpacity = function(delta) TargetOverlay.shiftSelfOpacity(delta) end,
+        setSelfOpacityFromMouse = function() TargetOverlay.setSelfOpacityFromMouse() end,
         toggleProbeLogging = toggleProbeLogging,
         openDetectedSkillsWindow = openDetectedSkillsWindow,
+        openCooldownSkillsWindow = function(rowIndex, group, mode) TargetOverlay.openCooldownSkillsWindow(rowIndex, group, mode) end,
         shiftCooldownSettingsPage = shiftCooldownSettingsPage,
         moveCooldownSetting = moveCooldownSetting,
         toggleCooldownSetting = toggleCooldownSetting,
+        toggleCooldownGroup = function(group) TargetOverlay.toggleCooldownGroup(group) end,
         removeCooldownSetting = removeCooldownSetting
     })
     settingsSections.BuildHotSwapLauncher(settingsWnd, {
         colors = COLORS,
         sectionPanel = sectionPanel,
         label = label,
-        flatButton = flatButton
-    }, 803)
+        flatButton = flatButton,
+        toggleSetting = toggleSetting,
+        refreshSettingsButtons = refreshSettingsButtons
+    }, 960)
 
     refreshSettingsButtons()
     settingsWnd:Show(false)
@@ -2594,6 +3341,60 @@ function TargetOverlay.openSettings()
         refreshSettingsButtons()
         settingsWnd:Show(true)
     end
+end
+
+function TargetOverlay.removeCooldownSkillEntry(kind, index)
+    if kind == "skill" then
+        local row = settings.trackedSkills and settings.trackedSkills[index]
+        if not row then return end
+        clearSkillCooldownForRow(row)
+        table.remove(settings.trackedSkills, index)
+    else
+        local row = settings.trackedBuffs and settings.trackedBuffs[index]
+        if not row then return end
+        if isDefaultTrackedBuff(row) then
+            markCooldownDefaultRemoved(row)
+        end
+        buffState[trackedBuffKey(row)] = nil
+        table.remove(settings.trackedBuffs, index)
+    end
+    TargetOverlay.refreshEventSubscriptions()
+    saveSettings()
+    refreshSettingsButtons()
+    updateSelfPanel()
+end
+
+function TargetOverlay.openCooldownSkillsWindow(rowIndex, group, mode)
+    local deviceKey = nil
+    local deviceTitle = nil
+    if rowIndex and group then
+        local rows = cooldownSettingRowSet(group)
+        local ui = rows and rows[rowIndex]
+        deviceKey = ui and ui.deviceKey or nil
+        deviceTitle = ui and ui.deviceTitle or nil
+    end
+    require("power_ranger_on/cooldown_skills_window").Open({
+        colors = COLORS,
+        settings = settings,
+        deviceKey = deviceKey,
+        deviceTitle = deviceTitle,
+        mode = mode,
+        deviceKeyForEntry = cooldownDeviceKey,
+        safePosition = TargetOverlay.safeWindowPosition,
+        applyDrag = applyDrag,
+        createIcon = createIcon,
+        cooldownEdit = cooldownEdit,
+        setEquipIcon = setEquipIcon,
+        cooldownRowIcon = TargetOverlay.cooldownRowIcon,
+        skillIconById = TargetOverlay.skillIconById,
+        buffIconById = TargetOverlay.buffIconById,
+        removeSkill = TargetOverlay.removeCooldownSkillEntry,
+        save = saveSettings,
+        refresh = function()
+            refreshSettingsButtons()
+            updateSelfPanel()
+        end
+    })
 end
 
 function TargetOverlay.init()
@@ -2621,6 +3422,7 @@ function TargetOverlay.init()
 
     createTargetInfoWindow()
     createOwnershipWindow()
+    createGuildFamilyWindow()
     createSelfWindow()
     createSettingsWindow()
     createEventWindow()
@@ -2821,6 +3623,7 @@ function TargetOverlay.update(dt)
     local elapsed = dt or 0
     updateElapsed = updateElapsed + elapsed
     selfUpdateElapsed = selfUpdateElapsed + elapsed
+    TargetOverlay.cooldownRuntimeElapsed = (TargetOverlay.cooldownRuntimeElapsed or SELF_UPDATE_MS) + elapsed
     compatRefreshElapsed = compatRefreshElapsed + elapsed
     NuziCooldownImport.AddElapsed(elapsed)
     updateProbeLogging(elapsed)
@@ -2831,10 +3634,13 @@ function TargetOverlay.update(dt)
         lastSkillProbeSave = now
         saveSkillProbe()
     end
+    if TargetOverlay.cooldownRuntimeElapsed >= 25 then
+        TargetOverlay.cooldownRuntimeElapsed = math.min(TargetOverlay.cooldownRuntimeElapsed - 25, 25)
+        updateTrackedBuffs()
+    end
     local doSelfUpdate = selfUpdateElapsed >= SELF_UPDATE_MS
     if doSelfUpdate then
-        selfUpdateElapsed = 0
-        updateTrackedBuffs()
+        selfUpdateElapsed = math.min(selfUpdateElapsed - SELF_UPDATE_MS, SELF_UPDATE_MS)
         updateSelfPanel()
     end
     local doSlowUpdate = updateElapsed >= TARGET_UPDATE_MS
@@ -2854,6 +3660,7 @@ function TargetOverlay.update(dt)
         end
         hideModelOverlay()
         refreshOwnershipWindow(directOwnershipInfo)
+        hideGuildFamilyWindow()
         return
     end
     if not targetId or playerId == targetId then
@@ -2866,12 +3673,14 @@ function TargetOverlay.update(dt)
             if doSlowUpdate then
                 refreshOwnershipWindow(tokenInfo)
             end
+            hideGuildFamilyWindow()
             return
         end
         targetTokenMisses = targetTokenMisses + 1
         if targetTokenMisses >= 3 then
             hideModelOverlay()
             hideOwnershipWindow()
+            hideGuildFamilyWindow()
             previousTargetId = nil
         end
         return
@@ -2880,6 +3689,7 @@ function TargetOverlay.update(dt)
     if targetId ~= previousTargetId then
         hideModelOverlay()
         hideOwnershipWindow()
+        hideGuildFamilyWindow()
         previousTargetId = targetId
         doSlowUpdate = true
         updateElapsed = 0
@@ -2920,13 +3730,14 @@ function TargetOverlay.update(dt)
     if ownershipInfo then
         hideModelOverlay()
         refreshOwnershipWindow(ownershipInfo)
+        hideGuildFamilyWindow()
         return
     end
 
     local className = TargetOverlay.getClassName(usableInfo) or "Unknown"
     local pdef, mdef, pdefPct, mdefPct = TargetOverlay.fillDefense(nil, nil, nil, nil, tokenInfo)
     pdef, mdef, pdefPct, mdefPct = TargetOverlay.fillDefense(pdef, mdef, pdefPct, mdefPct, targetInfo or usableInfo)
-    local needsExtraStats = settings.showInfoBlock or settings.showInfoParry or settings.showInfoEvasion or settings.showInfoToughness or settings.showInfoResilience
+    local needsExtraStats = settings.classIntelEnabled == true or settings.showInfoBlock or settings.showInfoParry or settings.showInfoEvasion or settings.showInfoToughness or settings.showInfoResilience or settings.showInfoCritRate
     local modifierInfo = nil
     if needsExtraStats or not pdef or not mdef or not pdefPct or not mdefPct then
         modifierInfo = OverlayUtils.safeCall(function() return api.Unit:UnitModifierInfo("target") end)
@@ -2937,12 +3748,15 @@ function TargetOverlay.update(dt)
     local extraStats = needsExtraStats and TargetOverlay.targetExtraStats(tokenInfo, targetInfo or usableInfo, modifierInfo) or {}
     if isPlayer then
         refreshTargetInfoWindow(usableInfo, className, gearscore, pdef, mdef, pdefPct, mdefPct, extraStats)
+        refreshGuildFamilyWindow(usableInfo)
     elseif targetInfoWnd then
         targetInfoWnd:Show(false)
+        hideGuildFamilyWindow()
     end
 
     if not isPlayer then
         hideModelOverlay()
+        hideGuildFamilyWindow()
         return
     end
 
@@ -3018,12 +3832,14 @@ function TargetOverlay.cleanup()
     if targetRangeCanvas then targetRangeCanvas:Show(false) end
     if targetInfoWnd then targetInfoWnd:Show(false) end
     if ownershipWnd then ownershipWnd:Show(false) end
+    if guildFamilyWnd then guildFamilyWnd:Show(false) end
     if selfWnd then selfWnd:Show(false) end
     if settingsWnd then settingsWnd:Show(false) end
     if detectedSkillsWnd then detectedSkillsWnd:Show(false) end
     mainCanvas = nil
     targetInfoWnd = nil
     ownershipWnd = nil
+    guildFamilyWnd = nil
     selfWnd = nil
     settingsWnd = nil
     detectedSkillsWnd = nil
@@ -3048,6 +3864,7 @@ function TargetOverlay.cleanup()
     screenPositionMisses = 0
     updateElapsed = TARGET_UPDATE_MS
     selfUpdateElapsed = SELF_UPDATE_MS
+    TargetOverlay.cooldownRuntimeElapsed = 25
     nuziCooldownRows = NuziCooldownImport.EmptyRows()
     NuziCooldownImport.Reset()
     buffState = {}

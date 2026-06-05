@@ -73,9 +73,18 @@ local function resizePanel(ctx, gliderCount, mountCount, cooldownsVisible, equip
     end
 end
 
-local function clearRow(icons, labels)
+local function clearRow(ctx, icons, labels)
     for i, icon in ipairs(icons or {}) do
-        icon:Show(false)
+        if ctx and ctx.clearCooldownIcon then
+            ctx.clearCooldownIcon(icon)
+        else
+            icon:Show(false)
+            if icon.cooldownOverlay then icon.cooldownOverlay:Show(false) end
+            if icon.timerLabel then
+                icon.timerLabel:SetText("")
+                icon.timerLabel:Show(false)
+            end
+        end
         if labels and labels[i] then labels[i]:SetText("") end
     end
 end
@@ -109,6 +118,32 @@ local function ensureRow(ctx, icons, labels, prefix, y, wanted)
     end
 end
 
+local function trackedAbilityIcon(ctx, row, st, glider, mount, preferDeviceIcon)
+    if preferDeviceIcon then
+        if row.gliderPattern and ctx.trackedGliderMatches(row, glider) and glider and glider.icon then return glider.icon end
+        if ctx.cooldownDeviceIcon then
+            local icon = ctx.cooldownDeviceIcon(row)
+            if icon then return icon end
+        end
+    end
+    if st and st.icon then return st.icon end
+    if row.icon_type or row.iconType or row.icon_id or row.iconId then
+        local icon = ctx.cooldownRowIcon(row)
+        if icon then return icon end
+    end
+    if row.id then
+        local icon = ctx.skillIconById(row.id) or ctx.buffIconById(row.id)
+        if icon then return icon end
+    end
+    if type(row.buffIds) == "table" and row.buffIds[1] then
+        local icon = ctx.buffIconById(row.buffIds[1])
+        if icon then return icon end
+    end
+    if row.icon and row.icon ~= row.recipeDeviceIcon then return row.icon end
+    if row.gliderPattern and ctx.trackedGliderMatches(row, glider) and glider then return glider.icon end
+    return nil
+end
+
 local function renderRow(ctx, icons, labels, entries)
     for i, icon in ipairs(icons or {}) do
         local entry = entries and entries[i]
@@ -116,7 +151,16 @@ local function renderRow(ctx, icons, labels, entries)
             ctx.setCooldownSkillIcon(icon, entry.icon, entry.state or "ready", entry.remain)
             if labels and labels[i] then labels[i]:SetText(ctx.shortText(entry.name, 7)) end
         else
-            icon:Show(false)
+            if ctx.clearCooldownIcon then
+                ctx.clearCooldownIcon(icon)
+            else
+                icon:Show(false)
+                if icon.cooldownOverlay then icon.cooldownOverlay:Show(false) end
+                if icon.timerLabel then
+                    icon.timerLabel:SetText("")
+                    icon.timerLabel:Show(false)
+                end
+            end
             if labels and labels[i] then labels[i]:SetText("") end
         end
     end
@@ -124,6 +168,7 @@ end
 
 local function trackedBuffEntry(ctx, row, st, glider, mount)
     local name = row.name or st.name or tostring(row.id)
+    local isGlider = row.gliderPattern or row.category == "glider" or row.recipeDeviceKind == "glider"
     local iconState = "ready"
     local remain = nil
     if st.active then
@@ -140,10 +185,28 @@ local function trackedBuffEntry(ctx, row, st, glider, mount)
     end
     return {
         name = name,
-        icon = (row.preferMountIcon and ((mount and mount.icon) or ctx.cooldownRowIcon(row) or st.icon)) or (row.gliderPattern and (ctx.cooldownRowIcon(row) or st.icon or (ctx.trackedGliderMatches(row, glider) and glider and glider.icon))) or (st.icon or ctx.cooldownRowIcon(row) or ctx.buffIconById(row.id)),
+        icon = trackedAbilityIcon(ctx, row, st, glider, mount, isGlider),
         state = iconState,
         remain = remain
     }
+end
+
+local function trackedBuffVisible(ctx, row, st, glider, mount)
+    if row.dynamicDisplay == true then
+        if row.gliderPattern or row.category == "glider" or row.recipeDeviceKind == "glider" then
+            return ctx.trackedGliderMatches(row, glider) == true
+        end
+        if ctx.trackedMountMatches then return ctx.trackedMountMatches(row, mount) == true end
+        return mount and tostring(mount.name or "") ~= ""
+    end
+    if st and (st.active or st.readyAt) then return true end
+    return true
+end
+
+local function trackedSkillVisible(ctx, row, mount)
+    if row.dynamicDisplay ~= true then return true end
+    if ctx.trackedMountMatches then return ctx.trackedMountMatches(row, mount) == true end
+    return mount and tostring(mount.name or "") ~= ""
 end
 
 local function trackedSkillEntry(ctx, row, now)
@@ -191,14 +254,15 @@ function SelfCooldowns.Update(ctx)
     local wnd = ctx.selfWnd
     if not wnd then return end
     local settings = ctx.settings
+    if wnd.ApplyChrome then wnd:ApplyChrome() end
     if settings.showSelfPanel == false or ctx.shouldHideSelfPanel() then
         wnd:Show(false)
         return
     end
     if settings.showSelfCooldowns == false then
         if wnd.status then wnd.status:SetText("OFF") end
-        clearRow(wnd.gliderIcons, wnd.gliderLabels)
-        clearRow(wnd.mountIcons, wnd.mountLabels)
+        clearRow(ctx, wnd.gliderIcons, wnd.gliderLabels)
+        clearRow(ctx, wnd.mountIcons, wnd.mountLabels)
         resizePanel(ctx, 0, 0, false, settings.showSelfEquipment ~= false)
         updateEquipmentIcons(ctx)
         wnd:Show(true)
@@ -216,10 +280,9 @@ function SelfCooldowns.Update(ctx)
         if row.enabled ~= false then
             local key = ctx.trackedBuffKey(row)
             local st = ctx.buffState[key] or {}
-            local visibleForGlider = row.gliderPattern or row.category == "glider" or ctx.trackedGliderMatches(row, glider) or st.active or st.readyAt
-            if visibleForGlider then
+            if trackedBuffVisible(ctx, row, st, glider, mount) then
                 local entry = trackedBuffEntry(ctx, row, st, glider, mount)
-                if row.gliderPattern or row.category == "glider" then
+                if row.gliderPattern or row.category == "glider" or row.recipeDeviceKind == "glider" then
                     table.insert(gliderEntries, entry)
                 else
                     table.insert(mountEntries, entry)
@@ -228,7 +291,7 @@ function SelfCooldowns.Update(ctx)
         end
     end
     for _, row in ipairs(ctx.allTrackedSkillRows()) do
-        if row.enabled ~= false then
+        if row.enabled ~= false and trackedSkillVisible(ctx, row, mount) then
             table.insert(mountEntries, trackedSkillEntry(ctx, row, now))
         end
     end

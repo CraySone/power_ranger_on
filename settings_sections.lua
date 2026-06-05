@@ -63,45 +63,97 @@ function SettingsSections.BuildIntelWindow(wnd, ctx)
     local toggleSetting = ctx.toggleSetting
     local shiftUiScale = ctx.shiftUiScale
     local shiftSimpleSpacing = ctx.shiftSimpleSpacing
+    local shiftGuildFamilyScale = ctx.shiftGuildFamilyScale or shiftUiScale
     local fields = ctx.fields or {}
+    local classProfiles = ctx.classProfiles
+    local cycleClassProfile = ctx.cycleClassProfile
+    local toggleClassProfileStat = ctx.toggleClassProfileStat
 
-    local p = sectionPanel(wnd, "power_ranger_window_panel", 18, 232, 584, 229, "Intel Window")
-    wnd.targetWindowBtn = flatButton(p, "power_ranger_toggle_window", "", 16, 32, 124, 22, colors.active, function() toggleSetting("showTargetWindow") end)
-    wnd.compactWindowBtn = flatButton(p, "power_ranger_toggle_compact_window", "", 148, 32, 96, 22, colors.active, function() toggleSetting("compactTargetWindow") end)
-    wnd.testWindowBtn = flatButton(p, "power_ranger_toggle_test_window", "", 252, 32, 142, 22, colors.active, function() toggleSetting("testTargetWindow") end)
-    label(p, "power_ranger_intel_scale_label", "Scale", 406, 36, 40, 14, 10, colors.muted, ALIGN.LEFT)
-    flatButton(p, "power_ranger_intel_scale_down", "-", 448, 32, 24, 20, colors.button, function() shiftUiScale(-1, "targetWindowScaleLevel") end)
-    wnd.intelScaleValue = label(p, "power_ranger_intel_scale_value", "0", 476, 35, 24, 14, 10, colors.white, ALIGN.CENTER)
-    flatButton(p, "power_ranger_intel_scale_up", "+", 504, 32, 24, 20, colors.button, function() shiftUiScale(1, "targetWindowScaleLevel") end)
-    label(p, "power_ranger_simple_spacing_label", "Simple spacing", 16, 64, 92, 14, 10, colors.muted, ALIGN.LEFT)
-    label(p, "power_ranger_simple_columns_label", "Columns", 116, 64, 54, 14, 10, colors.muted, ALIGN.LEFT)
-    flatButton(p, "power_ranger_simple_columns_down", "-", 174, 60, 24, 20, colors.button, function() shiftSimpleSpacing("simpleColumnGap", -1, 0, 73) end)
-    wnd.simpleColumnGapValue = label(p, "power_ranger_simple_columns_value", "0", 202, 63, 24, 14, 10, colors.white, ALIGN.CENTER)
-    flatButton(p, "power_ranger_simple_columns_up", "+", 230, 60, 24, 20, colors.button, function() shiftSimpleSpacing("simpleColumnGap", 1, 0, 73) end)
-    label(p, "power_ranger_simple_lines_label", "Lines", 282, 64, 38, 14, 10, colors.muted, ALIGN.LEFT)
-    flatButton(p, "power_ranger_simple_lines_down", "-", 324, 60, 24, 20, colors.button, function() shiftSimpleSpacing("simpleLineGap", -1, 0, 23) end)
-    wnd.simpleLineGapValue = label(p, "power_ranger_simple_lines_value", "0", 352, 63, 24, 14, 10, colors.white, ALIGN.CENTER)
-    flatButton(p, "power_ranger_simple_lines_up", "+", 380, 60, 24, 20, colors.button, function() shiftSimpleSpacing("simpleLineGap", 1, 0, 23) end)
-    label(p, "power_ranger_ownership_label", "Land / vehicle ownership", 16, 92, 148, 14, 10, colors.muted, ALIGN.LEFT)
-    wnd.ownershipBtn = flatButton(p, "power_ranger_toggle_ownership", "", 168, 88, 142, 20, colors.active, function() toggleSetting("showOwnershipLabels") end)
-    label(p, "power_ranger_ownership_scale_label", "Scale", 326, 92, 40, 14, 10, colors.muted, ALIGN.LEFT)
-    flatButton(p, "power_ranger_ownership_scale_down", "-", 368, 88, 24, 20, colors.button, function() shiftUiScale(-1, "ownershipScaleLevel") end)
-    wnd.ownershipScaleValue = label(p, "power_ranger_ownership_scale_value", "0", 396, 91, 24, 14, 10, colors.white, ALIGN.CENTER)
-    flatButton(p, "power_ranger_ownership_scale_up", "+", 424, 88, 24, 20, colors.button, function() shiftUiScale(1, "ownershipScaleLevel") end)
+    local p = sectionPanel(wnd, "power_ranger_window_panel", 18, 232, 584, 358, "Stats Window")
+    local function band(id, y, h)
+        local bg = p:CreateColorDrawable(0.07, 0.075, 0.085, 0.62, "background")
+        bg:SetExtent(552, h)
+        bg:AddAnchor("TOPLEFT", p, 16, y)
+        bg:Show(true)
+        return bg
+    end
+
+    band("display", 30, 56)
+    label(p, "power_ranger_stats_display_title", "Display", 24, 36, 60, 14, 10, colors.gold, ALIGN.LEFT)
+    wnd.targetWindowBtn = flatButton(p, "power_ranger_toggle_window", "", 92, 32, 118, 22, colors.active, function() toggleSetting("showTargetWindow") end)
+    wnd.compactWindowBtn = flatButton(p, "power_ranger_toggle_compact_window", "", 218, 32, 90, 22, colors.active, function() toggleSetting("compactTargetWindow") end)
+    wnd.testWindowBtn = flatButton(p, "power_ranger_toggle_test_window", "", 316, 32, 126, 22, colors.active, function() toggleSetting("testTargetWindow") end)
+    label(p, "power_ranger_intel_scale_label", "Scale", 458, 36, 38, 14, 10, colors.muted, ALIGN.LEFT)
+    flatButton(p, "power_ranger_intel_scale_down", "-", 498, 32, 22, 20, colors.button, function() shiftUiScale(-1, "targetWindowScaleLevel") end)
+    wnd.intelScaleValue = label(p, "power_ranger_intel_scale_value", "0", 522, 35, 20, 14, 10, colors.white, ALIGN.CENTER)
+    flatButton(p, "power_ranger_intel_scale_up", "+", 544, 32, 22, 20, colors.button, function() shiftUiScale(1, "targetWindowScaleLevel") end)
+    label(p, "power_ranger_simple_spacing_label", "Simple spacing", 24, 66, 90, 14, 10, colors.muted, ALIGN.LEFT)
+    label(p, "power_ranger_simple_columns_label", "Columns", 128, 66, 52, 14, 10, colors.muted, ALIGN.LEFT)
+    flatButton(p, "power_ranger_simple_columns_down", "-", 184, 62, 22, 20, colors.button, function() shiftSimpleSpacing("simpleColumnGap", -1, 0, 73) end)
+    wnd.simpleColumnGapValue = label(p, "power_ranger_simple_columns_value", "0", 208, 65, 22, 14, 10, colors.white, ALIGN.CENTER)
+    flatButton(p, "power_ranger_simple_columns_up", "+", 232, 62, 22, 20, colors.button, function() shiftSimpleSpacing("simpleColumnGap", 1, 0, 73) end)
+    label(p, "power_ranger_simple_lines_label", "Lines", 284, 66, 38, 14, 10, colors.muted, ALIGN.LEFT)
+    flatButton(p, "power_ranger_simple_lines_down", "-", 326, 62, 22, 20, colors.button, function() shiftSimpleSpacing("simpleLineGap", -1, 0, 23) end)
+    wnd.simpleLineGapValue = label(p, "power_ranger_simple_lines_value", "0", 350, 65, 22, 14, 10, colors.white, ALIGN.CENTER)
+    flatButton(p, "power_ranger_simple_lines_up", "+", 374, 62, 22, 20, colors.button, function() shiftSimpleSpacing("simpleLineGap", 1, 0, 23) end)
+
+    band("labels", 94, 56)
+    label(p, "power_ranger_stats_labels_title", "Extra labels", 24, 100, 82, 14, 10, colors.gold, ALIGN.LEFT)
+    wnd.ownershipBtn = flatButton(p, "power_ranger_toggle_ownership", "", 116, 96, 136, 20, colors.active, function() toggleSetting("showOwnershipLabels") end)
+    label(p, "power_ranger_ownership_scale_label", "Scale", 266, 100, 38, 14, 10, colors.muted, ALIGN.LEFT)
+    flatButton(p, "power_ranger_ownership_scale_down", "-", 306, 96, 22, 20, colors.button, function() shiftUiScale(-1, "ownershipScaleLevel") end)
+    wnd.ownershipScaleValue = label(p, "power_ranger_ownership_scale_value", "0", 330, 99, 22, 14, 10, colors.white, ALIGN.CENTER)
+    flatButton(p, "power_ranger_ownership_scale_up", "+", 354, 96, 22, 20, colors.button, function() shiftUiScale(1, "ownershipScaleLevel") end)
+    wnd.guildFamilyLabelBtn = flatButton(p, "power_ranger_toggle_guild_family_label", "", 116, 122, 136, 20, colors.active, function() toggleSetting("showGuildFamilyLabel") end)
+    label(p, "power_ranger_guild_family_size_label", "Size", 266, 126, 30, 14, 10, colors.muted, ALIGN.LEFT)
+    flatButton(p, "power_ranger_guild_family_size_down", "-", 306, 122, 22, 20, colors.button, function() shiftGuildFamilyScale(-1, "guildFamilyLabelScaleLevel") end)
+    wnd.guildFamilyScaleValue = label(p, "power_ranger_guild_family_size_value", "0", 330, 125, 22, 14, 10, colors.white, ALIGN.CENTER)
+    flatButton(p, "power_ranger_guild_family_size_up", "+", 354, 122, 22, 20, colors.button, function() shiftGuildFamilyScale(1, "guildFamilyLabelScaleLevel") end)
+    label(p, "power_ranger_guild_family_guild_color_label", "Guild", 404, 112, 34, 14, 10, colors.white, ALIGN.LEFT)
+    wnd.colorCubes.guildFamilyGuild = colorCube(p, "power_ranger_guild_family_guild_color", 442, 108, "guildFamilyGuild")
+    label(p, "power_ranger_guild_family_family_color_label", "Fam", 470, 112, 28, 14, 10, colors.white, ALIGN.LEFT)
+    wnd.colorCubes.guildFamilyFamily = colorCube(p, "power_ranger_guild_family_family_color", 500, 108, "guildFamilyFamily")
+
+    band("profiles", 158, 120)
+    label(p, "power_ranger_class_profile_title", "Class profile stats", 24, 164, 126, 14, 10, colors.gold, ALIGN.LEFT)
+    wnd.classIntelBtn = flatButton(p, "power_ranger_toggle_class_profiles", "", 154, 160, 124, 20, colors.active, function() toggleSetting("classIntelEnabled") end)
+    label(p, "power_ranger_class_profile_label", "Edit", 306, 164, 28, 14, 10, colors.muted, ALIGN.LEFT)
+    flatButton(p, "power_ranger_class_profile_prev", "<", 338, 160, 24, 20, colors.button, function() cycleClassProfile(-1) end)
+    wnd.classIntelProfileLabel = label(p, "power_ranger_class_profile_value", "Melee", 368, 163, 94, 14, 10, colors.white, ALIGN.CENTER)
+    flatButton(p, "power_ranger_class_profile_next", ">", 468, 160, 24, 20, colors.button, function() cycleClassProfile(1) end)
+    wnd.classIntelFieldButtons = {}
+    if classProfiles then
+        for i, field in ipairs(classProfiles.STATS or {}) do
+            local x = 24 + (((i - 1) % 4) * 134)
+            local y = 194 + (math.floor((i - 1) / 4) * 28)
+            local row = math.floor((i - 1) / 4)
+            local tone = row % 2 == 0 and 0.08 or 0.12
+            local blueTone = row % 2 == 0 and 0.095 or 0.135
+            local bg = p:CreateColorDrawable(tone, tone, blueTone, 0.72, "background")
+            bg:SetExtent(124, 22)
+            bg:AddAnchor("TOPLEFT", p, x - 4, y - 1)
+            bg:Show(true)
+            wnd.classIntelFieldButtons[field.key] = flatButton(p, "power_ranger_class_profile_stat_" .. field.key, "", x, y, 94, 20, colors.active, function() toggleClassProfileStat(field.key) end)
+            wnd.colorCubes[field.key] = colorCube(p, "power_ranger_class_profile_color_" .. field.key, x + 102, y, field.key)
+        end
+    end
+
+    band("identity", 286, 54)
+    label(p, "power_ranger_stats_field_title", "Identity fields", 24, 292, 96, 14, 10, colors.gold, ALIGN.LEFT)
     wnd.fieldButtons = {}
     for i, field in ipairs(fields) do
         local col = (i - 1) % 4
         local row = math.floor((i - 1) / 4)
-        local x = 16 + (col * 138)
-        local y = 118 + (row * 27)
+        local x = 24 + (col * 134)
+        local y = 314 + (row * 25)
         local tone = row % 2 == 0 and 0.08 or 0.12
         local blueTone = row % 2 == 0 and 0.095 or 0.135
         local bg = p:CreateColorDrawable(tone, tone, blueTone, 0.72, "background")
-        bg:SetExtent(128, 22)
+        bg:SetExtent(124, 22)
         bg:AddAnchor("TOPLEFT", p, x - 4, y - 1)
         bg:Show(true)
-        wnd.fieldButtons[field.key] = flatButton(p, "power_ranger_info_field_" .. field.key, "", x, y, 98, 20, colors.active, function() toggleSetting(field.setting) end)
-        wnd.colorCubes[field.key] = colorCube(p, "power_ranger_info_color_" .. field.key, x + 106, y, field.key)
+        wnd.fieldButtons[field.key] = flatButton(p, "power_ranger_info_field_" .. field.key, "", x, y, 94, 20, colors.active, function() toggleSetting(field.setting) end)
+        wnd.colorCubes[field.key] = colorCube(p, "power_ranger_info_color_" .. field.key, x + 102, y, field.key)
     end
     return p
 end
@@ -115,33 +167,49 @@ function SettingsSections.BuildSelfCooldowns(wnd, ctx)
     local cooldownEdit = ctx.cooldownEdit
     local toggleSetting = ctx.toggleSetting
     local shiftUiScale = ctx.shiftUiScale
+    local shiftSelfOpacity = ctx.shiftSelfOpacity
+    local setSelfOpacityFromMouse = ctx.setSelfOpacityFromMouse
     local toggleProbeLogging = ctx.toggleProbeLogging
     local openDetectedSkillsWindow = ctx.openDetectedSkillsWindow
+    local openCooldownSkillsWindow = ctx.openCooldownSkillsWindow
     local shiftCooldownSettingsPage = ctx.shiftCooldownSettingsPage
     local moveCooldownSetting = ctx.moveCooldownSetting
     local toggleCooldownSetting = ctx.toggleCooldownSetting
+    local toggleCooldownGroup = ctx.toggleCooldownGroup
     local removeCooldownSetting = ctx.removeCooldownSetting
 
-    local p = sectionPanel(wnd, "power_ranger_self_panel", 18, 473, 584, 318, "Self Cooldowns & Gear")
-    label(p, "power_ranger_self_hint", "Known cooldown auras stay ID-based.", 14, 32, 264, 14, 10, colors.muted, ALIGN.LEFT)
+    local p = sectionPanel(wnd, "power_ranger_self_panel", 18, 602, 584, 344, "Self Cooldowns & Gear")
+    label(p, "power_ranger_self_hint", "Known cooldown auras stay ID-based.", 14, 32, 260, 14, 10, colors.muted, ALIGN.LEFT)
     wnd.nuziImportBtn = flatButton(p, "power_ranger_toggle_nuzi_cd_import", "", 286, 29, 104, 20, colors.blue, function() toggleSetting("importNuziCooldowns") end)
     label(p, "power_ranger_self_scale_label", "Scale", 410, 32, 40, 14, 10, colors.muted, ALIGN.LEFT)
     flatButton(p, "power_ranger_self_scale_down", "-", 452, 29, 24, 20, colors.button, function() shiftUiScale(-1, "selfScaleLevel") end)
     wnd.selfScaleValue = label(p, "power_ranger_self_scale_value", "0", 480, 32, 24, 14, 10, colors.white, ALIGN.CENTER)
     flatButton(p, "power_ranger_self_scale_up", "+", 508, 29, 24, 20, colors.button, function() shiftUiScale(1, "selfScaleLevel") end)
-    wnd.selfBtn = flatButton(p, "power_ranger_toggle_self", "", 16, 58, 98, 24, colors.active, function() toggleSetting("showSelfPanel") end)
-    wnd.selfCdBtn = flatButton(p, "power_ranger_toggle_self_cd", "", 120, 58, 104, 24, colors.active, function() toggleSetting("showSelfCooldowns") end)
-    wnd.selfEquipmentBtn = flatButton(p, "power_ranger_toggle_self_equipment", "", 230, 58, 110, 24, colors.active, function() toggleSetting("showSelfEquipment") end)
-    wnd.probeLogBtn = flatButton(p, "power_ranger_probe_log", "", 346, 58, 72, 24, colors.blue, toggleProbeLogging)
-    flatButton(p, "power_ranger_detected_open", "Detected", 424, 58, 110, 24, colors.blue, openDetectedSkillsWindow)
-    label(p, "power_ranger_cd_glider_title", "Gliders", 16, 90, 64, 14, 11, colors.gold, ALIGN.LEFT)
-    wnd.cooldownGliderPageLabel = label(p, "power_ranger_cd_glider_page_label", "", 88, 91, 190, 13, 10, colors.muted, ALIGN.LEFT)
-    wnd.cooldownGliderPrevBtn = flatButton(p, "power_ranger_cd_glider_page_prev", "<", 466, 87, 30, 22, colors.button, function() shiftCooldownSettingsPage(-1, "glider") end)
-    wnd.cooldownGliderNextBtn = flatButton(p, "power_ranger_cd_glider_page_next", ">", 502, 87, 30, 22, colors.button, function() shiftCooldownSettingsPage(1, "glider") end)
-    label(p, "power_ranger_cd_other_title", "Mounts / Skills", 16, 198, 120, 14, 11, colors.gold, ALIGN.LEFT)
-    wnd.cooldownOtherPageLabel = label(p, "power_ranger_cd_other_page_label", "", 146, 199, 190, 13, 10, colors.muted, ALIGN.LEFT)
-    wnd.cooldownOtherPrevBtn = flatButton(p, "power_ranger_cd_other_page_prev", "<", 466, 195, 30, 22, colors.button, function() shiftCooldownSettingsPage(-1, "other") end)
-    wnd.cooldownOtherNextBtn = flatButton(p, "power_ranger_cd_other_page_next", ">", 502, 195, 30, 22, colors.button, function() shiftCooldownSettingsPage(1, "other") end)
+    wnd.selfBtn = flatButton(p, "power_ranger_toggle_self", "", 16, 58, 86, 24, colors.active, function() toggleSetting("showSelfPanel") end)
+    wnd.selfCdBtn = flatButton(p, "power_ranger_toggle_self_cd", "", 108, 58, 96, 24, colors.active, function() toggleSetting("showSelfCooldowns") end)
+    wnd.selfEquipmentBtn = flatButton(p, "power_ranger_toggle_self_equipment", "", 210, 58, 94, 24, colors.active, function() toggleSetting("showSelfEquipment") end)
+    wnd.selfBorderBtn = flatButton(p, "power_ranger_toggle_self_border", "", 310, 58, 82, 24, colors.active, function() toggleSetting("showSelfBorder") end)
+    wnd.probeLogBtn = flatButton(p, "power_ranger_probe_log", "", 398, 58, 58, 24, colors.blue, toggleProbeLogging)
+    flatButton(p, "power_ranger_detected_open", "Detected", 462, 58, 88, 24, colors.blue, openDetectedSkillsWindow)
+    label(p, "power_ranger_self_opacity_label", "Opacity", 16, 92, 54, 14, 10, colors.muted, ALIGN.LEFT)
+    wnd.selfOpacityTrack = flatButton(p, "power_ranger_self_opacity_track", "", 78, 91, 312, 16, {0.10, 0.10, 0.11, 0.96}, setSelfOpacityFromMouse)
+    wnd.selfOpacityFill = wnd.selfOpacityTrack:CreateColorDrawable(1, 0.84, 0, 0.55, "background")
+    wnd.selfOpacityFill:AddAnchor("TOPLEFT", wnd.selfOpacityTrack, 1, 1)
+    wnd.selfOpacityFill:SetExtent(1, 14)
+    wnd.selfOpacityFill:Show(false)
+    flatButton(p, "power_ranger_self_opacity_down", "-", 404, 89, 24, 18, colors.button, function() shiftSelfOpacity(-1) end)
+    wnd.selfOpacityValue = label(p, "power_ranger_self_opacity_value", "0.80", 432, 91, 42, 14, 10, colors.white, ALIGN.CENTER)
+    flatButton(p, "power_ranger_self_opacity_up", "+", 478, 89, 24, 18, colors.button, function() shiftSelfOpacity(1) end)
+    label(p, "power_ranger_cd_glider_title", "Gliders", 16, 116, 64, 14, 11, colors.gold, ALIGN.LEFT)
+    wnd.cooldownGliderPageLabel = label(p, "power_ranger_cd_glider_page_label", "", 88, 117, 190, 13, 10, colors.muted, ALIGN.LEFT)
+    wnd.cooldownGliderShowAllBtn = flatButton(p, "power_ranger_cd_glider_show_all", "Show All", 376, 113, 82, 22, colors.active, function() toggleCooldownGroup("glider") end)
+    wnd.cooldownGliderPrevBtn = flatButton(p, "power_ranger_cd_glider_page_prev", "<", 466, 113, 30, 22, colors.button, function() shiftCooldownSettingsPage(-1, "glider") end)
+    wnd.cooldownGliderNextBtn = flatButton(p, "power_ranger_cd_glider_page_next", ">", 502, 113, 30, 22, colors.button, function() shiftCooldownSettingsPage(1, "glider") end)
+    label(p, "power_ranger_cd_other_title", "Mounts / Skills", 16, 224, 120, 14, 11, colors.gold, ALIGN.LEFT)
+    wnd.cooldownOtherPageLabel = label(p, "power_ranger_cd_other_page_label", "", 146, 225, 190, 13, 10, colors.muted, ALIGN.LEFT)
+    wnd.cooldownOtherShowAllBtn = flatButton(p, "power_ranger_cd_other_show_all", "Show All", 376, 221, 82, 22, colors.active, function() toggleCooldownGroup("other") end)
+    wnd.cooldownOtherPrevBtn = flatButton(p, "power_ranger_cd_other_page_prev", "<", 466, 221, 30, 22, colors.button, function() shiftCooldownSettingsPage(-1, "other") end)
+    wnd.cooldownOtherNextBtn = flatButton(p, "power_ranger_cd_other_page_next", ">", 502, 221, 30, 22, colors.button, function() shiftCooldownSettingsPage(1, "other") end)
     wnd.cooldownGliderRows = {}
     wnd.cooldownOtherRows = {}
 
@@ -158,31 +226,40 @@ function SettingsSections.BuildSelfCooldowns(wnd, ctx)
             bg:AddAnchor("BOTTOMRIGHT", root, 0, 0)
             bg:Show(true)
             local rowIcon = createIcon(root, prefix .. "_icon_" .. i, 3, 2, 22)
-            local nameLabel = label(root, prefix .. "_name_" .. i, "", 32, 6, 136, 14, 10, colors.white, ALIGN.LEFT)
-            local sourceLabel = label(root, prefix .. "_source_" .. i, "", 172, 6, 122, 14, 10, colors.muted, ALIGN.LEFT)
-            local cdField = cooldownEdit(root, prefix .. "_cd_" .. i, 302, 3, 40, 20)
+            local nameLabel = label(root, prefix .. "_name_" .. i, "", 32, 6, 148, 14, 10, colors.white, ALIGN.LEFT)
+            local sourceLabel = label(root, prefix .. "_source_" .. i, "", 184, 6, 72, 14, 10, colors.muted, ALIGN.LEFT)
             local rowIndex = i
-            local upBtn = flatButton(root, prefix .. "_up_" .. i, "^", 350, 2, 28, 22, colors.button, function() moveCooldownSetting(rowIndex, -1, group) end)
-            local downBtn = flatButton(root, prefix .. "_down_" .. i, "v", 382, 2, 28, 22, colors.button, function() moveCooldownSetting(rowIndex, 1, group) end)
-            local btn = flatButton(root, prefix .. "_toggle_" .. i, "", 418, 2, 72, 22, colors.active, function() toggleCooldownSetting(rowIndex, group) end)
-            local removeBtn = flatButton(root, prefix .. "_remove_" .. i, "Del", 498, 2, 42, 22, {0.24, 0.09, 0.09, 0.95}, function() removeCooldownSetting(rowIndex, group) end)
+            local infoBtn = flatButton(root, prefix .. "_info_" .. i, "Info", 264, 2, 42, 22, colors.blue, function() openCooldownSkillsWindow(rowIndex, group, "info") end)
+            local upBtn = flatButton(root, prefix .. "_up_" .. i, "^", 310, 2, 26, 22, colors.button, function() moveCooldownSetting(rowIndex, -1, group) end)
+            local downBtn = flatButton(root, prefix .. "_down_" .. i, "v", 340, 2, 26, 22, colors.button, function() moveCooldownSetting(rowIndex, 1, group) end)
+            local skillsBtn = flatButton(root, prefix .. "_skills_" .. i, "Skills", 370, 2, 50, 22, colors.blue, function() openCooldownSkillsWindow(rowIndex, group, "skills") end)
+            local btn = flatButton(root, prefix .. "_toggle_" .. i, "", 424, 2, 54, 22, colors.active, function() toggleCooldownSetting(rowIndex, group) end)
+            local delBtn = flatButton(root, prefix .. "_delete_" .. i, "Del", 482, 2, 38, 22, colors.danger, function() removeCooldownSetting(rowIndex, group) end)
             nameLabel:Clickable(false)
             sourceLabel:Clickable(false)
-            removeBtn:Show(false)
-            rows[i] = { root = root, icon = rowIcon, name = nameLabel, source = sourceLabel, cd = cdField, up = upBtn, down = downBtn, button = btn, remove = removeBtn }
+            rows[i] = { root = root, icon = rowIcon, name = nameLabel, source = sourceLabel, info = infoBtn, up = upBtn, down = downBtn, skills = skillsBtn, button = btn, del = delBtn }
         end
     end
-    createRows(wnd.cooldownGliderRows, "power_ranger_cd_glider", "glider", 112)
-    createRows(wnd.cooldownOtherRows, "power_ranger_cd_other", "other", 220)
+    createRows(wnd.cooldownGliderRows, "power_ranger_cd_glider", "glider", 138)
+    createRows(wnd.cooldownOtherRows, "power_ranger_cd_other", "other", 246)
     return p
 end
 
 function SettingsSections.BuildHotSwapLauncher(wnd, ctx, y)
     local colors = ctx.colors
     local p = ctx.sectionPanel(wnd, "power_ranger_hot_swap_panel", 18, y, 584, 56, "Hot Swap")
-    ctx.label(p, "power_ranger_hot_swap_hint", "Manage embedded gear sets and open direction.", 14, 32, 290, 14, 10, colors.muted, ALIGN.LEFT)
-    ctx.flatButton(p, "power_ranger_hot_swap_settings_open", "Hot Swap Settings", 398, 28, 144, 22, colors.blue, function()
-        local hotSwap = require("power_ranger_on/hot_swap")
+    local hotSwap = require("power_ranger_on/hot_swap")
+    local refresh = ctx.refreshSettingsButtons or function() end
+    ctx.label(p, "power_ranger_hot_swap_hint", "Embedded gear sets and auto triggers.", 14, 32, 210, 14, 10, colors.muted, ALIGN.LEFT)
+    wnd.hotSwapEnabledBtn = ctx.flatButton(p, "power_ranger_hot_swap_enabled", "", 234, 28, 82, 22, colors.active, function()
+        if hotSwap and hotSwap.SetEnabled then hotSwap.SetEnabled(not hotSwap.IsEnabled()) end
+        refresh()
+    end)
+    wnd.hotSwapFloatBtn = ctx.flatButton(p, "power_ranger_hot_swap_float", "", 322, 28, 82, 22, colors.active, function()
+        if hotSwap and hotSwap.SetFloatShown then hotSwap.SetFloatShown(not hotSwap.IsFloatShown()) end
+        refresh()
+    end)
+    ctx.flatButton(p, "power_ranger_hot_swap_settings_open", "Settings", 410, 28, 132, 22, colors.blue, function()
         if hotSwap and hotSwap.toggleSettings then hotSwap.toggleSettings() end
     end)
     return p

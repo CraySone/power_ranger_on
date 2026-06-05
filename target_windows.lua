@@ -2,6 +2,37 @@ local api = require("api")
 
 local TargetWindows = {}
 
+local function clampOpacity(level)
+    level = tonumber(level) or 8
+    if level < 0 then return 0 end
+    if level > 10 then return 10 end
+    return level
+end
+
+local function selfOpacity(settings)
+    return clampOpacity(settings and settings.selfOpacityLevel) / 10
+end
+
+local function applySelfChrome(wnd, settings)
+    if not wnd then return end
+    local opacity = selfOpacity(settings)
+    local borderOn = settings == nil or settings.showSelfBorder ~= false
+    if wnd.selfBody then
+        wnd.selfBody:SetColor(0, 0, 0, opacity)
+        wnd.selfBody:Show(opacity > 0)
+    end
+    if wnd.header then
+        wnd.header:SetColor(0.06, 0.075, 0.095, opacity)
+        wnd.header:Show(borderOn and opacity > 0)
+    end
+    if wnd.selfBorder then
+        wnd.selfBorder:SetColor(0, 0, 0, opacity * 0.92)
+        wnd.selfBorder:Show(borderOn and opacity > 0)
+    end
+    if wnd.title then wnd.title:Show(borderOn) end
+    if wnd.status then wnd.status:Show(borderOn) end
+end
+
 function TargetWindows.CreateModelOverlay(ctx)
     local config = ctx.config
     local colors = ctx.colors
@@ -175,6 +206,31 @@ function TargetWindows.CreateOwnership(ctx)
     return wnd
 end
 
+function TargetWindows.CreateGuildFamily(ctx)
+    local colors = ctx.colors
+    local settings = ctx.settings or {}
+    local label = ctx.label
+    local wnd = api.Interface:CreateEmptyWindow("PowerRangerGuildFamilyLabel", "UIParent")
+    wnd:SetExtent(360, 50)
+    local x, y = ctx.safePosition(settings.guildFamilyLabelX, settings.guildFamilyLabelY, 360, 50)
+    wnd:AddAnchor("TOPLEFT", "UIParent", x, y)
+    if wnd.Clickable then wnd:Clickable(false) end
+    wnd.guild = label(wnd, "power_ranger_guild_family_guild", "", 0, 0, 360, 28, 22, colors.white, ALIGN.CENTER)
+    wnd.family = label(wnd, "power_ranger_guild_family_family", "", 0, 29, 360, 16, 12, colors.white, ALIGN.CENTER)
+    wnd.guild:Clickable(false)
+    wnd.family:Clickable(false)
+    ctx.applyReadableTextStyle(wnd.guild, true)
+    ctx.applyReadableTextStyle(wnd.family, true)
+    local dragHandle = wnd:CreateChildWidget("emptywidget", "power_ranger_guild_family_drag", 0, true)
+    dragHandle:SetExtent(360, 50)
+    dragHandle:AddAnchor("TOPLEFT", wnd, 0, 0)
+    dragHandle:Show(true)
+    wnd.dragHandle = dragHandle
+    ctx.applyHandleDrag(wnd, dragHandle, "guildFamilyLabelX", "guildFamilyLabelY")
+    wnd:Show(false)
+    return wnd
+end
+
 function TargetWindows.CreateSelf(ctx)
     local colors = ctx.colors
     local settings = ctx.settings or {}
@@ -185,11 +241,22 @@ function TargetWindows.CreateSelf(ctx)
     local x, y = ctx.safePosition(settings.selfX, settings.selfY, panel.minWidth, panel.height)
     wnd:AddAnchor("TOPLEFT", "UIParent", x, y)
     if wnd.Clickable then wnd:Clickable(false) end
-    ctx.addBg(wnd, 0, 0, 0, 0.62)
+    wnd.selfBorder = wnd:CreateColorDrawable(0, 0, 0, 0.92, "background")
+    wnd.selfBorder:AddAnchor("TOPLEFT", wnd, 0, 0)
+    wnd.selfBorder:AddAnchor("BOTTOMRIGHT", wnd, 0, 0)
+    wnd.selfBorder:Show(true)
+    wnd.selfBody = wnd:CreateColorDrawable(0, 0, 0, 0.62, "background")
+    wnd.selfBody:AddAnchor("TOPLEFT", wnd, 1, 1)
+    wnd.selfBody:AddAnchor("BOTTOMRIGHT", wnd, -1, -1)
+    wnd.selfBody:Show(true)
     wnd.header = wnd:CreateColorDrawable(0.06, 0.075, 0.095, 0.76, "background")
     wnd.header:SetExtent(panel.minWidth, panel.headerHeight)
     wnd.header:AddAnchor("TOPLEFT", wnd, 0, 0)
     wnd.header:Show(true)
+    wnd.ApplyChrome = function(self)
+        applySelfChrome(self, settings)
+    end
+    wnd:ApplyChrome()
     local title = label(wnd, "power_ranger_self_title", "Self CDs", 8, 3, 110, 14, 11, colors.gold, ALIGN.LEFT)
     title:Clickable(false)
     wnd.title = title

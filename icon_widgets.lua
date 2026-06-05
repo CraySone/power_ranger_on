@@ -2,6 +2,20 @@ local OverlayUtils = require("power_ranger_on/overlay_utils")
 
 local IconWidgets = {}
 
+local function setOverlayTone(icon, state)
+    local overlay = icon and icon.cooldownOverlay
+    if not overlay then return end
+    local color = nil
+    if state == "active" then
+        color = {0.08, 0.48, 0.14, 0.50}
+    elseif state == "cooldown" then
+        color = {0.62, 0.05, 0.05, 0.58}
+    end
+    if color and overlay.SetColor then
+        pcall(function() overlay:SetColor(color[1], color[2], color[3], color[4]) end)
+    end
+end
+
 local function decorateCooldownIcon(icon, parent, id, size)
     if not icon then return end
     local overlay = icon:CreateColorDrawable(0, 0, 0, 0.62, "overlay")
@@ -108,6 +122,7 @@ function IconWidgets.SetCooldown(icon, path, state, seconds)
     IconWidgets.SetCached(icon, path)
     if not icon then return end
     local active = state == "active" or state == "cooldown"
+    setOverlayTone(icon, state)
     if icon.cooldownOverlay then icon.cooldownOverlay:Show(active) end
     if icon.timerLabel then
         if state == "active" then
@@ -130,6 +145,7 @@ function IconWidgets.SetCooldownSkill(icon, path, state, seconds)
     end
     IconWidgets.SetEquip(icon, nil)
     local active = state == "active" or state == "cooldown"
+    setOverlayTone(icon, state)
     if icon.cooldownOverlay then icon.cooldownOverlay:Show(active) end
     if icon.timerLabel then
         if state == "cooldown" and seconds then
@@ -142,6 +158,16 @@ function IconWidgets.SetCooldownSkill(icon, path, state, seconds)
             icon.timerLabel:SetText("")
             icon.timerLabel:Show(false)
         end
+    end
+end
+
+function IconWidgets.ClearCooldown(icon)
+    if not icon then return end
+    icon:Show(false)
+    if icon.cooldownOverlay then icon.cooldownOverlay:Show(false) end
+    if icon.timerLabel then
+        icon.timerLabel:SetText("")
+        icon.timerLabel:Show(false)
     end
 end
 
