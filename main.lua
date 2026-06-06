@@ -7,7 +7,7 @@ local power_ranger_on = {
     name = "Power Ranger ON",
     author = "CraySone",
     desc = "PvP Overlay and self tracking",
-    version = "1.4.3"
+    version = "1.4.4"
 }
 
 local active = false
@@ -23,7 +23,10 @@ local function Load()
     if active then return end
     active = true
     TargetOverlay.init()
-    HotSwap.init(TargetOverlay.getActiveSettings() or api.GetSettings("power_ranger_on"))
+    local activeSettings = TargetOverlay.getActiveSettings()
+    if activeSettings then
+        HotSwap.init(activeSettings, TargetOverlay.saveActiveSettings, TargetOverlay.getSettingsRoot, TargetOverlay.getActiveProfileKey)
+    end
     pcall(function()
         michaelClientLib:initializeMichaelClient()
         local configMenu = ADDON:GetContent(UIC.SYSTEM_CONFIG_FRAME)

@@ -22,6 +22,8 @@ TargetOverlay.equipmentReader = require("power_ranger_on/equipment_reader")
 TargetOverlay.iconWidgets = require("power_ranger_on/icon_widgets")
 TargetOverlay.resourceLookup = require("power_ranger_on/resource_lookup")
 TargetOverlay.windowHelpers = require("power_ranger_on/window_helpers")
+TargetOverlay.travelSpeed = require("power_ranger_on/travel_speed")
+TargetOverlay.ownersMark = require("power_ranger_on/owners_mark")
 TargetOverlay.optionalBuffHelper = OverlayUtils.safeCall(function() return require("CooldawnBuffTracker/buff_helper") end)
 TargetOverlay.simpleStatsGrid = {
     pdef = 0,
@@ -82,6 +84,7 @@ local defaults = {
     targetWindowScaleLevel = 0,
     selfScaleLevel = 0,
     selfOpacityLevel = 8,
+    speedMeterOpacityLevel = 8,
     guildFamilyLabelScaleLevel = 0,
     showTargetWindow = true,
     compactTargetWindow = true,
@@ -97,6 +100,10 @@ local defaults = {
     showInfoFamily = true,
     showOwnershipLabels = true,
     showGuildFamilyLabel = false,
+    showSpeedMeter = false,
+    showOwnOwnersMark = false,
+    showTargetOwnersMark = true,
+    warnMissingOwnersMark = true,
     showInfoDefense = true,
     showInfoPdef = true,
     showInfoMdef = true,
@@ -112,6 +119,7 @@ local defaults = {
     showSelfCooldowns = true,
     showSelfEquipment = true,
     showSelfBorder = true,
+    selfMinimized = false,
     cooldownSettingsPage = 1,
     skillProbeLogging = false,
     detectedSkillsX = 760,
@@ -119,6 +127,10 @@ local defaults = {
     ownershipWindowX = 860,
     ownershipWindowY = 280,
     ownershipScaleLevel = 0,
+    speedMeterX = 300,
+    speedMeterY = 180,
+    ownersMarkX = 500,
+    ownersMarkY = 180,
     targetInfoColors = {
         range = {1, 0.84, 0, 1},
         class = {0.82, 0.90, 1, 1},
@@ -288,6 +300,7 @@ local TARGET_INFO_FIELDS = {
 local settings = nil
 local settingsRoot = nil
 local settingsProfileKey = nil
+local settingsProfileState = nil
 local mainCanvas = nil
 local armorBuffIcon = nil
 local weaponBuffIcon = nil
@@ -386,30 +399,30 @@ local function allTrackedSkillRows()
     return rows
 end
 
+local function copySerializable(value, seen)
+    local kind = type(value)
+    if kind ~= "table" then
+        if kind == "string" or kind == "number" or kind == "boolean" then return value end
+        return nil
+    end
+    seen = seen or {}
+    if seen[value] then return nil end
+    seen[value] = true
+    local out = {}
+    for key, child in pairs(value) do
+        if type(key) == "string" or type(key) == "number" then
+            local copied = copySerializable(child, seen)
+            if copied ~= nil then out[key] = copied end
+        end
+    end
+    seen[value] = nil
+    return out
+end
+
 local function copyDefaults(dst, src)
     for k, v in pairs(src) do
         if dst[k] == nil then
-            if type(v) == "table" then
-                local out = {}
-                if #v > 0 then
-                    for i, row in ipairs(v) do
-                        out[i] = {}
-                        for rk, rv in pairs(row) do out[i][rk] = rv end
-                    end
-                else
-                    for rk, rv in pairs(v) do
-                        if type(rv) == "table" then
-                            out[rk] = {}
-                            for nk, nv in pairs(rv) do out[rk][nk] = nv end
-                        else
-                            out[rk] = rv
-                        end
-                    end
-                end
-                dst[k] = out
-            else
-                dst[k] = v
-            end
+            dst[k] = copySerializable(v)
         end
     end
 end
@@ -733,7 +746,17 @@ end
 
 local function loadSettings()
     settingsRoot = api.GetSettings(ADDON_ID) or {}
-    settings, settingsProfileKey, playerName, settingsRoot = SettingsProfile.Resolve(api, settingsRoot)
+    settings, settingsProfileKey, playerName, settingsRoot, settingsProfileState = SettingsProfile.Resolve(api, settingsRoot)
+    if settingsProfileState and settingsProfileState.error and api.Log and api.Log.Err then
+        pcall(function()
+            api.Log:Err("[PowerRangerON] Settings profile migration stopped: "
+                .. tostring(settingsProfileState.error)
+                .. ". Existing settings remain active and were not overwritten.")
+        end)
+    end
+    if settingsProfileKey == "__pending__" or settingsProfileKey == "__migration_failed__" then
+        settings = copySerializable(settings) or {}
+    end
     local simpleSpacingVersion = tonumber(settings.simpleSpacingVersion) or 1
     local hadSimpleSpacing = settings.simpleColumnGap ~= nil or settings.simpleLineGap ~= nil
     copyDefaults(settings, defaults)
@@ -802,15 +825,25 @@ local function loadSettings()
     TargetOverlay.logSettingsSave("loaded (no write)")
 end
 
-local function saveSettings()
+local function saveSettings(reason)
     -- Guard: never write when our own settings table is missing/uninitialised --
     -- that would push a default-shaped power_ranger_on branch into the shared file.
     if type(settings) ~= "table" then
         TargetOverlay.logSettingsSave("SKIPPED (settings not ready)")
         return
     end
+    if settingsProfileKey == "__pending__" or settingsProfileKey == "__migration_failed__" then
+        TargetOverlay.logSettingsSave("SKIPPED (profile unresolved)")
+        return
+    end
+    if type(settingsRoot) == "table"
+        and type(settingsRoot.characterProfiles) == "table"
+        and settingsProfileKey
+        and settingsProfileKey ~= "__account__" then
+        settingsRoot.characterProfiles[settingsProfileKey] = settings
+    end
     SettingsSanitizer.Clean(settingsRoot or settings)
-    TargetOverlay.logSettingsSave("saving (user change)")
+    TargetOverlay.logSettingsSave(reason or "saving (user change)")
     pcall(function() api.SaveSettings() end)
 end
 
@@ -1140,8 +1173,16 @@ function TargetOverlay.getActiveSettings()
     return settings
 end
 
+function TargetOverlay.saveActiveSettings(reason)
+    saveSettings(reason or "saving (module change)")
+end
+
 function TargetOverlay.getActiveProfileKey()
     return settingsProfileKey
+end
+
+function TargetOverlay.getSettingsRoot()
+    return settingsRoot
 end
 
 local function createIcon(parent, id, x, y, size)
@@ -1474,6 +1515,7 @@ function TargetOverlay.applyTextShadow()
     if ownershipWnd then
         TargetOverlay.applyReadableTextStyle(ownershipWnd.title, true)
         TargetOverlay.applyReadableTextStyle(ownershipWnd.meta, true)
+        TargetOverlay.applyReadableTextStyle(ownershipWnd.markTime, true)
     end
     if guildFamilyWnd then
         TargetOverlay.applyReadableTextStyle(guildFamilyWnd.guild, true)
@@ -1512,6 +1554,8 @@ local function refreshOwnershipWindow(info)
     local titleDisplay = OverlayUtils.shortText(titleText, 34)
     local metaDisplay = table.concat(meta, "  |  ")
     local scale = uiScaleFactor("ownershipScaleLevel")
+    local targetMark = TargetOverlay.ownersMark.GetTargetMark()
+    local markWidth = targetMark and math.floor((30 * scale) + 0.5) or 0
     local pad = math.floor((4 * scale) + 0.5)
     local titleHeight = math.floor((20 * scale) + 0.5)
     local metaHeight = math.floor((16 * scale) + 0.5)
@@ -1520,23 +1564,44 @@ local function refreshOwnershipWindow(info)
     ownershipWnd.title:SetText(titleDisplay)
     ownershipWnd.meta:SetText(metaDisplay)
     ownershipWnd.meta:Show(#meta > 0)
+    ownershipWnd.markIcon:Show(targetMark ~= nil)
+    ownershipWnd.markTime:Show(targetMark ~= nil)
+    if targetMark then
+        ownershipWnd.markIcon:SetExtent(math.floor((24 * scale) + 0.5), math.floor((24 * scale) + 0.5))
+        if targetMark.path and ownershipWnd.markIcon._lastPath ~= targetMark.path then
+            F_SLOT.SetIconBackGround(ownershipWnd.markIcon, targetMark.path)
+            ownershipWnd.markIcon._lastPath = targetMark.path
+        end
+        ownershipWnd.markTime.style:SetFontSize(math.floor((10 * scale) + 0.5))
+        ownershipWnd.markTime:SetText(string.format("%.0fs", math.max(0, (tonumber(targetMark.timeLeft) or 0) - 750) / 1000))
+    end
     setTextColor(ownershipWnd.title, guild and settingColor("guild") or settingColor("family"))
     setTextColor(ownershipWnd.meta, COLORS.white)
     local titleWidth = ownershipWnd.title.style:GetTextWidth(titleDisplay)
     local metaWidth = #meta > 0 and ownershipWnd.meta.style:GetTextWidth(metaDisplay) or 0
-    local wantedWidth = math.max(math.floor((120 * scale) + 0.5), math.min(math.floor((460 * scale) + 0.5), math.ceil(math.max(titleWidth, metaWidth) + (12 * scale))))
+    local wantedWidth = math.max(math.floor((120 * scale) + 0.5), math.min(math.floor((490 * scale) + 0.5), math.ceil(math.max(titleWidth, metaWidth) + (12 * scale) + markWidth)))
     local wantedHeight = #meta > 0 and math.floor((42 * scale) + 0.5) or math.floor((24 * scale) + 0.5)
-    if ownershipWnd._lastWidth ~= wantedWidth or ownershipWnd._lastHeight ~= wantedHeight then
+    local hasMark = targetMark ~= nil
+    if ownershipWnd._lastWidth ~= wantedWidth
+        or ownershipWnd._lastHeight ~= wantedHeight
+        or ownershipWnd._lastHasMark ~= hasMark then
         ownershipWnd:SetExtent(wantedWidth, wantedHeight)
         ownershipWnd.title:RemoveAllAnchors()
-        ownershipWnd.title:AddAnchor("TOPLEFT", ownershipWnd, pad, 0)
-        ownershipWnd.title:SetExtent(wantedWidth - (pad * 2), titleHeight)
+        if targetMark then
+            ownershipWnd.markIcon:RemoveAllAnchors()
+            ownershipWnd.markIcon:AddAnchor("TOPLEFT", ownershipWnd, pad, 0)
+            ownershipWnd.markTime:RemoveAllAnchors()
+            ownershipWnd.markTime:AddAnchor("TOP", ownershipWnd.markIcon, "BOTTOM", 0, -2)
+        end
+        ownershipWnd.title:AddAnchor("TOPLEFT", ownershipWnd, pad + markWidth, 0)
+        ownershipWnd.title:SetExtent(wantedWidth - (pad * 2) - markWidth, titleHeight)
         ownershipWnd.meta:RemoveAllAnchors()
-        ownershipWnd.meta:AddAnchor("TOPLEFT", ownershipWnd, pad, titleHeight)
-        ownershipWnd.meta:SetExtent(wantedWidth - (pad * 2), metaHeight)
+        ownershipWnd.meta:AddAnchor("TOPLEFT", ownershipWnd, pad + markWidth, titleHeight)
+        ownershipWnd.meta:SetExtent(wantedWidth - (pad * 2) - markWidth, metaHeight)
         ownershipWnd.dragHandle:SetExtent(wantedWidth, wantedHeight)
         ownershipWnd._lastWidth = wantedWidth
         ownershipWnd._lastHeight = wantedHeight
+        ownershipWnd._lastHasMark = hasMark
     end
     ownershipWnd:Show(true)
 end
@@ -1554,30 +1619,32 @@ local function refreshGuildFamilyWindow(info)
         return
     end
     local scale = uiScaleFactor("guildFamilyLabelScaleLevel")
-    local guildText = OverlayUtils.shortText(guild or "", 34)
-    local familyText = OverlayUtils.shortText(family or "", 36)
+    local wantedWidth = math.floor((360 * scale) + 0.5)
+    local pad = math.floor((10 * scale) + 0.5)
+    local textWidth = math.max(80, wantedWidth - (pad * 2))
+    local guildText = tostring(guild or "")
+    local familyText = tostring(family or "")
     local guildHeight = math.floor((28 * scale) + 0.5)
     local familyHeight = math.floor((16 * scale) + 0.5)
     guildFamilyWnd.guild.style:SetFontSize(math.floor((22 * scale) + 0.5))
     guildFamilyWnd.family.style:SetFontSize(math.floor((12 * scale) + 0.5))
+    guildText = TargetOverlay.fitTextToWidth(guildFamilyWnd.guild, guildText, textWidth, 8)
+    familyText = TargetOverlay.fitTextToWidth(guildFamilyWnd.family, familyText, textWidth, 6)
     guildFamilyWnd.guild:SetText(guildText)
     guildFamilyWnd.family:SetText(familyText)
     guildFamilyWnd.guild:Show(guildText ~= "")
     guildFamilyWnd.family:Show(familyText ~= "")
     setTextColor(guildFamilyWnd.guild, settingColor("guildFamilyGuild"))
     setTextColor(guildFamilyWnd.family, settingColor("guildFamilyFamily"))
-    local guildWidth = guildText ~= "" and guildFamilyWnd.guild.style:GetTextWidth(guildText) or 0
-    local familyWidth = familyText ~= "" and guildFamilyWnd.family.style:GetTextWidth(familyText) or 0
-    local wantedWidth = math.max(140, math.ceil(math.max(guildWidth, familyWidth) + (24 * scale)))
     local wantedHeight = guildHeight + (familyText ~= "" and familyHeight or 0)
     if guildFamilyWnd._lastWidth ~= wantedWidth or guildFamilyWnd._lastHeight ~= wantedHeight then
         guildFamilyWnd:SetExtent(wantedWidth, wantedHeight)
         guildFamilyWnd.guild:RemoveAllAnchors()
-        guildFamilyWnd.guild:AddAnchor("TOPLEFT", guildFamilyWnd, 0, 0)
-        guildFamilyWnd.guild:SetExtent(wantedWidth, guildHeight)
+        guildFamilyWnd.guild:AddAnchor("TOP", guildFamilyWnd, "TOP", 0, 0)
+        guildFamilyWnd.guild:SetExtent(textWidth, guildHeight)
         guildFamilyWnd.family:RemoveAllAnchors()
-        guildFamilyWnd.family:AddAnchor("TOPLEFT", guildFamilyWnd, 0, guildHeight)
-        guildFamilyWnd.family:SetExtent(wantedWidth, familyHeight)
+        guildFamilyWnd.family:AddAnchor("TOP", guildFamilyWnd, "TOP", 0, guildHeight)
+        guildFamilyWnd.family:SetExtent(textWidth, familyHeight)
         guildFamilyWnd.dragHandle:SetExtent(wantedWidth, wantedHeight)
         guildFamilyWnd._lastWidth = wantedWidth
         guildFamilyWnd._lastHeight = wantedHeight
@@ -1812,9 +1879,19 @@ local function createSelfWindow()
         selfPanel = SELF_PANEL,
         addBg = addBg,
         label = label,
+        flatButton = flatButton,
         createIcon = createIcon,
         safePosition = TargetOverlay.safeWindowPosition,
-        applyHandleDrag = applyHandleDrag
+        applyHandleDrag = applyHandleDrag,
+        toggleSelfMinimized = function()
+            settings.selfMinimized = not settings.selfMinimized
+            if selfWnd then
+                selfWnd._lastWidth = nil
+                selfWnd._lastHeight = nil
+                selfWnd._equipY = nil
+            end
+            saveSettings("saving (SelfCD minimize)")
+        end
     })
 end
 
@@ -3030,6 +3107,10 @@ function refreshSettingsButtons()
     setToggleButton(settingsWnd.testWindowBtn, settings.testTargetWindow, "Compact/Simple")
     setToggleButton(settingsWnd.ownershipBtn, settings.showOwnershipLabels ~= false, "Ownership")
     setToggleButton(settingsWnd.guildFamilyLabelBtn, settings.showGuildFamilyLabel == true, "Guild/Fam")
+    setToggleButton(settingsWnd.speedMeterBtn, settings.showSpeedMeter == true, "Speed meter")
+    setToggleButton(settingsWnd.ownOwnersMarkBtn, settings.showOwnOwnersMark == true, "Personal")
+    setToggleButton(settingsWnd.targetOwnersMarkBtn, settings.showTargetOwnersMark ~= false, "Target mark")
+    setToggleButton(settingsWnd.warnOwnersMarkBtn, settings.warnMissingOwnersMark ~= false, "Missing warning")
     setToggleButton(settingsWnd.selfBtn, settings.showSelfPanel, "Self win")
     setToggleButton(settingsWnd.selfCdBtn, settings.showSelfCooldowns, "Cooldowns")
     setToggleButton(settingsWnd.selfEquipmentBtn, settings.showSelfEquipment ~= false, "Equipment")
@@ -3076,6 +3157,18 @@ function refreshSettingsButtons()
                 settingsWnd.selfOpacityFill:Show(true)
             else
                 settingsWnd.selfOpacityFill:Show(false)
+            end
+        end
+    end
+    if settingsWnd.speedOpacityValue then
+        local opacity = math.max(0, math.min(10, tonumber(settings.speedMeterOpacityLevel) or 8))
+        settingsWnd.speedOpacityValue:SetText(string.format("%.2f", opacity / 10))
+        if settingsWnd.speedOpacityFill then
+            if opacity > 0 then
+                settingsWnd.speedOpacityFill:SetExtent(math.max(1, math.floor((opacity / 10) * 148)), 14)
+                settingsWnd.speedOpacityFill:Show(true)
+            else
+                settingsWnd.speedOpacityFill:Show(false)
             end
         end
     end
@@ -3134,6 +3227,10 @@ local function toggleSetting(key)
     end
     if key == "showOwnershipLabels" and settings.showOwnershipLabels == false then hideOwnershipWindow() end
     if key == "showGuildFamilyLabel" and settings.showGuildFamilyLabel ~= true then hideGuildFamilyWindow() end
+    if key == "showSpeedMeter" then TargetOverlay.travelSpeed.Refresh() end
+    if key == "showOwnOwnersMark" or key == "showTargetOwnersMark" or key == "warnMissingOwnersMark" then
+        TargetOverlay.ownersMark.Refresh()
+    end
     if key == "importNuziCooldowns" then
         refreshNuziCooldownRows(true)
         TargetOverlay.refreshEventSubscriptions()
@@ -3151,6 +3248,32 @@ function TargetOverlay.shiftSelfOpacity(delta)
     saveSettings()
     refreshSettingsButtons()
     updateSelfPanel()
+end
+
+function TargetOverlay.shiftSpeedOpacity(delta)
+    local level = (tonumber(settings.speedMeterOpacityLevel) or 8) + (tonumber(delta) or 0)
+    if level < 0 then level = 0 end
+    if level > 10 then level = 10 end
+    settings.speedMeterOpacityLevel = level
+    saveSettings()
+    refreshSettingsButtons()
+    TargetOverlay.travelSpeed.Refresh()
+end
+
+function TargetOverlay.setSpeedOpacityFromMouse()
+    if not settingsWnd then return end
+    local okPos, mx = pcall(function() return api.Input:GetMousePos() end)
+    if not okPos or not mx then return end
+    local windowX = tonumber(settings.settingsX) or 650
+    local currentX = TargetOverlay.windowHelpers.Position(settingsWnd)
+    if tonumber(currentX) then windowX = tonumber(currentX) end
+    local trackLeft = windowX + 18 + 296
+    local frac = (tonumber(mx) - trackLeft) / 150
+    if frac < 0 then frac = 0 elseif frac > 1 then frac = 1 end
+    settings.speedMeterOpacityLevel = math.floor((frac * 10) + 0.5)
+    saveSettings()
+    refreshSettingsButtons()
+    TargetOverlay.travelSpeed.Refresh()
 end
 
 function TargetOverlay.toggleCooldownGroup(group)
@@ -3295,7 +3418,7 @@ local function createSettingsWindow()
         id = "PowerRangerSettings",
         title = "Power Ranger ON",
         width = 620,
-        height = 1035,
+        height = 1220,
         x = settings.settingsX,
         y = settings.settingsY,
         xKey = "settingsX",
@@ -3373,6 +3496,16 @@ local function createSettingsWindow()
         flatButton = flatButton,
         toggleSetting = toggleSetting,
         refreshSettingsButtons = refreshSettingsButtons
+    }, 1120)
+    settingsSections.BuildTravelTools(settingsWnd, {
+        colors = COLORS,
+        sectionPanel = sectionPanel,
+        label = label,
+        flatButton = flatButton,
+        toggleSetting = toggleSetting,
+        shiftUiScale = shiftUiScale,
+        shiftSpeedOpacity = TargetOverlay.shiftSpeedOpacity,
+        setSpeedOpacityFromMouse = TargetOverlay.setSpeedOpacityFromMouse
     }, 960)
 
     refreshSettingsButtons()
@@ -3471,6 +3604,8 @@ function TargetOverlay.init()
     createSelfWindow()
     createSettingsWindow()
     createEventWindow()
+    TargetOverlay.travelSpeed.Init(settings, saveSettings, applyHandleDrag)
+    TargetOverlay.ownersMark.Init(settings, applyHandleDrag)
     shiftUiScale(0)
 end
 
@@ -3666,6 +3801,8 @@ end
 
 function TargetOverlay.update(dt)
     local elapsed = dt or 0
+    TargetOverlay.travelSpeed.Update(elapsed)
+    TargetOverlay.ownersMark.Update(elapsed)
     updateElapsed = updateElapsed + elapsed
     selfUpdateElapsed = selfUpdateElapsed + elapsed
     TargetOverlay.cooldownRuntimeElapsed = (TargetOverlay.cooldownRuntimeElapsed or SELF_UPDATE_MS) + elapsed
@@ -3868,16 +4005,13 @@ function TargetOverlay.cleanup()
         eventWnd:Show(false)
     end
     saveSkillProbe()
-    if settings then
-        settings.skillProbeLogging = false
-        settings.detectedSkills = {}
-        saveSettings()
-    end
     if mainCanvas then mainCanvas:Show(false) end
     if targetRangeCanvas then targetRangeCanvas:Show(false) end
     if targetInfoWnd then targetInfoWnd:Show(false) end
     if ownershipWnd then ownershipWnd:Show(false) end
     if guildFamilyWnd then guildFamilyWnd:Show(false) end
+    TargetOverlay.travelSpeed.Cleanup()
+    TargetOverlay.ownersMark.Cleanup()
     if selfWnd then selfWnd:Show(false) end
     if settingsWnd then settingsWnd:Show(false) end
     if detectedSkillsWnd then detectedSkillsWnd:Show(false) end

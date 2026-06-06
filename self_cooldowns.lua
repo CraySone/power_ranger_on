@@ -15,6 +15,18 @@ local function setEquipmentVisible(wnd, visible)
     end
 end
 
+local function setMinimizeButton(wnd, panel, scale, width, minimized)
+    if not wnd or not wnd.minimizeBtn then return end
+    local size = math.floor(((panel.headerHeight - 4) * scale) + 0.5)
+    size = math.max(16, size)
+    wnd.minimizeBtn:SetExtent(size, size)
+    if wnd.minimizeBtn.RemoveAllAnchors then wnd.minimizeBtn:RemoveAllAnchors() end
+    wnd.minimizeBtn:AddAnchor("TOPLEFT", wnd, math.max(2, width - size - 2), math.floor((2 * scale) + 0.5))
+    if wnd.minimizeBtn.SetCleanText then wnd.minimizeBtn:SetCleanText(minimized and "+" or "-") end
+    wnd.minimizeBtn:Show(true)
+    if wnd.minimizeBtn.Raise then wnd.minimizeBtn:Raise() end
+end
+
 local function positionEquipmentRow(ctx, y)
     local wnd = ctx.selfWnd
     if not wnd or not wnd.equipIcons then return end
@@ -68,6 +80,7 @@ local function resizePanel(ctx, gliderCount, mountCount, cooldownsVisible, equip
             wnd.status.style:SetFontSize(math.floor((10 * scale) + 0.5))
             wnd.status:AddAnchor("TOPLEFT", wnd, math.floor((112 * scale) + 0.5), math.floor((3 * scale) + 0.5))
         end
+        setMinimizeButton(wnd, panel, scale, width, false)
         wnd._lastWidth = width
         wnd._lastHeight = height
     end
@@ -87,6 +100,38 @@ local function clearRow(ctx, icons, labels)
         end
         if labels and labels[i] then labels[i]:SetText("") end
     end
+end
+
+local function renderMinimized(ctx)
+    local wnd = ctx.selfWnd
+    if not wnd then return end
+    local panel = ctx.panel
+    local scale = ctx.scale()
+    local width = math.floor((58 * scale) + 0.5)
+    local height = math.floor((panel.headerHeight * scale) + 0.5)
+    width = math.max(46, width)
+    height = math.max(18, height)
+    clearRow(ctx, wnd.gliderIcons, wnd.gliderLabels)
+    clearRow(ctx, wnd.mountIcons, wnd.mountLabels)
+    setEquipmentVisible(wnd, false)
+    if wnd._lastWidth ~= width or wnd._lastHeight ~= height or wnd._selfMinimized ~= true then
+        wnd:SetExtent(width, height)
+        if wnd.header then wnd.header:SetExtent(width, height) end
+        if wnd.dragHandle then wnd.dragHandle:SetExtent(width, height) end
+        if wnd.title then
+            wnd.title:RemoveAllAnchors()
+            wnd.title:AddAnchor("TOPLEFT", wnd, math.floor((7 * scale) + 0.5), math.floor((3 * scale) + 0.5))
+            wnd.title:SetExtent(math.floor((28 * scale) + 0.5), math.floor((14 * scale) + 0.5))
+            wnd.title.style:SetFontSize(math.floor((11 * scale) + 0.5))
+            wnd.title:SetText("CD")
+        end
+        if wnd.status then wnd.status:SetText("") end
+        setMinimizeButton(wnd, panel, scale, width, true)
+        wnd._lastWidth = width
+        wnd._lastHeight = height
+        wnd._selfMinimized = true
+    end
+    wnd:Show(true)
 end
 
 local function ensureRow(ctx, icons, labels, prefix, y, wanted)
@@ -258,6 +303,16 @@ function SelfCooldowns.Update(ctx)
     if settings.showSelfPanel == false or ctx.shouldHideSelfPanel() then
         wnd:Show(false)
         return
+    end
+    if settings.selfMinimized == true then
+        renderMinimized(ctx)
+        return
+    elseif wnd._selfMinimized == true then
+        wnd._lastWidth = nil
+        wnd._lastHeight = nil
+        wnd._equipY = nil
+        wnd._selfMinimized = false
+        if wnd.title then wnd.title:SetText("Self CDs") end
     end
     if settings.showSelfCooldowns == false then
         if wnd.status then wnd.status:SetText("OFF") end

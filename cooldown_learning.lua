@@ -40,11 +40,34 @@ end
 local function deviceKey(kind, name)
     local key = normalize(name):gsub("[^%w]+", "_"):gsub("^_+", ""):gsub("_+$", "")
     if key == "" then key = "device" end
-    return tostring(kind or "device") .. ":" .. key
+    local prefix = normalize(kind):gsub("[^%w]+", "_"):gsub("^_+", ""):gsub("_+$", "")
+    if prefix == "" then prefix = "device" end
+    return prefix .. "_" .. key
 end
 
 local function ensureStore(settings)
     if type(settings.learnedCooldownDevices) ~= "table" then settings.learnedCooldownDevices = {} end
+    local migrated = {}
+    for key, device in pairs(settings.learnedCooldownDevices) do
+        if type(device) == "table" then
+            local safeKey = deviceKey(device.kind or "device", device.name or key)
+            if key ~= safeKey then
+                local existing = settings.learnedCooldownDevices[safeKey] or migrated[safeKey]
+                if type(existing) ~= "table" then
+                    device.key = safeKey
+                    migrated[safeKey] = device
+                end
+                settings.learnedCooldownDevices[key] = nil
+            elseif device.key ~= safeKey then
+                device.key = safeKey
+            end
+        elseif type(key) ~= "string" or key:match("^[A-Za-z_][A-Za-z0-9_]*$") == nil then
+            settings.learnedCooldownDevices[key] = nil
+        end
+    end
+    for key, device in pairs(migrated) do
+        settings.learnedCooldownDevices[key] = device
+    end
     return settings.learnedCooldownDevices
 end
 
@@ -73,7 +96,7 @@ function Learning.Learn(settings, recipe)
     if normalize(name) == "" then return false end
 
     local store = ensureStore(settings)
-    local key = recipe.recipeDeviceKey or deviceKey(kind, name)
+    local key = deviceKey(kind, recipe.recipeDeviceName or recipe.mountName or recipe.source or recipe.name)
     local device = store[key]
     local changed = false
     if type(device) ~= "table" then

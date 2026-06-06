@@ -103,6 +103,9 @@ local customPage = 1
 local detectedPage = 1
 local selectedLoadout
 local createSettingsWindow
+local persistSettings
+local accountRootProvider
+local profileKeyProvider
 
 local DEFAULT_CUSTOM_TRIGGERS = {
     swimming = { enabled = true, loadoutName = "", blockFreedichGrowlgate = true },
@@ -136,13 +139,23 @@ local function lower(value)
     return string.lower(trim(value))
 end
 
-local function copyTable(value, depth)
-    if type(value) ~= "table" then return value end
-    if (depth or 0) > 6 then return nil end
+local function copyTable(value, seen)
+    if type(value) ~= "table" then
+        local kind = type(value)
+        if kind == "string" or kind == "number" or kind == "boolean" then return value end
+        return nil
+    end
+    seen = seen or {}
+    if seen[value] then return nil end
+    seen[value] = true
     local copy = {}
     for k, v in pairs(value) do
-        copy[copyTable(k, (depth or 0) + 1)] = copyTable(v, (depth or 0) + 1)
+        if type(k) == "string" or type(k) == "number" then
+            local copied = copyTable(v, seen)
+            if copied ~= nil then copy[k] = copied end
+        end
     end
+    seen[value] = nil
     return copy
 end
 
@@ -150,10 +163,25 @@ local function hasGearSets(list)
     return type(list) == "table" and #list > 0
 end
 
-local function backupHotSwapGearSets()
-    if type(rootSettings) ~= "table" or type(settings) ~= "table" then return end
-    if not hasGearSets(settings.gear_sets) then return end
-    rootSettings.hotSwapGearSetsBackup = {
+local function accountRoot()
+    if type(accountRootProvider) ~= "function" then return nil end
+    local root = safeCall(accountRootProvider)
+    if type(root) == "table" then return root end
+    return nil
+end
+
+local function activeProfileKey()
+    if type(profileKeyProvider) ~= "function" then return nil end
+    local key = safeCall(profileKeyProvider)
+    if type(key) == "string" and key ~= "" and key ~= "__pending__" and key ~= "__migration_failed__" then
+        return key
+    end
+    return nil
+end
+
+local function copyHotSwapBackup()
+    if type(settings) ~= "table" or not hasGearSets(settings.gear_sets) then return nil end
+    return {
         gear_sets = copyTable(settings.gear_sets),
         activeLoadoutName = settings.activeLoadoutName,
         x = settings.x,
@@ -165,10 +193,29 @@ local function backupHotSwapGearSets()
     }
 end
 
+local function backupHotSwapGearSets()
+    if type(rootSettings) ~= "table" or type(settings) ~= "table" then return end
+    local backup = copyHotSwapBackup()
+    if type(backup) ~= "table" then return end
+    rootSettings.hotSwapGearSetsBackup = copyTable(backup)
+    local root = accountRoot()
+    local key = activeProfileKey()
+    if type(root) == "table" and key then
+        if type(root.hotSwapBackups) ~= "table" then root.hotSwapBackups = {} end
+        root.hotSwapBackups[key] = copyTable(backup)
+    end
+end
+
 local function restoreHotSwapGearSetsFromBackup()
     if type(rootSettings) ~= "table" or type(settings) ~= "table" then return false end
     if hasGearSets(settings.gear_sets) then return false end
     local backup = rootSettings.hotSwapGearSetsBackup
+    if type(backup) ~= "table" or not hasGearSets(backup.gear_sets) then
+        local root = accountRoot()
+        local key = activeProfileKey()
+        local backups = type(root) == "table" and root.hotSwapBackups or nil
+        backup = type(backups) == "table" and key and backups[key] or nil
+    end
     if type(backup) ~= "table" or not hasGearSets(backup.gear_sets) then return false end
     settings.gear_sets = copyTable(backup.gear_sets) or {}
     settings.activeLoadoutName = settings.activeLoadoutName or backup.activeLoadoutName
@@ -188,7 +235,9 @@ local function saveSettings()
         local count = type(settings) == "table" and type(settings.gear_sets) == "table" and #settings.gear_sets or -1
         pcall(function() api.Log:Info("[PowerRangerON] HotSwap save gear_sets=" .. tostring(count)) end)
     end
-    safeCall(function() api.SaveSettings() end)
+    if persistSettings then
+        persistSettings("saving (HotSwap change)")
+    end
 end
 
 local function setStatus(text, isError)
@@ -637,7 +686,11 @@ local function darkEdit(parent, id, guide, x, y, w, h)
 end
 
 local function ensureSettings(source)
-    rootSettings = source or safeCall(function() return api.GetSettings(ADDON_ID) end) or {}
+    if type(source) == "table" then
+        rootSettings = source
+    elseif type(rootSettings) ~= "table" then
+        return nil
+    end
     if type(rootSettings.hotSwap) ~= "table" then rootSettings.hotSwap = {} end
     settings = rootSettings.hotSwap
     if type(settings.gear_sets) ~= "table" then settings.gear_sets = {} end
@@ -646,10 +699,10 @@ local function ensureSettings(source)
     if settings.floatShown == nil then settings.floatShown = true end
     if settings.open_direction ~= "up" then settings.open_direction = "down" end
     if settings.hidden == nil then settings.hidden = false end
-    local changed = false
-    if restoreHotSwapGearSetsFromBackup() then changed = true end
+    restoreHotSwapGearSetsFromBackup()
     if settings.migratedFromStandalone ~= true then
-        local legacy = safeCall(function() return api.GetSettings(LEGACY_ADDON_ID) end)
+        local legacySource = safeCall(function() return api.GetSettings(LEGACY_ADDON_ID) end)
+        local legacy = copyTable(legacySource)
         SettingsSanitizer.Clean(legacy)
         if type(legacy) == "table" and hasGearSets(legacy.gear_sets) and not hasGearSets(settings.gear_sets) then
             settings.gear_sets = copyTable(legacy.gear_sets) or {}
@@ -662,11 +715,9 @@ local function ensureSettings(source)
         end
         if hasGearSets(settings.gear_sets) then
             settings.migratedFromStandalone = true
-            changed = true
         end
     end
-    if convertLegacyLoadouts(settings.gear_sets) then changed = true end
-    if changed then saveSettings() end
+    convertLegacyLoadouts(settings.gear_sets)
     return settings
 end
 
@@ -803,7 +854,7 @@ local function createSetButton(set, index, rowStartY)
 end
 
 function HotSwap.createMain()
-    if not settings then ensureSettings() end
+    if not settings and not ensureSettings() then return end
     buttons = {}
     gearQueue = {}
     pendingTitle = nil
@@ -945,7 +996,7 @@ local function processAutoTriggers(dt)
 end
 
 function HotSwap.CustomAuraTracked(row)
-    if not settings then ensureSettings() end
+    if not settings and not ensureSettings() then return false end
     ensureAutoSettings()
     local key = auraMatchKey(auraMatchFromRow(row)) or customAuraKey(row)
     if not key then return false end
@@ -956,7 +1007,7 @@ function HotSwap.CustomAuraTracked(row)
 end
 
 function HotSwap.ToggleCustomAura(row)
-    if not settings then ensureSettings() end
+    if not settings and not ensureSettings() then return false end
     ensureAutoSettings()
     local match = auraMatchFromRow(row)
     local key = auraMatchKey(match) or customAuraKey(row)
@@ -1434,7 +1485,7 @@ function createSettingsWindow()
 end
 
 function HotSwap.toggleSettings()
-    if not settings then ensureSettings() end
+    if not settings and not ensureSettings() then return end
     createSettingsWindow()
     settingsShown = not settingsShown
     settingsWnd:Show(settingsShown)
@@ -1449,30 +1500,32 @@ function HotSwap.RefreshSettings()
 end
 
 function HotSwap.IsEnabled()
-    if not settings then ensureSettings() end
+    if not settings and not ensureSettings() then return false end
     return settings.enabled ~= false
 end
 
 function HotSwap.IsFloatShown()
-    if not settings then ensureSettings() end
+    if not settings and not ensureSettings() then return false end
     return settings.floatShown ~= false
 end
 
 function HotSwap.SetEnabled(value)
-    if not settings then ensureSettings() end
+    if not settings and not ensureSettings() then return end
     settings.enabled = value ~= false
     if settings.enabled == false then
+        settings.floatShown = false
         gearQueue = {}
         pendingTitle = nil
         pendingCheck = nil
         autoActiveKey = nil
     end
     saveSettings()
+    refreshMain()
     HotSwap.RefreshSettings()
 end
 
 function HotSwap.SetFloatShown(value)
-    if not settings then ensureSettings() end
+    if not settings and not ensureSettings() then return end
     settings.floatShown = value ~= false
     saveSettings()
     refreshMain()
@@ -1519,8 +1572,11 @@ function HotSwap.update(dt)
     end
 end
 
-function HotSwap.init(sourceSettings)
-    ensureSettings(sourceSettings)
+function HotSwap.init(sourceSettings, saveCallback, rootProvider, profileKeyProviderArg)
+    persistSettings = saveCallback
+    accountRootProvider = rootProvider
+    profileKeyProvider = profileKeyProviderArg
+    if not ensureSettings(sourceSettings) then return end
     HotSwap.createMain()
 end
 
@@ -1536,6 +1592,9 @@ function HotSwap.cleanup()
     pendingCheckDelay = 0
     autoElapsed = 0
     autoActiveKey = nil
+    persistSettings = nil
+    accountRootProvider = nil
+    profileKeyProvider = nil
 end
 
 return HotSwap

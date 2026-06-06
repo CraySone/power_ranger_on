@@ -98,12 +98,7 @@ function SettingsSections.BuildIntelWindow(wnd, ctx)
     flatButton(p, "power_ranger_simple_lines_up", "+", 374, 62, 22, 20, colors.button, function() shiftSimpleSpacing("simpleLineGap", 1, 0, 23) end)
 
     band("labels", 94, 56)
-    label(p, "power_ranger_stats_labels_title", "Extra labels", 24, 100, 82, 14, 10, colors.gold, ALIGN.LEFT)
-    wnd.ownershipBtn = flatButton(p, "power_ranger_toggle_ownership", "", 116, 96, 136, 20, colors.active, function() toggleSetting("showOwnershipLabels") end)
-    label(p, "power_ranger_ownership_scale_label", "Scale", 266, 100, 38, 14, 10, colors.muted, ALIGN.LEFT)
-    flatButton(p, "power_ranger_ownership_scale_down", "-", 306, 96, 22, 20, colors.button, function() shiftUiScale(-1, "ownershipScaleLevel") end)
-    wnd.ownershipScaleValue = label(p, "power_ranger_ownership_scale_value", "0", 330, 99, 22, 14, 10, colors.white, ALIGN.CENTER)
-    flatButton(p, "power_ranger_ownership_scale_up", "+", 354, 96, 22, 20, colors.button, function() shiftUiScale(1, "ownershipScaleLevel") end)
+    label(p, "power_ranger_stats_labels_title", "Guild/Fam label", 24, 100, 96, 14, 10, colors.gold, ALIGN.LEFT)
     wnd.guildFamilyLabelBtn = flatButton(p, "power_ranger_toggle_guild_family_label", "", 116, 122, 136, 20, colors.active, function() toggleSetting("showGuildFamilyLabel") end)
     label(p, "power_ranger_guild_family_size_label", "Size", 266, 126, 30, 14, 10, colors.muted, ALIGN.LEFT)
     flatButton(p, "power_ranger_guild_family_size_down", "-", 306, 122, 22, 20, colors.button, function() shiftGuildFamilyScale(-1, "guildFamilyLabelScaleLevel") end)
@@ -261,6 +256,48 @@ function SettingsSections.BuildHotSwapLauncher(wnd, ctx, y)
     ctx.flatButton(p, "power_ranger_hot_swap_settings_open", "Settings", 410, 28, 132, 22, colors.blue, function()
         if hotSwap and hotSwap.toggleSettings then hotSwap.toggleSettings() end
     end)
+    return p
+end
+
+function SettingsSections.BuildTravelTools(wnd, ctx, y)
+    local colors = ctx.colors
+    local p = ctx.sectionPanel(wnd, "power_ranger_travel_tools_panel", 18, y, 584, 132, "Travel & Ownership")
+    local labelX, toggleX, controlX = 14, 112, 250
+    local row1, row2, row3 = 30, 58, 86
+    ctx.label(p, "power_ranger_ownership_hint", "Ownership", labelX, row1 + 5, 86, 14, 10, colors.muted, ALIGN.LEFT)
+    wnd.ownershipBtn = ctx.flatButton(p, "power_ranger_toggle_ownership", "", toggleX, row1, 118, 22, colors.active, function()
+        ctx.toggleSetting("showOwnershipLabels")
+    end)
+    ctx.label(p, "power_ranger_ownership_scale_label", "Scale", controlX, row1 + 5, 48, 14, 10, colors.muted, ALIGN.LEFT)
+    ctx.flatButton(p, "power_ranger_ownership_scale_down", "-", controlX + 58, row1 + 1, 22, 20, colors.button, function() ctx.shiftUiScale(-1, "ownershipScaleLevel") end)
+    wnd.ownershipScaleValue = ctx.label(p, "power_ranger_ownership_scale_value", "0", controlX + 82, row1 + 4, 28, 14, 10, colors.white, ALIGN.CENTER)
+    ctx.flatButton(p, "power_ranger_ownership_scale_up", "+", controlX + 114, row1 + 1, 22, 20, colors.button, function() ctx.shiftUiScale(1, "ownershipScaleLevel") end)
+
+    ctx.label(p, "power_ranger_speed_hint", "Speed", labelX, row2 + 5, 86, 14, 10, colors.muted, ALIGN.LEFT)
+    wnd.speedMeterBtn = ctx.flatButton(p, "power_ranger_speed_toggle", "", toggleX, row2, 118, 22, colors.active, function()
+        ctx.toggleSetting("showSpeedMeter")
+    end)
+    ctx.label(p, "power_ranger_speed_opacity_label", "Opacity", controlX, row2 + 5, 52, 14, 10, colors.muted, ALIGN.LEFT)
+    wnd.speedOpacityTrack = ctx.flatButton(p, "power_ranger_speed_opacity_track", "", controlX + 58, row2 + 4, 132, 16, {0.10, 0.10, 0.11, 0.96}, ctx.setSpeedOpacityFromMouse)
+    wnd.speedOpacityFill = wnd.speedOpacityTrack:CreateColorDrawable(1, 0.84, 0, 0.55, "background")
+    wnd.speedOpacityFill:AddAnchor("TOPLEFT", wnd.speedOpacityTrack, 1, 1)
+    wnd.speedOpacityFill:SetExtent(1, 14)
+    wnd.speedOpacityFill:Show(false)
+    ctx.flatButton(p, "power_ranger_speed_opacity_down", "-", controlX + 198, row2 + 3, 22, 18, colors.button, function() ctx.shiftSpeedOpacity(-1) end)
+    wnd.speedOpacityValue = ctx.label(p, "power_ranger_speed_opacity_value", "0.80", controlX + 222, row2 + 5, 38, 14, 10, colors.white, ALIGN.CENTER)
+    ctx.flatButton(p, "power_ranger_speed_opacity_up", "+", controlX + 264, row2 + 3, 22, 18, colors.button, function() ctx.shiftSpeedOpacity(1) end)
+
+    ctx.label(p, "power_ranger_mark_hint", "Owner's Mark", labelX, row3 + 5, 86, 14, 10, colors.muted, ALIGN.LEFT)
+    wnd.ownOwnersMarkBtn = ctx.flatButton(p, "power_ranger_own_mark_toggle", "", toggleX, row3, 118, 22, colors.active, function()
+        ctx.toggleSetting("showOwnOwnersMark")
+    end)
+    wnd.targetOwnersMarkBtn = ctx.flatButton(p, "power_ranger_target_mark_toggle", "", controlX, row3, 118, 22, colors.active, function()
+        ctx.toggleSetting("showTargetOwnersMark")
+    end)
+    wnd.warnOwnersMarkBtn = ctx.flatButton(p, "power_ranger_mark_warning_toggle", "", controlX + 126, row3, 138, 22, colors.active, function()
+        ctx.toggleSetting("warnMissingOwnersMark")
+    end)
+    ctx.label(p, "power_ranger_travel_move_hint", "Shift-drag speed and personal mark windows.", labelX, 116, 276, 14, 10, colors.muted, ALIGN.LEFT)
     return p
 end
 
