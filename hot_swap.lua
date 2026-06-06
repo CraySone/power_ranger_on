@@ -1242,6 +1242,27 @@ local function addSettingsControls()
             end
         end
     end
+    local triggerDropdownKey = nil
+    local triggerDropdownPage = 1
+    local triggerDropdownCustomIndex = nil
+    local refreshTriggerDropdown
+    local function dropdownTrigger()
+        if triggerDropdownKey == "custom" then
+            return settings.customAuras and settings.customAuras[triggerDropdownCustomIndex] or nil
+        end
+        return settings.autoTriggers and settings.autoTriggers[triggerDropdownKey] or nil
+    end
+    local function triggerLabel(key)
+        if key == "custom" then
+            local entry = settings.customAuras and settings.customAuras[triggerDropdownCustomIndex] or nil
+            return shortText(entry and (entry.name or entry.query) or "Custom", 18)
+        end
+        if key == "swimming" then return "Swimming" end
+        if key == "captain" then return "Captain" end
+        if key == "sleep" then return "Sleep" end
+        if key == "wakeup" then return "WakeUp" end
+        return tostring(key or "Trigger")
+    end
     local function refreshAll()
         if selectedSetIndex and not settings.gear_sets[selectedSetIndex] then selectedSetIndex = nil end
         if selectedCustomIndex and not settings.customAuras[selectedCustomIndex] then selectedCustomIndex = nil end
@@ -1263,38 +1284,84 @@ local function addSettingsControls()
             end
         end
         ui.selectedLabel:SetText("Selected: " .. shortText(selectedLoadout() and selectedLoadout().name or "-", 40))
-        local function triggerText(trigger)
-            local name = trigger and trigger.loadoutName or "-"
-            if name == "" then name = "-" end
-            if trigger and trigger.enabled == false and name ~= "-" then name = "OFF: " .. name end
-            return shortText(name, 18)
+    local function triggerText(trigger)
+        local name = trigger and trigger.loadoutName or "-"
+        if name == "" then name = "-" end
+        if trigger and trigger.enabled == false and name ~= "-" then name = "OFF: " .. name end
+            return shortText(name, 20)
         end
-        ui.swimValue:SetText(triggerText(settings.autoTriggers.swimming))
+        if ui.swimSelect then ui.swimSelect:SetCleanText(triggerText(settings.autoTriggers.swimming)) end
         if ui.swimBlockBtn then
             local blocked = settings.autoTriggers.swimming.blockFreedichGrowlgate ~= false
             ui.swimBlockBtn:SetCleanText(blocked and "FD/GG Block" or "FD/GG Allow")
             ui.swimBlockBtn:SetTone(blocked and COLORS.active or COLORS.button)
         end
-        ui.captainValue:SetText(triggerText(settings.autoTriggers.captain))
-        ui.sleepValue:SetText(triggerText(settings.autoTriggers.sleep))
-        ui.wakeupValue:SetText(triggerText(settings.autoTriggers.wakeup))
+        if ui.captainSelect then ui.captainSelect:SetCleanText(triggerText(settings.autoTriggers.captain)) end
+        if ui.sleepSelect then ui.sleepSelect:SetCleanText(triggerText(settings.autoTriggers.sleep)) end
+        if ui.wakeupSelect then ui.wakeupSelect:SetCleanText(triggerText(settings.autoTriggers.wakeup)) end
+        if ui.triggerDropdown and ui.triggerDropdown.IsVisible and ui.triggerDropdown:IsVisible() and refreshTriggerDropdown then refreshTriggerDropdown() end
         refreshCustom()
         refreshDetected()
     end
 
-    local function assignOrToggleTrigger(key)
-        local set = selectedLoadout()
-        if not set then setStatus("Select a gear set first.", true) return end
-        local trigger = settings.autoTriggers[key]
-        if not trigger then return end
-        if trigger.loadoutName == set.name and trigger.enabled ~= false then
-            trigger.enabled = false
-        else
-            trigger.loadoutName = set.name
-            trigger.enabled = true
+    refreshTriggerDropdown = function()
+        if not ui.triggerDropdown or not triggerDropdownKey then return end
+        local pageSize = 3
+        local pages = math.max(1, math.ceil(#settings.gear_sets / pageSize))
+        triggerDropdownPage = math.max(1, math.min(triggerDropdownPage, pages))
+        ui.triggerDropdownTitle:SetText(triggerLabel(triggerDropdownKey))
+        ui.triggerDropdownPage:SetText(string.format("%d / %d", triggerDropdownPage, pages))
+        local first = ((triggerDropdownPage - 1) * pageSize) + 1
+        local trigger = dropdownTrigger()
+        local current = trigger and trigger.loadoutName or ""
+        for i, row in ipairs(ui.triggerDropdownRows or {}) do
+            local set = settings.gear_sets[first + i - 1]
+            row.index = first + i - 1
+            if set then
+                row.button:SetCleanText(shortText(set.name or "Set", 22))
+                row.button:SetTone(current == set.name and COLORS.active or COLORS.button)
+                row.button:Show(true)
+            else
+                row.button:Show(false)
+            end
         end
+    end
+    local function closeTriggerDropdown()
+        triggerDropdownKey = nil
+        triggerDropdownCustomIndex = nil
+        if ui.triggerDropdown then ui.triggerDropdown:Show(false) end
+    end
+    local function assignTriggerGearset(key, set)
+        local trigger = dropdownTrigger()
+        if not trigger or not set then return end
+        trigger.loadoutName = tostring(set.name or "")
+        trigger.enabled = trigger.loadoutName ~= ""
         saveSettings()
+        closeTriggerDropdown()
         refreshAll()
+        setStatus("Assigned " .. triggerLabel(key) .. " to " .. tostring(set.name or "gear set") .. ".", false)
+    end
+    local function clearTriggerGearset(key)
+        local trigger = dropdownTrigger()
+        if not trigger then return end
+        trigger.loadoutName = ""
+        trigger.enabled = false
+        saveSettings()
+        closeTriggerDropdown()
+        refreshAll()
+        setStatus("Cleared " .. triggerLabel(key) .. " trigger.", false)
+    end
+    local function openTriggerDropdown(key, x, y, customIndex)
+        triggerDropdownKey = key
+        triggerDropdownCustomIndex = customIndex
+        triggerDropdownPage = 1
+        if ui.triggerDropdown then
+            ui.triggerDropdown:RemoveAllAnchors()
+            ui.triggerDropdown:AddAnchor("TOPLEFT", ui.autoPanel, x, y)
+            ui.triggerDropdown:Show(true)
+            if ui.triggerDropdown.Raise then ui.triggerDropdown:Raise() end
+        end
+        refreshTriggerDropdown()
     end
 
     flatButton(savePanel, "power_ranger_hot_swap_save_button", "Save", SETTINGS.actionX, 54, SETTINGS.actionW, 24, COLORS.active, function()
@@ -1353,28 +1420,57 @@ local function addSettingsControls()
         ui.direction:SetCleanText(directionText())
     end, ALIGN.CENTER)
 
-    label(ui.autoPanel, "power_ranger_hs_auto_hint", "Assign selected set to triggers. Auto swaps wait for combat.", 16, 34, 360, 14, 10, COLORS.muted, ALIGN.LEFT)
-    flatButton(ui.autoPanel, "power_ranger_hs_auto_swim", "Swim", 16, 54, 54, 20, COLORS.active, function()
-        assignOrToggleTrigger("swimming")
+    label(ui.autoPanel, "power_ranger_hs_auto_hint", "Pick a gear set per trigger. Auto swaps wait for combat.", 16, 34, 390, 14, 10, COLORS.muted, ALIGN.LEFT)
+    label(ui.autoPanel, "power_ranger_hs_auto_swim_label", "Swim", 16, 58, 50, 14, 10, COLORS.muted, ALIGN.LEFT)
+    ui.swimSelect = flatButton(ui.autoPanel, "power_ranger_hs_auto_swim_select", "-", 76, 54, 142, 20, COLORS.button, function()
+        openTriggerDropdown("swimming", 76, 76)
     end, ALIGN.CENTER)
-    ui.swimValue = label(ui.autoPanel, "power_ranger_hs_auto_swim_value", "-", 76, 58, 100, 14, 10, COLORS.muted, ALIGN.LEFT)
     ui.swimBlockBtn = flatButton(ui.autoPanel, "power_ranger_hs_auto_swim_block", "", 414, 54, 106, 20, COLORS.active, function()
         settings.autoTriggers.swimming.blockFreedichGrowlgate = settings.autoTriggers.swimming.blockFreedichGrowlgate == false
         saveSettings()
         refreshAll()
     end, ALIGN.CENTER)
-    flatButton(ui.autoPanel, "power_ranger_hs_auto_captain", "Captain", 206, 54, 70, 20, COLORS.active, function()
-        assignOrToggleTrigger("captain")
+    label(ui.autoPanel, "power_ranger_hs_auto_captain_label", "Captain", 236, 58, 62, 14, 10, COLORS.muted, ALIGN.LEFT)
+    ui.captainSelect = flatButton(ui.autoPanel, "power_ranger_hs_auto_captain_select", "-", 302, 54, 100, 20, COLORS.button, function()
+        openTriggerDropdown("captain", 302, 76)
     end, ALIGN.CENTER)
-    ui.captainValue = label(ui.autoPanel, "power_ranger_hs_auto_captain_value", "-", 284, 58, 120, 14, 10, COLORS.muted, ALIGN.LEFT)
-    flatButton(ui.autoPanel, "power_ranger_hs_auto_sleep", "Sleep", 16, 78, 54, 20, COLORS.active, function()
-        assignOrToggleTrigger("sleep")
+    label(ui.autoPanel, "power_ranger_hs_auto_sleep_label", "Sleep", 16, 82, 50, 14, 10, COLORS.muted, ALIGN.LEFT)
+    ui.sleepSelect = flatButton(ui.autoPanel, "power_ranger_hs_auto_sleep_select", "-", 76, 78, 142, 20, COLORS.button, function()
+        openTriggerDropdown("sleep", 76, 76)
     end, ALIGN.CENTER)
-    ui.sleepValue = label(ui.autoPanel, "power_ranger_hs_auto_sleep_value", "-", 76, 82, 100, 14, 10, COLORS.muted, ALIGN.LEFT)
-    flatButton(ui.autoPanel, "power_ranger_hs_auto_wakeup", "WakeUp", 206, 78, 70, 20, COLORS.active, function()
-        assignOrToggleTrigger("wakeup")
+    label(ui.autoPanel, "power_ranger_hs_auto_wakeup_label", "WakeUp", 236, 82, 62, 14, 10, COLORS.muted, ALIGN.LEFT)
+    ui.wakeupSelect = flatButton(ui.autoPanel, "power_ranger_hs_auto_wakeup_select", "-", 302, 78, 100, 20, COLORS.button, function()
+        openTriggerDropdown("wakeup", 302, 76)
     end, ALIGN.CENTER)
-    ui.wakeupValue = label(ui.autoPanel, "power_ranger_hs_auto_wakeup_value", "-", 284, 82, 120, 14, 10, COLORS.muted, ALIGN.LEFT)
+    ui.triggerDropdown = ui.autoPanel:CreateChildWidget("emptywidget", "power_ranger_hs_trigger_dropdown", 0, true)
+    ui.triggerDropdown:SetExtent(212, 108)
+    local dropdownBg = ui.triggerDropdown:CreateColorDrawable(0.035, 0.035, 0.042, 0.98, "background")
+    dropdownBg:AddAnchor("TOPLEFT", ui.triggerDropdown, 0, 0)
+    dropdownBg:AddAnchor("BOTTOMRIGHT", ui.triggerDropdown, 0, 0)
+    dropdownBg:Show(true)
+    ui.triggerDropdownTitle = label(ui.triggerDropdown, "power_ranger_hs_trigger_dropdown_title", "", 8, 6, 112, 14, 10, COLORS.gold, ALIGN.LEFT)
+    ui.triggerDropdownRows = {}
+    for i = 1, 3 do
+        local row = {}
+        row.button = flatButton(ui.triggerDropdown, "power_ranger_hs_trigger_dropdown_row_" .. i, "", 8, 22 + ((i - 1) * 21), 196, 19, COLORS.button, function()
+            local set = settings.gear_sets[ui.triggerDropdownRows[i].index]
+            if triggerDropdownKey and set then assignTriggerGearset(triggerDropdownKey, set) end
+        end, ALIGN.CENTER)
+        ui.triggerDropdownRows[i] = row
+    end
+    flatButton(ui.triggerDropdown, "power_ranger_hs_trigger_dropdown_clear", "Clear", 8, 90, 52, 18, COLORS.danger, function()
+        if triggerDropdownKey then clearTriggerGearset(triggerDropdownKey) end
+    end, ALIGN.CENTER)
+    flatButton(ui.triggerDropdown, "power_ranger_hs_trigger_dropdown_prev", "<", 118, 90, 24, 18, COLORS.button, function()
+        triggerDropdownPage = math.max(1, triggerDropdownPage - 1)
+        refreshTriggerDropdown()
+    end, ALIGN.CENTER)
+    ui.triggerDropdownPage = label(ui.triggerDropdown, "power_ranger_hs_trigger_dropdown_page", "1 / 1", 144, 93, 42, 12, 9, COLORS.muted, ALIGN.CENTER)
+    flatButton(ui.triggerDropdown, "power_ranger_hs_trigger_dropdown_next", ">", 188, 90, 24, 18, COLORS.button, function()
+        triggerDropdownPage = triggerDropdownPage + 1
+        refreshTriggerDropdown()
+    end, ALIGN.CENTER)
+    ui.triggerDropdown:Show(false)
     label(ui.autoPanel, "power_ranger_hs_custom_title", "Custom Triggers", 16, 110, 120, 14, 10, COLORS.gold, ALIGN.LEFT)
     for i = 1, SETTINGS.customPageSize do
         local root = ui.autoPanel:CreateChildWidget("emptywidget", "power_ranger_hs_custom_row_" .. i, 0, true)
@@ -1384,13 +1480,10 @@ local function addSettingsControls()
         row.name = label(root, "power_ranger_hs_custom_name_" .. i, "", 0, 3, 154, 12, 9, COLORS.white, ALIGN.LEFT)
         row.gear = label(root, "power_ranger_hs_custom_gear_" .. i, "", 162, 3, 112, 12, 9, COLORS.muted, ALIGN.LEFT)
         flatButton(root, "power_ranger_hs_custom_set_" .. i, "Gear", 282, 0, 48, 18, COLORS.blue, function()
-            local set = selectedLoadout()
-            local entry = settings.customAuras[ui.customRows[i].index]
-            if not set or not entry then setStatus("Select set and custom buff.", true) return end
-            entry.loadoutName = set.name
-            entry.enabled = true
-            saveSettings()
-            refreshAll()
+            local index = ui.customRows[i].index
+            local entry = settings.customAuras[index]
+            if not entry then return end
+            openTriggerDropdown("custom", 282, 76, index)
         end, ALIGN.CENTER)
         row.bind = flatButton(root, "power_ranger_hs_custom_bind_" .. i, "Bind", 338, 0, 48, 18, COLORS.button, function()
             local entry = settings.customAuras[ui.customRows[i].index]

@@ -23,12 +23,16 @@ Keep this local checklist ignored by git. It tracks cleanup work without shippin
 - [x] Slice 2: extracted Hot Swap aura matching + auto-trigger predicates (custom-aura model, `readPlayerAuras`, `anyAuraMatches`, swimming/sleep/wakeup) into `hot_swap_auras.lua`. hot_swap 1555 -> 1419 lines. Pure functions only; `ensureAutoSettings` (settings-coupled) deliberately stayed. Names bound back to identical locals = zero call-site churn (hot_swap is far from the local cap, so binding is fine there).
 - [x] Slice 3: extracted pure detection predicates (`auraLooksLikeCooldownSkill`, `detectedSkillKey`) into `skill_probe.lua`. target_overlay 183 -> 181 locals. Call sites rewritten to `SkillProbe.*` (NOT bound to locals) because target_overlay IS near the cap, so binding would give no relief.
 - [x] Slice 4: extracted stateless parsers (`detectFallbackSkillName`, `parsedCombatMessage`, `extractSkillFields`) into `skill_probe.lua` (now requires `overlay_utils`). Removed the orphaned `unpackArgs` local. target_overlay 181 -> 177 locals. `skill_probe.lua` now owns ALL stateless probe/detection/parse helpers; only the stateful runtime remains in target_overlay.
+- [x] Slice 5: extracted target-overlay UI wrapper context (`addBg`, `label`, `flatButton`, `panel`, `sectionPanel`, `colorCube`, `setToggleButton`) into `target_ui.lua`. This removes thin wrapper locals from `target_overlay` without touching save/profile/migration/cleanup behavior. In-game `/reload` still required before taking a bigger behavior slice.
 
-CUMULATIVE: target_overlay 188 -> 177 main-chunk locals; hot_swap 1555 -> 1419 lines. 3 new modules: `skill_probe.lua`, `hot_swap_auras.lua`.
+CUMULATIVE: target_overlay 188 -> 177-ish main-chunk locals before newer feature additions; hot_swap 1555 -> 1419 lines. 4 new modules: `skill_probe.lua`, `hot_swap_auras.lua`, `target_ui.lua`.
+
+PAUSED CHECKPOINT: stop modularization here until an in-game `/reload` verifies the `target_ui.lua` wrapper-context slice. No save/profile/migration/cleanup code was changed by this slice.
 
 ## Next slice (do AFTER a reload checkpoint)
 
-- [ ] Move the stateful probe runtime (`auraSnapshot`, `probeSnapshot`, `recordSkillProbe`, `recordDetectedSkill`, `detectFrom*`, `updateProbeLogging`, combat/skill event handlers) into `skill_probe.lua` via the established `ctx` injection pattern. This also has to relocate or inject module state (`skillProbe`, `skillProbeDirty`, `probeLogElapsed`, `detectManaState`). Higher risk -- do not stack on top of unverified slices.
+- [ ] After a reload checkpoint, move target intel/ownership/Guild-Fam render logic into `target_windows.lua` as display-only functions with ctx injection. This is safer than the probe runtime because it should not touch persistence, migration, event subscription, or cleanup.
+- [ ] Later, move the stateful probe runtime (`auraSnapshot`, `probeSnapshot`, `recordSkillProbe`, `recordDetectedSkill`, `detectFrom*`, `updateProbeLogging`, combat/skill event handlers) into `skill_probe.lua` via the established `ctx` injection pattern. This also has to relocate or inject module state (`skillProbe`, `skillProbeDirty`, `probeLogElapsed`, `detectManaState`). Higher risk -- do not stack on top of unverified slices.
 
 ## New surfaces (added since this list was written)
 

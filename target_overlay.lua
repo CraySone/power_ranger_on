@@ -14,6 +14,7 @@ local SettingsProfile = require("power_ranger_on/settings_profile")
 
 local TargetOverlay = {}
 TargetOverlay.uiHelpers = require("power_ranger_on/ui_helpers")
+TargetOverlay.targetUi = require("power_ranger_on/target_ui")
 TargetOverlay.targetReader = require("power_ranger_on/target_reader")
 TargetOverlay.detectedSkills = require("power_ranger_on/detected_skills")
 TargetOverlay.selfCooldowns = require("power_ranger_on/self_cooldowns")
@@ -886,17 +887,10 @@ local function cycleSettingColor(key)
     saveSettings()
 end
 
-local function addBg(parent, r, g, b, a)
-    return TargetOverlay.uiHelpers.AddBg(parent, r, g, b, a)
-end
-
-local function label(parent, id, text, x, y, w, h, size, color, align)
-    return TargetOverlay.uiHelpers.Label(parent, id, text, x, y, w, h, size, color or COLORS.white, align)
-end
-
-local function flatButton(parent, id, text, x, y, w, h, tone, onClick)
-    return TargetOverlay.uiHelpers.FlatButton(parent, id, text, x, y, w, h, tone, onClick, COLORS)
-end
+TargetOverlay.uiContext = TargetOverlay.targetUi.Context(COLORS, function(key)
+    cycleSettingColor(key)
+    refreshSettingsButtons()
+end)
 
 local function cooldownEdit(parent, id, x, y, w, h)
     local edit = W_CTRL and W_CTRL.CreateEdit and W_CTRL.CreateEdit(id, parent) or parent:CreateChildWidget("edit", id, 0, true)
@@ -932,25 +926,6 @@ local function cooldownEdit(parent, id, x, y, w, h)
     if edit.Raise then edit:Raise() end
     edit:Show(true)
     return edit
-end
-
-local function panel(parent, id, x, y, w, h)
-    return TargetOverlay.uiHelpers.Panel(parent, id, x, y, w, h, COLORS)
-end
-
-local function sectionPanel(parent, id, x, y, w, h, titleText)
-    return TargetOverlay.uiHelpers.SectionPanel(parent, id, x, y, w, h, titleText, COLORS)
-end
-
-local function colorCube(parent, id, x, y, key)
-    return TargetOverlay.uiHelpers.ColorCube(parent, id, x, y, key, function()
-        cycleSettingColor(key)
-        refreshSettingsButtons()
-    end)
-end
-
-local function setToggleButton(btn, enabled, text)
-    TargetOverlay.uiHelpers.SetToggleButton(btn, enabled, text, COLORS)
 end
 
 local function uiScaleFactor(key)
@@ -1469,8 +1444,8 @@ local function createTargetInfoWindow()
     targetInfoWnd = require("power_ranger_on/target_windows").CreateTargetInfo({
         colors = COLORS,
         settings = settings,
-        addBg = addBg,
-        label = label,
+        addBg = TargetOverlay.uiContext.addBg,
+        label = TargetOverlay.uiContext.label,
         safePosition = TargetOverlay.safeWindowPosition,
         applyHandleDrag = applyHandleDrag
     })
@@ -1480,7 +1455,7 @@ local function createOwnershipWindow()
     ownershipWnd = require("power_ranger_on/target_windows").CreateOwnership({
         colors = COLORS,
         settings = settings,
-        label = label,
+        label = TargetOverlay.uiContext.label,
         safePosition = TargetOverlay.safeWindowPosition,
         applyReadableTextStyle = TargetOverlay.applyReadableTextStyle,
         applyHandleDrag = applyHandleDrag
@@ -1491,7 +1466,7 @@ local function createGuildFamilyWindow()
     guildFamilyWnd = require("power_ranger_on/target_windows").CreateGuildFamily({
         colors = COLORS,
         settings = settings,
-        label = label,
+        label = TargetOverlay.uiContext.label,
         safePosition = TargetOverlay.safeWindowPosition,
         applyReadableTextStyle = TargetOverlay.applyReadableTextStyle,
         applyHandleDrag = applyHandleDrag
@@ -1879,9 +1854,9 @@ local function createSelfWindow()
         colors = COLORS,
         settings = settings,
         selfPanel = SELF_PANEL,
-        addBg = addBg,
-        label = label,
-        flatButton = flatButton,
+        addBg = TargetOverlay.uiContext.addBg,
+        label = TargetOverlay.uiContext.label,
+        flatButton = TargetOverlay.uiContext.flatButton,
         createIcon = createIcon,
         safePosition = TargetOverlay.safeWindowPosition,
         applyHandleDrag = applyHandleDrag,
@@ -1906,7 +1881,7 @@ local function updateSelfPanel()
         scale = function() return uiScaleFactor("selfScaleLevel") end,
         shouldHideSelfPanel = function() return Compat.ShouldHideSelfPanel(compatState) end,
         createIcon = createIcon,
-        label = label,
+        label = TargetOverlay.uiContext.label,
         setCooldownSkillIcon = setCooldownSkillIcon,
         clearCooldownIcon = clearCooldownIcon,
         setEquipIcon = setEquipIcon,
@@ -2788,7 +2763,7 @@ local function refreshCooldownSettingGroup(group, title)
                 ui.skills.deviceTitle = entry.title
                 ui.skills.entryGroup = group
             end
-            setToggleButton(ui.button, enabled, "Show")
+            TargetOverlay.uiContext.setToggleButton(ui.button, enabled, "Show")
             if ui.del then
                 local removable = false
                 for _, ref in ipairs(entry.refs or {}) do
@@ -2864,7 +2839,7 @@ local function refreshCooldownSettingGroup(group, title)
                 break
             end
         end
-        setToggleButton(settingsWnd.cooldownGliderShowAllBtn, allOn, "Show All")
+        TargetOverlay.uiContext.setToggleButton(settingsWnd.cooldownGliderShowAllBtn, allOn, "Show All")
     end
     if group == "other" and settingsWnd.cooldownOtherShowAllBtn then
         local allOn = total > 0
@@ -2874,7 +2849,7 @@ local function refreshCooldownSettingGroup(group, title)
                 break
             end
         end
-        setToggleButton(settingsWnd.cooldownOtherShowAllBtn, allOn, "Show All")
+        TargetOverlay.uiContext.setToggleButton(settingsWnd.cooldownOtherShowAllBtn, allOn, "Show All")
     end
 end
 
@@ -3044,7 +3019,7 @@ function refreshDetectedSkillRows()
     TargetOverlay.detectedSkills.RefreshRows({
         window = detectedSkillsWnd,
         settings = settings,
-        setToggleButton = setToggleButton,
+        setToggleButton = TargetOverlay.uiContext.setToggleButton,
         detectedBuffTrackedIndex = TargetOverlay.detectedBuffTrackedIndex,
         trackedSkillIndex = trackedSkillIndex,
         setEquipIcon = setEquipIcon,
@@ -3058,9 +3033,9 @@ local function createDetectedSkillsWindow()
     detectedSkillsWnd = require("power_ranger_on/detected_skills_ui").Create({
         colors = COLORS,
         settings = settings,
-        label = label,
-        flatButton = flatButton,
-        panel = panel,
+        label = TargetOverlay.uiContext.label,
+        flatButton = TargetOverlay.uiContext.flatButton,
+        panel = TargetOverlay.uiContext.panel,
         createIcon = createIcon,
         applyDrag = applyDrag,
         safePosition = TargetOverlay.safeWindowPosition,
@@ -3079,22 +3054,22 @@ function refreshSettingsButtons()
     if not settingsWnd then return end
     local compat = updateCompatState(true)
     local showNuziOptions = Compat.ShouldShowOptions(compat)
-    setToggleButton(settingsWnd.compatModeBtn, compat.active, Compat.ModeLabel(compat))
+    TargetOverlay.uiContext.setToggleButton(settingsWnd.compatModeBtn, compat.active, Compat.ModeLabel(compat))
     settingsWnd.compatModeBtn:Show(showNuziOptions)
-    setToggleButton(settingsWnd.modelBtn, settings.showModelOverlay, "Overhead")
-    setToggleButton(settingsWnd.armorBtn, settings.showArmorIcon, "Armor")
-    setToggleButton(settingsWnd.weaponBtn, settings.showWeaponIcon, "Weapon")
-    setToggleButton(settingsWnd.roleBtn, settings.showRoleIcon, "Role")
-    setToggleButton(settingsWnd.modelGsBtn, settings.showModelGearscore, "Gear")
-    setToggleButton(settingsWnd.modelClassBtn, settings.showModelClass, "Class")
-    setToggleButton(settingsWnd.modelRangeBtn, settings.showModelRange, "Range")
-    setToggleButton(settingsWnd.modelDefBtn, settings.showModelDefense, "Defense")
-    setToggleButton(settingsWnd.modelCompactBtn, settings.compactModelOverlay, "Compact")
+    TargetOverlay.uiContext.setToggleButton(settingsWnd.modelBtn, settings.showModelOverlay, "Overhead")
+    TargetOverlay.uiContext.setToggleButton(settingsWnd.armorBtn, settings.showArmorIcon, "Armor")
+    TargetOverlay.uiContext.setToggleButton(settingsWnd.weaponBtn, settings.showWeaponIcon, "Weapon")
+    TargetOverlay.uiContext.setToggleButton(settingsWnd.roleBtn, settings.showRoleIcon, "Role")
+    TargetOverlay.uiContext.setToggleButton(settingsWnd.modelGsBtn, settings.showModelGearscore, "Gear")
+    TargetOverlay.uiContext.setToggleButton(settingsWnd.modelClassBtn, settings.showModelClass, "Class")
+    TargetOverlay.uiContext.setToggleButton(settingsWnd.modelRangeBtn, settings.showModelRange, "Range")
+    TargetOverlay.uiContext.setToggleButton(settingsWnd.modelDefBtn, settings.showModelDefense, "Defense")
+    TargetOverlay.uiContext.setToggleButton(settingsWnd.modelCompactBtn, settings.compactModelOverlay, "Compact")
     if settingsWnd.shadowBtn then
         settingsWnd.shadowBtn:SetCleanText(settings.overlayTextStyle == "outline" and "Text Border" or "Text Shadow")
         settingsWnd.shadowBtn:SetTone(COLORS.active)
     end
-    setToggleButton(settingsWnd.targetWindowBtn, settings.showTargetWindow, "Stats window")
+    TargetOverlay.uiContext.setToggleButton(settingsWnd.targetWindowBtn, settings.showTargetWindow, "Stats window")
     if settingsWnd.classIntelProfileLabel then
         settingsWnd.classIntelProfileLabel:SetText(ClassIntelProfiles.Label(settings.classIntelEditProfile))
     end
@@ -3102,28 +3077,28 @@ function refreshSettingsButtons()
         local profile = settings.classIntelProfiles and settings.classIntelProfiles[settings.classIntelEditProfile or "general"] or {}
         for _, field in ipairs(ClassIntelProfiles.STATS) do
             local btn = settingsWnd.classIntelFieldButtons[field.key]
-            if btn then setToggleButton(btn, profile[field.key] == true, field.label) end
+            if btn then TargetOverlay.uiContext.setToggleButton(btn, profile[field.key] == true, field.label) end
         end
     end
-    setToggleButton(settingsWnd.compactWindowBtn, settings.compactTargetWindow, "Compact")
-    setToggleButton(settingsWnd.testWindowBtn, settings.testTargetWindow, "Compact/Simple")
-    setToggleButton(settingsWnd.ownershipBtn, settings.showOwnershipLabels ~= false, "Ownership")
-    setToggleButton(settingsWnd.guildFamilyLabelBtn, settings.showGuildFamilyLabel == true, "Guild/Fam")
-    setToggleButton(settingsWnd.speedMeterBtn, settings.showSpeedMeter == true, "Speed meter")
-    setToggleButton(settingsWnd.ownOwnersMarkBtn, settings.showOwnOwnersMark == true, "Personal")
-    setToggleButton(settingsWnd.targetOwnersMarkBtn, settings.showTargetOwnersMark ~= false, "Target mark")
-    setToggleButton(settingsWnd.warnOwnersMarkBtn, settings.warnMissingOwnersMark ~= false, "Missing warning")
-    setToggleButton(settingsWnd.selfBtn, settings.showSelfPanel, "Self win")
-    setToggleButton(settingsWnd.selfCdBtn, settings.showSelfCooldowns, "Cooldowns")
-    setToggleButton(settingsWnd.selfEquipmentBtn, settings.showSelfEquipment ~= false, "Equipment")
-    setToggleButton(settingsWnd.selfBorderBtn, settings.showSelfBorder ~= false, "Border")
-    setToggleButton(settingsWnd.nuziImportBtn, settings.importNuziCooldowns ~= false, "Nuzi CDs")
+    TargetOverlay.uiContext.setToggleButton(settingsWnd.compactWindowBtn, settings.compactTargetWindow, "Compact")
+    TargetOverlay.uiContext.setToggleButton(settingsWnd.testWindowBtn, settings.testTargetWindow, "Compact/Simple")
+    TargetOverlay.uiContext.setToggleButton(settingsWnd.ownershipBtn, settings.showOwnershipLabels ~= false, "Ownership")
+    TargetOverlay.uiContext.setToggleButton(settingsWnd.guildFamilyLabelBtn, settings.showGuildFamilyLabel == true, "Guild/Fam")
+    TargetOverlay.uiContext.setToggleButton(settingsWnd.speedMeterBtn, settings.showSpeedMeter == true, "Speed meter")
+    TargetOverlay.uiContext.setToggleButton(settingsWnd.ownOwnersMarkBtn, settings.showOwnOwnersMark == true, "Personal")
+    TargetOverlay.uiContext.setToggleButton(settingsWnd.targetOwnersMarkBtn, settings.showTargetOwnersMark ~= false, "Target mark")
+    TargetOverlay.uiContext.setToggleButton(settingsWnd.warnOwnersMarkBtn, settings.warnMissingOwnersMark ~= false, "Missing warning")
+    TargetOverlay.uiContext.setToggleButton(settingsWnd.selfBtn, settings.showSelfPanel, "Self win")
+    TargetOverlay.uiContext.setToggleButton(settingsWnd.selfCdBtn, settings.showSelfCooldowns, "Cooldowns")
+    TargetOverlay.uiContext.setToggleButton(settingsWnd.selfEquipmentBtn, settings.showSelfEquipment ~= false, "Equipment")
+    TargetOverlay.uiContext.setToggleButton(settingsWnd.selfBorderBtn, settings.showSelfBorder ~= false, "Border")
+    TargetOverlay.uiContext.setToggleButton(settingsWnd.nuziImportBtn, settings.importNuziCooldowns ~= false, "Nuzi CDs")
     settingsWnd.nuziImportBtn:Show(showNuziOptions)
-    setToggleButton(settingsWnd.probeLogBtn, settings.skillProbeLogging, "Log")
+    TargetOverlay.uiContext.setToggleButton(settingsWnd.probeLogBtn, settings.skillProbeLogging, "Log")
     local hotSwap = require("power_ranger_on/hot_swap")
-    setToggleButton(settingsWnd.hotSwapEnabledBtn, hotSwap.IsEnabled(), "HotSwap")
-    setToggleButton(settingsWnd.hotSwapFloatBtn, hotSwap.IsFloatShown(), "Float")
-    setToggleButton(settingsWnd.debugLogBtn, settings.debugLogging == true, "Debug")
+    TargetOverlay.uiContext.setToggleButton(settingsWnd.hotSwapEnabledBtn, hotSwap.IsEnabled(), "HotSwap")
+    TargetOverlay.uiContext.setToggleButton(settingsWnd.hotSwapFloatBtn, hotSwap.IsFloatShown(), "Float")
+    TargetOverlay.uiContext.setToggleButton(settingsWnd.debugLogBtn, settings.debugLogging == true, "Debug")
     if settingsWnd.scaleValue then
         settingsWnd.scaleValue:SetText(tostring(settings.uiScaleLevel or 0))
     end
@@ -3185,7 +3160,7 @@ function refreshSettingsButtons()
     if settingsWnd.fieldButtons then
         for _, field in ipairs(TARGET_INFO_FIELDS) do
             local btn = settingsWnd.fieldButtons[field.key]
-            if btn then setToggleButton(btn, settings[field.setting] ~= false, field.label) end
+            if btn then TargetOverlay.uiContext.setToggleButton(btn, settings[field.setting] ~= false, field.label) end
         end
     end
     if settingsWnd.colorCubes then
@@ -3437,10 +3412,10 @@ local function createSettingsWindow()
 
     settingsSections.BuildTargetOverhead(settingsWnd, {
         colors = COLORS,
-        sectionPanel = sectionPanel,
-        label = label,
-        flatButton = flatButton,
-        colorCube = colorCube,
+        sectionPanel = TargetOverlay.uiContext.sectionPanel,
+        label = TargetOverlay.uiContext.label,
+        flatButton = TargetOverlay.uiContext.flatButton,
+        colorCube = TargetOverlay.uiContext.colorCube,
         toggleSetting = toggleSetting,
         shiftUiScale = shiftUiScale,
         shiftCompactModelLeft = TargetOverlay.shiftCompactModelLeft,
@@ -3450,10 +3425,10 @@ local function createSettingsWindow()
 
     settingsSections.BuildIntelWindow(settingsWnd, {
         colors = COLORS,
-        sectionPanel = sectionPanel,
-        label = label,
-        flatButton = flatButton,
-        colorCube = colorCube,
+        sectionPanel = TargetOverlay.uiContext.sectionPanel,
+        label = TargetOverlay.uiContext.label,
+        flatButton = TargetOverlay.uiContext.flatButton,
+        colorCube = TargetOverlay.uiContext.colorCube,
         toggleSetting = toggleSetting,
         shiftUiScale = shiftUiScale,
         shiftGuildFamilyScale = shiftUiScale,
@@ -3474,9 +3449,9 @@ local function createSettingsWindow()
 
     settingsSections.BuildSelfCooldowns(settingsWnd, {
         colors = COLORS,
-        sectionPanel = sectionPanel,
-        label = label,
-        flatButton = flatButton,
+        sectionPanel = TargetOverlay.uiContext.sectionPanel,
+        label = TargetOverlay.uiContext.label,
+        flatButton = TargetOverlay.uiContext.flatButton,
         createIcon = createIcon,
         cooldownEdit = cooldownEdit,
         toggleSetting = toggleSetting,
@@ -3494,17 +3469,17 @@ local function createSettingsWindow()
     })
     settingsSections.BuildHotSwapLauncher(settingsWnd, {
         colors = COLORS,
-        sectionPanel = sectionPanel,
-        label = label,
-        flatButton = flatButton,
+        sectionPanel = TargetOverlay.uiContext.sectionPanel,
+        label = TargetOverlay.uiContext.label,
+        flatButton = TargetOverlay.uiContext.flatButton,
         toggleSetting = toggleSetting,
         refreshSettingsButtons = refreshSettingsButtons
     }, 1120)
     settingsSections.BuildTravelTools(settingsWnd, {
         colors = COLORS,
-        sectionPanel = sectionPanel,
-        label = label,
-        flatButton = flatButton,
+        sectionPanel = TargetOverlay.uiContext.sectionPanel,
+        label = TargetOverlay.uiContext.label,
+        flatButton = TargetOverlay.uiContext.flatButton,
         toggleSetting = toggleSetting,
         shiftUiScale = shiftUiScale,
         shiftSpeedOpacity = TargetOverlay.shiftSpeedOpacity,
@@ -3585,7 +3560,7 @@ function TargetOverlay.init()
     local widgets = require("power_ranger_on/target_windows").CreateModelOverlay({
         colors = COLORS,
         config = CONFIG,
-        label = label,
+        label = TargetOverlay.uiContext.label,
         applyReadableTextStyle = TargetOverlay.applyReadableTextStyle
     })
     mainCanvas = widgets.canvas
