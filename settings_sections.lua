@@ -241,7 +241,7 @@ end
 
 function SettingsSections.BuildHotSwapLauncher(wnd, ctx, y)
     local colors = ctx.colors
-    local p = ctx.sectionPanel(wnd, "power_ranger_hot_swap_panel", 18, y, 584, 56, "Hot Swap")
+    local p = ctx.sectionPanel(wnd, "power_ranger_hot_swap_panel", 18, y, 584, 82, "Hot Swap")
     local hotSwap = require("power_ranger_on/hot_swap")
     local refresh = ctx.refreshSettingsButtons or function() end
     ctx.label(p, "power_ranger_hot_swap_hint", "Embedded gear sets and auto triggers.", 14, 32, 210, 14, 10, colors.muted, ALIGN.LEFT)
@@ -255,6 +255,10 @@ function SettingsSections.BuildHotSwapLauncher(wnd, ctx, y)
     end)
     ctx.flatButton(p, "power_ranger_hot_swap_settings_open", "Settings", 410, 28, 132, 22, colors.blue, function()
         if hotSwap and hotSwap.toggleSettings then hotSwap.toggleSettings() end
+    end)
+    ctx.label(p, "power_ranger_debug_hint", "Debug logging", 14, 60, 104, 14, 10, colors.muted, ALIGN.LEFT)
+    wnd.debugLogBtn = ctx.flatButton(p, "power_ranger_debug_logging", "", 234, 55, 82, 22, colors.button, function()
+        ctx.toggleSetting("debugLogging")
     end)
     return p
 end

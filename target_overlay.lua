@@ -104,6 +104,7 @@ local defaults = {
     showOwnOwnersMark = false,
     showTargetOwnersMark = true,
     warnMissingOwnersMark = true,
+    debugLogging = false,
     showInfoDefense = true,
     showInfoPdef = true,
     showInfoMdef = true,
@@ -728,6 +729,7 @@ end
 -- save-timing and data-shape regressions are visible in the client log. Saves are
 -- user-triggered (infrequent), so this is not a per-frame cost.
 function TargetOverlay.logSettingsSave(reason)
+    if not (settings and settings.debugLogging == true) then return end
     if not (api.Log and api.Log.Info) then return end
     local hs = type(settings) == "table" and settings.hotSwap
     local gearSets = type(hs) == "table" and hs.gear_sets
@@ -3121,6 +3123,7 @@ function refreshSettingsButtons()
     local hotSwap = require("power_ranger_on/hot_swap")
     setToggleButton(settingsWnd.hotSwapEnabledBtn, hotSwap.IsEnabled(), "HotSwap")
     setToggleButton(settingsWnd.hotSwapFloatBtn, hotSwap.IsFloatShown(), "Float")
+    setToggleButton(settingsWnd.debugLogBtn, settings.debugLogging == true, "Debug")
     if settingsWnd.scaleValue then
         settingsWnd.scaleValue:SetText(tostring(settings.uiScaleLevel or 0))
     end
