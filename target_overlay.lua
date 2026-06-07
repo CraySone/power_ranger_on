@@ -180,8 +180,6 @@ local DEPRECATED_TRACKED_BUFFS = {
     ["self:name:star divine protection:sloth glider"] = true,
     ["self:name:star divine protection:crystal wings"] = true,
     ["self:3636:glider:ezi glider"] = true,
-    ["self:8000165:glider:ezi_glider"] = true,
-    ["self:8000165:glider:ezi glider"] = true,
     ["self:3636:glider:flamefeather"] = true,
     ["self:8000290:glider:flamefeather_glider"] = true,
     ["self:8000286:glider:phoenix"] = true
@@ -210,8 +208,6 @@ function TargetOverlay.isDeprecatedTrackedBuffRow(row)
         if id == 8000290 then return true end
         if buffName:find("flamefeather", 1, true) and not buffName:find("invincible", 1, true) then return true end
     end
-    if (row.recipeDeviceKey == "ezi_glider" or deviceName:find("ezi", 1, true) or source:find("ezi", 1, true))
-        and tonumber(row.id or row.buff_id) == 8000165 then return true end
     if row.recipeAbilityKey == "rajani_sprint" then return true end
     if row.recipeAbilityKey == "meatball_bite" or row.recipeAbilityKey == "rajani_bite" or row.recipeAbilityKey == "kirin_bite" then return true end
     if (row.recipeDeviceKey == "ser_meatball" or deviceName:find("ser meatball", 1, true) or source:find("ser meatball", 1, true))
@@ -433,21 +429,22 @@ local function normalizeRemovedCooldownDefaults()
     local source = settings and settings.removedCooldownDefaults
     local out = {}
     local seen = {}
+    local function addRemovedKey(value)
+        value = tostring(value or "")
+        if value ~= "" and not seen[value] then
+            out[#out + 1] = value
+            seen[value] = true
+        end
+    end
     if type(source) == "table" then
         for _, value in ipairs(source) do
-            value = tostring(value or "")
-            if value ~= "" and not seen[value] then
-                out[#out + 1] = value
-                seen[value] = true
-            end
+            addRemovedKey(value)
         end
         for key, value in pairs(source) do
-            if type(key) == "string" and value == true and not seen[key] then
-                out[#out + 1] = key
-                seen[key] = true
-            elseif type(value) == "string" and value ~= "" and not seen[value] then
-                out[#out + 1] = value
-                seen[value] = true
+            if type(key) == "string" and value == true then
+                addRemovedKey(key)
+            elseif type(value) == "string" then
+                addRemovedKey(value)
             end
         end
     end
@@ -1603,6 +1600,7 @@ local function refreshGuildFamilyWindow(info)
     local familyText = tostring(family or "")
     local guildHeight = math.floor((28 * scale) + 0.5)
     local familyHeight = math.floor((16 * scale) + 0.5)
+    local gap = math.floor((2 * scale) + 0.5)
     guildFamilyWnd.guild.style:SetFontSize(math.floor((22 * scale) + 0.5))
     guildFamilyWnd.family.style:SetFontSize(math.floor((12 * scale) + 0.5))
     guildText = TargetOverlay.fitTextToWidth(guildFamilyWnd.guild, guildText, textWidth, 8)
@@ -1613,14 +1611,14 @@ local function refreshGuildFamilyWindow(info)
     guildFamilyWnd.family:Show(familyText ~= "")
     setTextColor(guildFamilyWnd.guild, settingColor("guildFamilyGuild"))
     setTextColor(guildFamilyWnd.family, settingColor("guildFamilyFamily"))
-    local wantedHeight = guildHeight + (familyText ~= "" and familyHeight or 0)
+    local wantedHeight = guildHeight + gap + familyHeight
     if guildFamilyWnd._lastWidth ~= wantedWidth or guildFamilyWnd._lastHeight ~= wantedHeight then
         guildFamilyWnd:SetExtent(wantedWidth, wantedHeight)
         guildFamilyWnd.guild:RemoveAllAnchors()
         guildFamilyWnd.guild:AddAnchor("TOP", guildFamilyWnd, "TOP", 0, 0)
         guildFamilyWnd.guild:SetExtent(textWidth, guildHeight)
         guildFamilyWnd.family:RemoveAllAnchors()
-        guildFamilyWnd.family:AddAnchor("TOP", guildFamilyWnd, "TOP", 0, guildHeight)
+        guildFamilyWnd.family:AddAnchor("TOP", guildFamilyWnd, "TOP", 0, guildHeight + gap)
         guildFamilyWnd.family:SetExtent(textWidth, familyHeight)
         guildFamilyWnd.dragHandle:SetExtent(wantedWidth, wantedHeight)
         guildFamilyWnd._lastWidth = wantedWidth
@@ -3396,7 +3394,7 @@ local function createSettingsWindow()
         id = "PowerRangerSettings",
         title = "Power Ranger ON",
         width = 620,
-        height = 1220,
+        height = 1000,
         x = settings.settingsX,
         y = settings.settingsY,
         xKey = "settingsX",
@@ -3461,6 +3459,7 @@ local function createSettingsWindow()
         toggleProbeLogging = toggleProbeLogging,
         openDetectedSkillsWindow = openDetectedSkillsWindow,
         openCooldownSkillsWindow = function(rowIndex, group, mode) TargetOverlay.openCooldownSkillsWindow(rowIndex, group, mode) end,
+        openCooldownManagerWindow = function(group) TargetOverlay.openCooldownManagerWindow(group) end,
         shiftCooldownSettingsPage = shiftCooldownSettingsPage,
         moveCooldownSetting = moveCooldownSetting,
         toggleCooldownSetting = toggleCooldownSetting,
@@ -3474,7 +3473,7 @@ local function createSettingsWindow()
         flatButton = TargetOverlay.uiContext.flatButton,
         toggleSetting = toggleSetting,
         refreshSettingsButtons = refreshSettingsButtons
-    }, 1120)
+    }, 878)
     settingsSections.BuildTravelTools(settingsWnd, {
         colors = COLORS,
         sectionPanel = TargetOverlay.uiContext.sectionPanel,
@@ -3484,7 +3483,7 @@ local function createSettingsWindow()
         shiftUiScale = shiftUiScale,
         shiftSpeedOpacity = TargetOverlay.shiftSpeedOpacity,
         setSpeedOpacityFromMouse = TargetOverlay.setSpeedOpacityFromMouse
-    }, 960)
+    }, 732)
 
     refreshSettingsButtons()
     settingsWnd:Show(false)
@@ -3551,6 +3550,27 @@ function TargetOverlay.openCooldownSkillsWindow(rowIndex, group, mode)
             updateSelfPanel()
         end
     })
+end
+
+function TargetOverlay.openCooldownManagerWindow(group)
+    require("power_ranger_on/cooldown_manager_window").Open({
+        colors = COLORS,
+        owner = settingsWnd,
+        settings = settings,
+        label = TargetOverlay.uiContext.label,
+        flatButton = TargetOverlay.uiContext.flatButton,
+        createIcon = createIcon,
+        setEquipIcon = setEquipIcon,
+        safePosition = TargetOverlay.safeWindowPosition,
+        applyDrag = applyDrag,
+        openCooldownSkillsWindow = function(rowIndex, entryGroup, mode) TargetOverlay.openCooldownSkillsWindow(rowIndex, entryGroup, mode) end,
+        shiftCooldownSettingsPage = shiftCooldownSettingsPage,
+        moveCooldownSetting = moveCooldownSetting,
+        toggleCooldownSetting = toggleCooldownSetting,
+        toggleCooldownGroup = function(entryGroup) TargetOverlay.toggleCooldownGroup(entryGroup) end,
+        removeCooldownSetting = removeCooldownSetting,
+        refreshSettingsButtons = refreshSettingsButtons
+    }, group)
 end
 
 function TargetOverlay.init()
@@ -3993,6 +4013,7 @@ function TargetOverlay.cleanup()
     if selfWnd then selfWnd:Show(false) end
     if settingsWnd then settingsWnd:Show(false) end
     if detectedSkillsWnd then detectedSkillsWnd:Show(false) end
+    pcall(function() require("power_ranger_on/cooldown_manager_window").Cleanup() end)
     mainCanvas = nil
     targetInfoWnd = nil
     ownershipWnd = nil

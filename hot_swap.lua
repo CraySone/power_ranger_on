@@ -1284,10 +1284,10 @@ local function addSettingsControls()
             end
         end
         ui.selectedLabel:SetText("Selected: " .. shortText(selectedLoadout() and selectedLoadout().name or "-", 40))
-    local function triggerText(trigger)
-        local name = trigger and trigger.loadoutName or "-"
-        if name == "" then name = "-" end
-        if trigger and trigger.enabled == false and name ~= "-" then name = "OFF: " .. name end
+        local function triggerText(trigger)
+            if not trigger or trigger.enabled == false then return "-" end
+            local name = trigger.loadoutName or "-"
+            if name == "" then name = "-" end
             return shortText(name, 20)
         end
         if ui.swimSelect then ui.swimSelect:SetCleanText(triggerText(settings.autoTriggers.swimming)) end
@@ -1334,22 +1334,24 @@ local function addSettingsControls()
     local function assignTriggerGearset(key, set)
         local trigger = dropdownTrigger()
         if not trigger or not set then return end
+        local labelText = triggerLabel(key)
         trigger.loadoutName = tostring(set.name or "")
         trigger.enabled = trigger.loadoutName ~= ""
         saveSettings()
         closeTriggerDropdown()
         refreshAll()
-        setStatus("Assigned " .. triggerLabel(key) .. " to " .. tostring(set.name or "gear set") .. ".", false)
+        setStatus("Assigned " .. labelText .. " to " .. tostring(set.name or "gear set") .. ".", false)
     end
     local function clearTriggerGearset(key)
         local trigger = dropdownTrigger()
         if not trigger then return end
+        local labelText = triggerLabel(key)
         trigger.loadoutName = ""
         trigger.enabled = false
         saveSettings()
         closeTriggerDropdown()
         refreshAll()
-        setStatus("Cleared " .. triggerLabel(key) .. " trigger.", false)
+        setStatus("Cleared " .. labelText .. " trigger.", false)
     end
     local function openTriggerDropdown(key, x, y, customIndex)
         triggerDropdownKey = key

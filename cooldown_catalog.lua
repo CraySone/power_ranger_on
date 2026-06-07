@@ -167,8 +167,8 @@ Catalog.DEVICES = {
             triggerMinTimeLeftMs = 500,
             fixedCooldown = true,
             matchByIdOnly = true,
-            icon_type = "buff",
-            icon_id = 8000286,
+            icon_type = "item",
+            icon_id = 8001102,
             itemType = 8001101
         })
     }, nil, nil, 8001102),
@@ -262,6 +262,17 @@ Catalog.DEVICES = {
             source = "Kirin",
             cooldown = 30,
             preferMountIcon = true,
+            mountNames = {"Kirin", "Hellwraith Kirin"},
+            icon_type = "skill",
+            icon_id = 21733
+        }),
+        ability("kirin_dash_mana", {
+            unit = "self",
+            name = "Dash",
+            source = "Kirin",
+            cooldown = 30,
+            preferMountIcon = true,
+            petManaSpent = 210,
             mountNames = {"Kirin", "Hellwraith Kirin"},
             icon_type = "skill",
             icon_id = 21733

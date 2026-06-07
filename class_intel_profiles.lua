@@ -3,7 +3,7 @@ local RoleHelper = require("power_ranger_on/role_helper")
 local ClassIntelProfiles = {}
 
 ClassIntelProfiles.PROFILES = {
-    { key = "general", label = "General" },
+    { key = "general", label = "Fallback" },
     { key = "melee", label = "Melee" },
     { key = "mage", label = "Mage" },
     { key = "archer", label = "Archer" },
@@ -32,7 +32,7 @@ local DEFAULTS = {
 }
 
 local PROFILE_LABELS = {
-    general = "General",
+    general = "Fallback",
     melee = "Melee",
     mage = "Mage",
     archer = "Archer",
@@ -114,7 +114,7 @@ function ClassIntelProfiles.Classify(targetInfo, className)
 end
 
 function ClassIntelProfiles.Label(profileKey)
-    return PROFILE_LABELS[profileKey] or "General"
+    return PROFILE_LABELS[profileKey] or "Fallback"
 end
 
 function ClassIntelProfiles.ShouldShow(settings, targetInfo, className, statKey)
