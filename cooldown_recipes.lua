@@ -85,10 +85,33 @@ function Recipes.ItemTypeMatches(row, itemType)
     return false
 end
 
+-- Device words too generic to identify a specific glider/mount. A row whose only
+-- "signature" is one of these (e.g. a custom row whose name fell back to "Glider")
+-- must NOT be allowed to match every equipped device.
+local GENERIC_DEVICE_WORDS = {
+    ["glider"] = true, ["wings"] = true, ["mount"] = true, ["pet"] = true,
+    ["flight"] = true, ["companion"] = true, ["glider companion"] = true,
+    ["detected"] = true, ["unknown"] = true, ["mount/pet"] = true
+}
+
+local function specificPatterns(row)
+    local out = {}
+    for _, pattern in ipairs(Recipes.Patterns(row)) do
+        local wanted = Recipes.NormalizeName(pattern)
+        if wanted ~= "" and not GENERIC_DEVICE_WORDS[wanted] then
+            out[#out + 1] = wanted
+        end
+    end
+    return out
+end
+
 function Recipes.DeviceMatches(row, device)
     if not row then return nil end
     local itemTypes = Recipes.ItemTypes(row)
-    local patterns = Recipes.Patterns(row)
+    local patterns = specificPatterns(row)
+    -- No usable signal (no item types, no specific name patterns): undecidable. Callers
+    -- treat nil as "do not match" so an under-specified row never claims an arbitrary
+    -- equipped device.
     if #itemTypes == 0 and #patterns == 0 then return nil end
 
     local deviceType = Recipes.ExtractItemType(device or {})
@@ -96,11 +119,12 @@ function Recipes.DeviceMatches(row, device)
 
     local deviceName = Recipes.NormalizeName(device and device.name or "")
     if deviceName ~= "" then
-        for _, pattern in ipairs(patterns) do
-            local wanted = Recipes.NormalizeName(pattern)
-            if wanted ~= "" and (deviceName:find(wanted, 1, true) or wanted:find(deviceName, 1, true)) then
-                return true
-            end
+        for _, wanted in ipairs(patterns) do
+            -- Forward containment only: the equipped device's name must contain the row's
+            -- signature pattern. The old reverse direction (wanted:find(deviceName)) let a
+            -- short equipped-glider name match an unrelated longer tracked pattern, which
+            -- grouped Invincible Flight under Sloth and made icons flip with the equip.
+            if deviceName:find(wanted, 1, true) then return true end
         end
     end
 

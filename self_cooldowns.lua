@@ -212,7 +212,7 @@ local function renderRow(ctx, icons, labels, entries)
 end
 
 local function trackedBuffEntry(ctx, row, st, glider, mount)
-    local name = row.name or st.name or tostring(row.id)
+    local name = row.customName or row.name or st.name or tostring(row.id)
     local isGlider = row.gliderPattern or row.category == "glider" or row.recipeDeviceKind == "glider"
     local iconState = "ready"
     local remain = nil
@@ -238,20 +238,30 @@ end
 
 local function trackedBuffVisible(ctx, row, st, glider, mount)
     if row.dynamicDisplay == true then
+        -- Dynamic = show while the device is present (glider equipped / mount summoned),
+        -- and KEEP showing after the device is gone for as long as a cooldown is still
+        -- counting down; once the cooldown ends with the device still gone, hide.
+        if st and (st.active == true or (st.readyAt and st.readyAt > api.Time:GetUiMsec())) then
+            return true
+        end
         if row.gliderPattern or row.category == "glider" or row.recipeDeviceKind == "glider" then
             return ctx.trackedGliderMatches(row, glider) == true
         end
         if ctx.trackedMountMatches then return ctx.trackedMountMatches(row, mount) == true end
-        return mount and tostring(mount.name or "") ~= ""
+        return mount ~= nil and tostring(mount.name or "") ~= ""
     end
-    if st and (st.active or st.readyAt) then return true end
     return true
 end
 
-local function trackedSkillVisible(ctx, row, mount)
+local function trackedSkillVisible(ctx, row, mount, now)
     if row.dynamicDisplay ~= true then return true end
+    -- Same dynamic rule for skills: visible while the mount is summoned, or while the
+    -- used ability's cooldown is still running after the mount is gone.
+    local key = ctx.trackedSkillCooldownKey(row)
+    local cd = key ~= "" and ctx.skillCooldowns[key] or nil
+    if cd and cd.readyAt and cd.readyAt > now then return true end
     if ctx.trackedMountMatches then return ctx.trackedMountMatches(row, mount) == true end
-    return mount and tostring(mount.name or "") ~= ""
+    return mount ~= nil and tostring(mount.name or "") ~= ""
 end
 
 local function trackedSkillEntry(ctx, row, now)
@@ -260,7 +270,7 @@ local function trackedSkillEntry(ctx, row, now)
     local cd = key ~= "" and cooldowns[key] or nil
     if cd and cd.readyAt and cd.readyAt > now then
         return {
-            name = cd.name or row.name or row.id,
+            name = row.customName or cd.name or row.name or row.id,
             icon = cd.icon or row.icon or ctx.skillIconById(row.id or row.skillId),
             state = "cooldown",
             remain = math.max(0, math.ceil((cd.readyAt - now) / 1000))
@@ -268,7 +278,7 @@ local function trackedSkillEntry(ctx, row, now)
     end
     if cd then cooldowns[key] = nil end
     return {
-        name = row.name or row.pattern or row.id,
+        name = row.customName or row.name or row.pattern or row.id,
         icon = row.icon or ctx.skillIconById(row.id or row.skillId),
         state = "ready",
         remain = nil
@@ -346,7 +356,7 @@ function SelfCooldowns.Update(ctx)
         end
     end
     for _, row in ipairs(ctx.allTrackedSkillRows()) do
-        if row.enabled ~= false and trackedSkillVisible(ctx, row, mount) then
+        if row.enabled ~= false and trackedSkillVisible(ctx, row, mount, now) then
             table.insert(mountEntries, trackedSkillEntry(ctx, row, now))
         end
     end

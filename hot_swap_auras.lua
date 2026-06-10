@@ -26,28 +26,37 @@ local AUTO_SWIMMING_HINTS = {
 
 local function customAuraKey(row)
     if type(row) ~= "table" then return nil end
-    if tonumber(row.id) then return "id:" .. tostring(math.floor(tonumber(row.id))) end
+    -- %.0f, not tostring: this client's tostring is %.6g and collapses 7-digit ids.
+    if tonumber(row.id) then return "id:" .. string.format("%.0f", tonumber(row.id)) end
     local name = lower(row.name or row.pattern or row.buffName)
     if name == "" then return nil end
     return "name:" .. name
 end
 
+local function formatId(value)
+    local numeric = tonumber(value)
+    if numeric then return string.format("%.0f", numeric) end
+    return tostring(value or "")
+end
+
 local function auraMatchFromRow(row)
     if type(row) ~= "table" then return nil end
-    local name = trim(row.name or row.pattern or row.buffName or tostring(row.id or ""))
+    -- formatId for the id fallbacks: %.6g tostring would store "8.00021e+006" as the
+    -- match query, which can never match a real aura name or id string.
+    local name = trim(row.name or row.pattern or row.buffName or formatId(row.id))
     local id = tonumber(row.id)
     if name == "" and not id then return nil end
     return {
         id = id,
         name = name,
-        query = trim(row.pattern or row.buffName or row.name or tostring(row.id or "")),
+        query = trim(row.pattern or row.buffName or row.name or formatId(row.id)),
         source = row.source or "Detected"
     }
 end
 
 local function auraMatchKey(match)
     if type(match) ~= "table" then return nil end
-    if tonumber(match.id) then return "id:" .. tostring(math.floor(tonumber(match.id))) end
+    if tonumber(match.id) then return "id:" .. string.format("%.0f", tonumber(match.id)) end
     local name = lower(match.query or match.name)
     if name == "" then return nil end
     return "name:" .. name

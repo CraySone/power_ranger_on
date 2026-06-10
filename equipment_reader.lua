@@ -127,7 +127,10 @@ end
 function EquipmentReader.DeviceMatches(row, glider)
     local matched = CooldownRecipes.DeviceMatches(row, glider)
     if matched ~= nil then return matched end
-    return true
+    -- Undecidable (row carries no item types and no specific name patterns): do NOT
+    -- claim the equipped glider. The old default of true made every under-specified row
+    -- match whatever was equipped, borrowing its icon and grouping incorrectly.
+    return false
 end
 
 return EquipmentReader

@@ -54,9 +54,16 @@ local function triggerText(row)
         text = tostring(text or "")
         if text ~= "" then parts[#parts + 1] = text end
     end
-    if row.id or row.buff_id then add("ID " .. tostring(row.id or row.buff_id)) end
-    if type(row.buffIds) == "table" and row.buffIds[1] then add("IDs " .. table.concat(row.buffIds, ",")) end
-    if type(row.buff_ids) == "table" and row.buff_ids[1] then add("IDs " .. table.concat(row.buff_ids, ",")) end
+    -- formatBuffId / explicit formatting: plain tostring (and table.concat, which uses
+    -- it) renders 7-digit ids as "8.00021e+006" in this client.
+    if row.id or row.buff_id then add("ID " .. OverlayUtils.formatBuffId(row.id or row.buff_id)) end
+    local function idListText(list)
+        local out = {}
+        for i, value in ipairs(list) do out[i] = OverlayUtils.formatBuffId(value) end
+        return table.concat(out, ",")
+    end
+    if type(row.buffIds) == "table" and row.buffIds[1] then add("IDs " .. idListText(row.buffIds)) end
+    if type(row.buff_ids) == "table" and row.buff_ids[1] then add("IDs " .. idListText(row.buff_ids)) end
     if row.buffName then add("Aura " .. tostring(row.buffName)) end
     if row.mountManaSpent or row.petManaSpent or row.mana_trigger then add("Pet mana " .. tostring(row.mountManaSpent or row.petManaSpent or row.mana_trigger)) end
     if row.playerManaSpent or row.player_mana then add("Player mana " .. tostring(row.playerManaSpent or row.player_mana)) end
@@ -193,7 +200,11 @@ local function refresh()
             ui.root:AddAnchor("TOPLEFT", wnd, 16, y)
             ui.root:Show(true)
             if ctx and ctx.setEquipIcon then ctx.setEquipIcon(ui.icon, iconPath(entry)) end
-            ui.skill:SetText(short(skillText(row), infoMode and 36 or 16))
+            ui.skill._entryKind = entry.kind
+            ui.skill._entryIndex = entry.index
+            ui.skill._settingText = true
+            ui.skill:SetText(tostring(row.customName or skillText(row)))
+            ui.skill._settingText = false
             ui.device:SetText(infoMode and short(deviceText(row), 28) or short(deviceText(row), 13))
             ui.trigger:SetExtent(infoMode and 340 or 198, 12)
             ui.trigger:SetText(short(infoMode and recipeText(row) or triggerText(row), infoMode and 62 or 31))
@@ -239,6 +250,41 @@ local function rowList(kind)
     return settings.trackedBuffs
 end
 
+-- Editable name field. Shows the user's custom name, or the auto-detected name when
+-- none is set. Typing stores row.customName (cleared back to auto when emptied), which
+-- is what the overlay/self panel display and is preserved across reloads by the merge.
+local function nameEdit(parent, id, x, y, w, h)
+    local edit = W_CTRL and W_CTRL.CreateEdit and W_CTRL.CreateEdit(id, parent) or parent:CreateChildWidget("edit", id, 0, true)
+    local border = parent:CreateColorDrawable(0, 0, 0, 0.95, "background")
+    border:SetExtent(w + 2, h + 2)
+    border:AddAnchor("TOPLEFT", parent, x - 1, y - 1)
+    border:Show(true)
+    edit:SetExtent(w, h)
+    edit:AddAnchor("TOPLEFT", parent, x, y)
+    local plate = edit:CreateColorDrawable(0.10, 0.10, 0.11, 0.96, "background")
+    plate:AddAnchor("TOPLEFT", edit, 0, 0)
+    plate:AddAnchor("BOTTOMRIGHT", edit, 0, 0)
+    plate:Show(true)
+    if edit.SetMaxTextLength then edit:SetMaxTextLength(24) end
+    if edit.style then
+        edit.style:SetColor(1, 1, 1, 1)
+        edit.style:SetAlign(ALIGN.LEFT)
+        edit.style:SetFontSize(10)
+    end
+    edit:SetHandler("OnTextChanged", function(self)
+        if self._settingText then return end
+        local list = rowList(self._entryKind)
+        local row = list and list[self._entryIndex]
+        if not row then return end
+        local text = tostring(self:GetText() or ""):gsub("^%s+", ""):gsub("%s+$", "")
+        row.customName = text ~= "" and text or nil
+        if ctx and ctx.save then ctx.save() end
+    end)
+    if edit.Raise then edit:Raise() end
+    edit:Show(true)
+    return edit
+end
+
 local function makeRow(parent, i)
     local c = colors()
     local y = 82 + ((i - 1) * 30)
@@ -251,7 +297,7 @@ local function makeRow(parent, i)
     bg:AddAnchor("BOTTOMRIGHT", root, 0, 0)
     bg:Show(true)
     local icon = ctx.createIcon(root, "power_ranger_cd_skill_icon_" .. i, 4, 3, 20)
-    local skill = UiHelpers.ChildLabel(root, "power_ranger_cd_skill_name_" .. i, "", 30, 7, 104, 12, 10, c.white, ALIGN.LEFT)
+    local skill = nameEdit(root, "power_ranger_cd_skill_name_" .. i, 30, 5, 104, 16)
     local device = UiHelpers.ChildLabel(root, "power_ranger_cd_skill_device_" .. i, "", 138, 7, 88, 12, 10, c.muted, ALIGN.LEFT)
     local trigger = UiHelpers.ChildLabel(root, "power_ranger_cd_skill_trigger_" .. i, "", 230, 7, 168, 12, 10, c.muted, ALIGN.LEFT)
     local detail1 = UiHelpers.ChildLabel(root, "power_ranger_cd_skill_detail1_" .. i, "", 30, 22, 530, 11, 9, c.muted, ALIGN.LEFT)

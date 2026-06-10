@@ -134,7 +134,8 @@ local function addAbilityRow(rows, device, ability, group)
     if skillId then
         row.id = skillId
         row.pattern = normalizeText(label)
-        row.importKey = importKey(group, device, ability, "skill:" .. tostring(skillId))
+        -- %.0f, not tostring: this client's tostring is %.6g and collapses 7-digit ids.
+        row.importKey = importKey(group, device, ability, "skill:" .. string.format("%.0f", skillId))
         table.insert(rows.skills, row)
     end
 end

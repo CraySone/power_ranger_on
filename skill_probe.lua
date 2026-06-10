@@ -81,7 +81,11 @@ end
 
 function SkillProbe.detectedSkillKey(skillName, skillId)
     local id = tonumber(skillId)
-    if id then return "id:" .. tostring(id) end
+    -- NEVER tostring() an id in this client: its Lua builds number formatting as %.6g,
+    -- so all 7-digit ids collapse to the same string (tostring(8000208) and
+    -- tostring(8000211) are BOTH "8.00021e+006"). That merged distinct buffs that share
+    -- a display name (Raijin run vs dash) into one detected row. %.0f keeps full digits.
+    if id then return "id:" .. string.format("%.0f", id) end
     local name = string.lower(tostring(skillName or ""))
     if name == "" then return nil end
     return "name:" .. name

@@ -30,6 +30,9 @@ function DetectedSkillsUi.Create(ctx)
     header:Show(true)
     local title = label(wnd, "power_ranger_detected_title", "Detected Cooldowns", 14, 7, 250, 16, 13, colors.gold, ALIGN.LEFT)
     applyDrag(wnd, title, "detectedSkillsX", "detectedSkillsY")
+    flatButton(wnd, "power_ranger_detected_clear", "Clear", 552, 5, 50, 20, colors.danger or colors.button, function()
+        if ctx.clearDetected then ctx.clearDetected() end
+    end)
     flatButton(wnd, "power_ranger_detected_close", "X", 606, 5, 22, 20, colors.button, function() wnd:Show(false) end)
     label(wnd, "power_ranger_detected_hint", "Rows show ID, buff/debuff name and mana delta. Use Glid/Mount when the current device matters.", 14, 36, 600, 14, 10, colors.muted, ALIGN.LEFT)
     wnd.rows = {}

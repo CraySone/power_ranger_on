@@ -11,6 +11,7 @@ local ClassIntelProfiles = require("power_ranger_on/class_intel_profiles")
 local SkillProbe = require("power_ranger_on/skill_probe")
 local SettingsSanitizer = require("power_ranger_on/settings_sanitizer")
 local SettingsProfile = require("power_ranger_on/settings_profile")
+local SettingsStore = require("power_ranger_on/settings_store")
 
 local TargetOverlay = {}
 TargetOverlay.uiHelpers = require("power_ranger_on/ui_helpers")
@@ -231,7 +232,9 @@ local function trackedBuffSettingKey(row)
         devicePart = ":glider:" .. string.lower(tostring(row.recipeDeviceKey or row.recipeDeviceName or row.name or row.source or ""))
     end
     if row and row.id then
-        return unit .. ":" .. tostring(row.id) .. devicePart
+        -- formatBuffId, not tostring: this client's tostring is %.6g and collapses
+        -- distinct 7-digit ids onto one key (see SkillProbe.detectedSkillKey).
+        return unit .. ":" .. OverlayUtils.formatBuffId(row.id) .. devicePart
     end
     if row and row.buffName then
         return unit .. ":name:" .. string.lower(tostring(row.buffName)) .. ":" .. string.lower(tostring(row.name or "")) .. devicePart
@@ -314,6 +317,8 @@ local targetRangeLabel = nil
 local targetInfoWnd = nil
 local ownershipWnd = nil
 local guildFamilyWnd = nil
+local stumpyDockHooksRegistered = false
+local stumpyStatsDockVisible = false
 local selfWnd = nil
 local settingsWnd = nil
 local detectedSkillsWnd = nil
@@ -330,6 +335,7 @@ local selfUpdateElapsed = SELF_UPDATE_MS
 local compatState = Compat.Resolve(defaults)
 local compatRefreshElapsed = 1000
 local nuziCooldownRows = NuziCooldownImport.EmptyRows()
+local stumpySenseLayout = { enabled = false }
 local buffState = {}
 local triggerState = {}
 local skillCooldowns = {}
@@ -373,6 +379,84 @@ local function refreshNuziCooldownRows(force)
         TargetOverlay.refreshEventSubscriptions()
     end
     return changed
+end
+
+local function onStumpySenseLayout(opts)
+    if type(opts) ~= "table" then
+        stumpySenseLayout.enabled = false
+        stumpySenseLayout.anchor = nil
+        return
+    end
+    stumpySenseLayout.enabled = opts.enabled == true
+    stumpySenseLayout.width = tonumber(opts.width)
+    stumpySenseLayout.height = tonumber(opts.height)
+    stumpySenseLayout.anchor = opts.anchor
+    stumpySenseLayout.anchorX = tonumber(opts.anchorX)
+    stumpySenseLayout.anchorY = tonumber(opts.anchorY)
+    if targetInfoWnd then
+        targetInfoWnd._lastWidth = nil
+        targetInfoWnd._lastHeight = nil
+    end
+end
+
+local function registerStumpyDockMember()
+    if not targetInfoWnd then return end
+    StumpyDock = StumpyDock or { members = {} }
+    StumpyDock.members = StumpyDock.members or {}
+    StumpyDock.members["power_ranger_stats"] = {
+        id = "power_ranger_stats",
+        window = targetInfoWnd,
+        visible = function()
+            local ok, visible = pcall(function() return targetInfoWnd and targetInfoWnd:IsVisible() end)
+            return ok and visible == true
+        end
+    }
+    pcall(function() api:Emit("STUMPY_DOCK_REGISTER", "power_ranger_stats") end)
+end
+
+function TargetOverlay.clearStumpyStatsBox()
+    if StumpyDock and StumpyDock.boxes then
+        local hadBox = StumpyDock.boxes["power_ranger_stats"] ~= nil
+        StumpyDock.boxes["power_ranger_stats"] = nil
+        if hadBox then
+            pcall(function() api:Emit("STUMPY_DOCK_REGISTER", "power_ranger_stats") end)
+        end
+    end
+end
+
+function TargetOverlay.publishStumpyStatsBox(width, height)
+    if not stumpySenseLayout or stumpySenseLayout.enabled ~= true then return end
+    local anchorX = tonumber(stumpySenseLayout.anchorX)
+    local anchorY = tonumber(stumpySenseLayout.anchorY)
+    local w = tonumber(width) or tonumber(stumpySenseLayout.width)
+    local h = tonumber(height) or tonumber(stumpySenseLayout.height)
+    if not anchorX or not anchorY or not w or not h then return end
+    StumpyDock = StumpyDock or { members = {} }
+    StumpyDock.boxes = StumpyDock.boxes or {}
+    local nextBox = {
+        x = math.floor(anchorX - w - 8 + 0.5),
+        y = math.floor(anchorY + 0.5),
+        w = math.floor(w + 0.5),
+        h = math.floor(h + 0.5)
+    }
+    local prev = StumpyDock.boxes["power_ranger_stats"]
+    local changed = not prev or prev.x ~= nextBox.x or prev.y ~= nextBox.y or prev.w ~= nextBox.w or prev.h ~= nextBox.h
+    StumpyDock.boxes["power_ranger_stats"] = nextBox
+    return changed
+end
+
+local function unregisterStumpyDockMember()
+    if StumpyDock and StumpyDock.members then
+        StumpyDock.members["power_ranger_stats"] = nil
+    end
+    TargetOverlay.clearStumpyStatsBox()
+    stumpyStatsDockVisible = false
+end
+
+local function notifyStumpyStatsVisible()
+    if stumpyStatsDockVisible == true then return end
+    stumpyStatsDockVisible = true
+    registerStumpyDockMember()
 end
 
 local function allTrackedBuffRows()
@@ -483,6 +567,7 @@ local function addMissingTrackedBuffDefaults()
             if existing.cooldown ~= nil and not defaultRow.fixedCooldown then copy.cooldown = existing.cooldown end
             if existing.enabled ~= nil then copy.enabled = existing.enabled end
             if existing.source ~= nil then copy.source = existing.source end
+            if existing.customName ~= nil then copy.customName = existing.customName end
             if existing.icon ~= nil
                 and copy.icon == nil
                 and defaultRow.recipeDeviceKind == nil
@@ -622,8 +707,17 @@ local function addMissingTrackedBuffDefaults()
             existing.triggerMinTimeLeftMs = 5300
         end
         local key = trackedBuffSettingKey(existing)
+        local userManaged = existing.userManaged == true
         local staleGenericStar = existing.buffName == "Star Divine Protection" and not existing.gliderPattern and not recoverableStarRecipe
-        if not usedKeys[key] and not DEPRECATED_TRACKED_BUFFS[key] and not staleGenericStar and not TargetOverlay.isDeprecatedTrackedBuffRow(existing) then
+        -- Rows the user explicitly created/edited are never auto-dropped by the
+        -- deprecation heuristics; those only police the built-in default rows. This is
+        -- what was silently deleting user-added glider/mount cooldowns on relog.
+        -- catalogOrphan: a merged copy of a catalog default that no longer exists (the
+        -- catalog was trimmed to the Star Divine Protection gliders). recipeAbilityKey is
+        -- only ever set by the catalog, so user-added rows are never affected.
+        local catalogOrphan = not userManaged and existing.recipeAbilityKey ~= nil and defaultsByKey[key] == nil
+        local autoDropped = not userManaged and (catalogOrphan or DEPRECATED_TRACKED_BUFFS[key] or staleGenericStar or TargetOverlay.isDeprecatedTrackedBuffRow(existing))
+        if not usedKeys[key] and not autoDropped then
             local defaultRow = defaultsByKey[key]
             if defaultRow or existing.id or existing.buffName then
                 if not defaultRow and existing.gliderPattern and not existing.fixedCooldown and existing.recipeType ~= "glider" and existing.category ~= "glider" then
@@ -640,7 +734,10 @@ local function addMissingTrackedBuffDefaults()
                 if existing.cooldownStartsOnActive == nil then
                     existing.cooldownStartsOnActive = true
                 end
-                table.insert(ordered, mergedRow(defaultRow, existing))
+                -- Keep user-managed rows verbatim; the merge only rebuilds built-in
+                -- default rows from the catalog (which is why their non-preserved fields
+                -- used to revert every load).
+                table.insert(ordered, mergedRow(userManaged and nil or defaultRow, existing))
                 usedKeys[key] = true
             end
         end
@@ -704,7 +801,9 @@ local function cleanDeprecatedTrackedSkills()
     local cleaned = {}
     for _, row in ipairs(settings.trackedSkills) do
         local name = string.lower(tostring(row.name or row.pattern or ""))
-        local id = tostring(row.id or row.skillId or "")
+        -- formatBuffId, not tostring: with %.6g tostring the "8000566" comparison below
+        -- could never match (it rendered as "8.00057e+006").
+        local id = OverlayUtils.formatBuffId(row.id or row.skillId or "")
         local staleFlight = name:find("flight", 1, true) and not row.icon and id == ""
         local deprecated = DEPRECATED_TRACKED_SKILL_PATTERNS[name] or staleFlight or id == "3636" or id == "8000566" or trackedCooldownIsHardcoded(row.name or row.pattern, row.id or row.skillId)
         if not deprecated then table.insert(cleaned, row) end
@@ -745,8 +844,11 @@ function TargetOverlay.logSettingsSave(reason)
 end
 
 local function loadSettings()
-    settingsRoot = api.GetSettings(ADDON_ID) or {}
+    -- Source of truth is our private file (immune to the shared-file reset and to the
+    -- serializer's id rounding); falls back to the shared branch on first run.
+    settingsRoot = SettingsStore.Load(ADDON_ID)
     settings, settingsProfileKey, playerName, settingsRoot, settingsProfileState = SettingsProfile.Resolve(api, settingsRoot)
+    SettingsStore.SetRoot(settingsRoot)
     if settingsProfileState and settingsProfileState.error and api.Log and api.Log.Err then
         pcall(function()
             api.Log:Err("[PowerRangerON] Settings profile migration stopped: "
@@ -842,9 +944,11 @@ local function saveSettings(reason)
         and settingsProfileKey ~= "__account__" then
         settingsRoot.characterProfiles[settingsProfileKey] = settings
     end
-    SettingsSanitizer.Clean(settingsRoot or settings)
     TargetOverlay.logSettingsSave(reason or "saving (user change)")
-    pcall(function() api.SaveSettings() end)
+    -- Persist to our private file (+ backup). Store.Save sanitizes and id-encodes for us;
+    -- we no longer write the shared addon_settings, so we can neither corrupt nor reset
+    -- other addons, and we recover our own data even if the shared file is wiped.
+    SettingsStore.Save()
 end
 
 local function setTextColor(widget, color)
@@ -929,6 +1033,33 @@ local function uiScaleFactor(key)
     return 1 + ((tonumber(settings and settings[key or "uiScaleLevel"]) or 0) * 0.1)
 end
 
+local function guildFamilyScaleFactor()
+    return uiScaleFactor("guildFamilyLabelScaleLevel") * 0.75
+end
+
+local function normalizeStumpyPriorityName(name)
+    local text = string.lower(tostring(name or ""))
+    text = text:gsub("^%s+", ""):gsub("%s+$", "")
+    return text
+end
+
+local function isStumpyPriorityTargetName(name)
+    local key = normalizeStumpyPriorityName(name)
+    if key == "" or key == "nil" then return false end
+    local stumpySettings = OverlayUtils.safeCall(function() return api.GetSettings("Stumpy_Sense") end)
+    if type(stumpySettings) ~= "table" or type(stumpySettings.priorityNames) ~= "table" then return false end
+    for _, value in ipairs(stumpySettings.priorityNames) do
+        if normalizeStumpyPriorityName(value) == key then return true end
+    end
+    return false
+end
+
+local function stumpyTargetName(info)
+    local name = TargetOverlay.ownershipField(info, {"name", "targetName", "unitName", "characterName"})
+    if name then return name end
+    return OverlayUtils.safeCall(function() return api.Unit:UnitName("target") end)
+end
+
 local function trackedBuffKey(row)
     if row and row.sharedCooldownKey then return "shared:" .. tostring(row.sharedCooldownKey) end
     return trackedBuffSettingKey(row)
@@ -947,7 +1078,7 @@ local function trackedBuffTriggerKey(row)
         return unit .. ":trigger:" .. string.lower(tostring(row.buffNames[1])) .. devicePart
     end
     if row and row.buffName then return unit .. ":trigger:" .. string.lower(tostring(row.buffName)) .. devicePart end
-    if row and row.id then return unit .. ":trigger:" .. tostring(row.id) .. devicePart end
+    if row and row.id then return unit .. ":trigger:" .. OverlayUtils.formatBuffId(row.id) .. devicePart end
     return trackedBuffKey(row)
 end
 
@@ -1289,13 +1420,13 @@ local function classProfileStatVisible(targetInfo, className, statKey)
     return profileValue == true
 end
 
-local function buildInfoRows(targetInfo, className, gearscore, pdef, mdef, pdefPct, mdefPct, extraStats, ownershipOnly)
+local function buildInfoRows(targetInfo, className, gearscore, pdef, mdef, pdefPct, mdefPct, extraStats, ownershipOnly, forceExpanded)
     local identity = {}
     local defense = {}
     local compactSummary = {}
     local simpleMeta = {}
     local simpleGuild = nil
-    local compact = settings.compactTargetWindow or settings.testTargetWindow
+    local compact = (settings.compactTargetWindow or settings.testTargetWindow) and forceExpanded ~= true
     local function addRow(list, key, text, forceCol)
         if text and text ~= "" then
             table.insert(list, { key = key, text = text, color = settingColor(key), forceCol = forceCol })
@@ -1525,6 +1656,7 @@ local function refreshOwnershipWindow(info)
         return
     end
     if targetInfoWnd then targetInfoWnd:Show(false) end
+    TargetOverlay.clearStumpyStatsBox()
     local titleDisplay = OverlayUtils.shortText(titleText, 34)
     local metaDisplay = table.concat(meta, "  |  ")
     local scale = uiScaleFactor("ownershipScaleLevel")
@@ -1592,7 +1724,7 @@ local function refreshGuildFamilyWindow(info)
         hideGuildFamilyWindow()
         return
     end
-    local scale = uiScaleFactor("guildFamilyLabelScaleLevel")
+    local scale = guildFamilyScaleFactor()
     local wantedWidth = math.floor((360 * scale) + 0.5)
     local pad = math.floor((10 * scale) + 0.5)
     local textWidth = math.max(80, wantedWidth - (pad * 2))
@@ -1627,21 +1759,178 @@ local function refreshGuildFamilyWindow(info)
     guildFamilyWnd:Show(true)
 end
 
+local function applyStumpySenseAnchor(width)
+    if not targetInfoWnd or not stumpySenseLayout or stumpySenseLayout.enabled ~= true then
+        return
+    end
+    if stumpySenseLayout.anchor then
+        local ok = pcall(function()
+            targetInfoWnd:RemoveAllAnchors()
+            targetInfoWnd:AddAnchor("TOPRIGHT", stumpySenseLayout.anchor, "TOPLEFT", -8, 0)
+        end)
+        if ok then return end
+    end
+    local anchorX = tonumber(stumpySenseLayout.anchorX)
+    local anchorY = tonumber(stumpySenseLayout.anchorY)
+    local w = tonumber(width) or tonumber(stumpySenseLayout.width) or 290
+    if anchorX and anchorY then
+        pcall(function()
+            targetInfoWnd:RemoveAllAnchors()
+            targetInfoWnd:AddAnchor("TOPLEFT", "UIParent", math.floor(anchorX - w - 8 + 0.5), math.floor(anchorY + 0.5))
+        end)
+    end
+end
+
+local function renderStumpyStatsWindow(rows, compactSummary, scale, targetInfo, className, gearscore)
+    local width = math.max(140, math.floor((tonumber(stumpySenseLayout.width) or 176) + 0.5))
+    local height = math.max(120, math.floor((tonumber(stumpySenseLayout.height) or 286) + 0.5))
+    local headerHeight = 28
+    local side = 9
+    local gap = 8
+    local rowHeight = 17
+    local colWidth = math.floor((width - (side * 2) - gap) / 2)
+    local labelWidth = math.min(68, math.max(46, math.floor(colWidth * 0.48)))
+    local valueWidth = math.max(18, colWidth - labelWidth)
+    local guild = TargetOverlay.ownershipField(targetInfo, {"expeditionName", "expedition", "guildName", "guild"})
+    local family = TargetOverlay.ownershipField(targetInfo, {"family_name", "familyName", "family"})
+    local targetName = stumpyTargetName(targetInfo)
+    local priority = isStumpyPriorityTargetName(targetName)
+    local titleText = (priority and "\226\152\133 " or "") .. tostring(targetName or guild or "Power Ranger ON")
+    local metaParts = {}
+    if className and className ~= "" then table.insert(metaParts, tostring(className)) end
+    if gearscore then table.insert(metaParts, "GS " .. tostring(gearscore)) end
+    local range = TargetOverlay.getDistance("target")
+    if range then table.insert(metaParts, tostring(range) .. "m") end
+    if #metaParts == 0 and compactSummary and compactSummary ~= "" then table.insert(metaParts, compactSummary) end
+    titleText = TargetOverlay.fitTextToWidth(targetInfoWnd.title, titleText, width - (side * 2), 8)
+    local metaText = TargetOverlay.fitTextToWidth(targetInfoWnd.simpleMeta, table.concat(metaParts, "  |  "), width - (side * 2), 8)
+
+    if targetInfoWnd._lastHeight ~= height or targetInfoWnd._lastWidth ~= width then
+        targetInfoWnd:SetExtent(width, height)
+        targetInfoWnd._lastHeight = height
+        targetInfoWnd._lastWidth = width
+    end
+    targetInfoWnd.bg:Show(true)
+    targetInfoWnd.header:Show(true)
+    pcall(function() targetInfoWnd.bg:SetColor(0, 0, 0, 0.34) end)
+    pcall(function() targetInfoWnd.header:SetColor(0.12, 0.135, 0.155, 0.58) end)
+    targetInfoWnd.header:SetExtent(width, headerHeight)
+    targetInfoWnd.dragHandle:SetExtent(width, headerHeight)
+
+    targetInfoWnd.title:RemoveAllAnchors()
+    targetInfoWnd.title:AddAnchor("TOPLEFT", targetInfoWnd, side, 3)
+    targetInfoWnd.title:SetExtent(width - (side * 2), 15)
+    targetInfoWnd.title.style:SetFontSize(math.floor((14 * scale) + 0.5))
+    targetInfoWnd.title:SetText(titleText)
+    setTextColor(targetInfoWnd.title, COLORS.gold)
+    TargetOverlay.applyReadableTextStyle(targetInfoWnd.title, true)
+
+    targetInfoWnd.simpleMeta:RemoveAllAnchors()
+    targetInfoWnd.simpleMeta:AddAnchor("TOPLEFT", targetInfoWnd, side, 17)
+    targetInfoWnd.simpleMeta:SetExtent(width - (side * 2), 12)
+    targetInfoWnd.simpleMeta.style:SetFontSize(math.floor((10 * scale) + 0.5))
+    targetInfoWnd.simpleMeta:SetText(metaText)
+    setTextColor(targetInfoWnd.simpleMeta, COLORS.white)
+    TargetOverlay.applyReadableTextStyle(targetInfoWnd.simpleMeta, true)
+    targetInfoWnd.simpleMeta:Show(metaText ~= "")
+
+    local widgetIndex = 1
+    local y = headerHeight + 7
+    local col = 0
+    for _, row in ipairs(rows or {}) do
+        if widgetIndex > 16 or y + rowHeight > height - 3 then break end
+        local widget = targetInfoWnd.rows[widgetIndex]
+        local valueWidget = targetInfoWnd.simpleValues[widgetIndex]
+        widget.style:SetFontSize(math.floor((11 * scale) + 0.5))
+        valueWidget.style:SetFontSize(math.floor((11 * scale) + 0.5))
+        TargetOverlay.applyReadableTextStyle(widget, true)
+        TargetOverlay.applyReadableTextStyle(valueWidget, true)
+        widget:RemoveAllAnchors()
+        valueWidget:RemoveAllAnchors()
+        if row.header then
+            if col ~= 0 then
+                y = y + rowHeight
+                col = 0
+            end
+            widget:SetExtent(width - (side * 2), 14)
+            widget:AddAnchor("TOPLEFT", targetInfoWnd, side, y)
+            setInfoCell(widget, tostring(row.text or ""):upper(), COLORS.gold)
+            setInfoCell(valueWidget, nil)
+            widgetIndex = widgetIndex + 1
+            y = y + 15
+        elseif row.key == "guild" or row.key == "family" then
+            if col ~= 0 then
+                y = y + rowHeight
+                col = 0
+            end
+            widget:SetExtent(width - (side * 2), rowHeight)
+            widget:AddAnchor("TOPLEFT", targetInfoWnd, side, y)
+            setInfoCell(widget, tostring(row.text or ""), row.color or COLORS.white)
+            setInfoCell(valueWidget, nil)
+            widgetIndex = widgetIndex + 1
+            y = y + rowHeight
+        else
+            local text = tostring(row.text or "")
+            local labelText, valueText = text:match("^(.-):%s*(.*)$")
+            local x = side + (col * (colWidth + gap))
+            widget:SetExtent(labelText and labelWidth or colWidth, rowHeight)
+            widget:AddAnchor("TOPLEFT", targetInfoWnd, x, y)
+            if labelText then
+                if labelText == "Evasion" then labelText = "Evas" end
+                setInfoCell(widget, labelText .. ":", COLORS.white)
+                valueWidget:SetExtent(valueWidth, rowHeight)
+                valueWidget:AddAnchor("TOPLEFT", targetInfoWnd, x + labelWidth, y)
+                setInfoCell(valueWidget, valueText, row.color or COLORS.white)
+            else
+                setInfoCell(widget, text, row.color or COLORS.white)
+                setInfoCell(valueWidget, nil)
+            end
+            widgetIndex = widgetIndex + 1
+            if col == 1 then
+                y = y + rowHeight
+                col = 0
+            else
+                col = 1
+            end
+        end
+    end
+    for i = widgetIndex, 16 do
+        setInfoCell(targetInfoWnd.rows[i], nil)
+        setInfoCell(targetInfoWnd.simpleValues[i], nil)
+    end
+    applyStumpySenseAnchor(width)
+    local stumpyBoxChanged = TargetOverlay.publishStumpyStatsBox(width, height)
+    targetInfoWnd:Show(true)
+    notifyStumpyStatsVisible()
+    if stumpyBoxChanged then
+        pcall(function() api:Emit("STUMPY_DOCK_REGISTER", "power_ranger_stats") end)
+    end
+end
+
 local function refreshTargetInfoWindow(targetInfo, className, gearscore, pdef, mdef, pdefPct, mdefPct, extraStats, ownershipOnly)
     if not targetInfoWnd then return end
     if ((not settings.showTargetWindow or Compat.ShouldHideTargetInfoWindow(compatState, ownershipOnly)) and not ownershipOnly) or not targetInfo then
         targetInfoWnd:Show(false)
+        stumpyStatsDockVisible = false
+        TargetOverlay.clearStumpyStatsBox()
         return
     end
-    local rows, compactSummary, simpleGuild, simpleMeta, compactParts = buildInfoRows(targetInfo, className, gearscore, pdef, mdef, pdefPct, mdefPct, extraStats, ownershipOnly)
+    local stumpyMode = stumpySenseLayout and stumpySenseLayout.enabled == true
+    local rows, compactSummary, simpleGuild, simpleMeta, compactParts = buildInfoRows(targetInfo, className, gearscore, pdef, mdef, pdefPct, mdefPct, extraStats, ownershipOnly, stumpyMode)
     local compact = settings.compactTargetWindow or settings.testTargetWindow
     local testLayout = settings.testTargetWindow == true
     local summaryVisible = testLayout and (simpleGuild ~= "" or simpleMeta ~= "") or compactSummary ~= ""
     if #rows == 0 and (not compact or not summaryVisible) then
         targetInfoWnd:Show(false)
+        stumpyStatsDockVisible = false
+        TargetOverlay.clearStumpyStatsBox()
         return
     end
     local scale = uiScaleFactor("targetWindowScaleLevel")
+    if stumpyMode then
+        renderStumpyStatsWindow(rows, compactSummary, scale, targetInfo, className, gearscore)
+        return
+    end
     if testLayout then
         targetInfoWnd.title:SetText(simpleGuild)
         targetInfoWnd.title.style:SetFontSize(math.floor((15 * scale) + 0.5))
@@ -1659,6 +1948,8 @@ local function refreshTargetInfoWindow(targetInfo, className, gearscore, pdef, m
     end
     targetInfoWnd.bg:Show(not testLayout)
     targetInfoWnd.header:Show(not testLayout)
+    pcall(function() targetInfoWnd.bg:SetColor(0, 0, 0, 0.62) end)
+    pcall(function() targetInfoWnd.header:SetColor(0.06, 0.075, 0.095, 0.76) end)
     setTextColor(targetInfoWnd.title, testLayout and COLORS.white or COLORS.gold)
     TargetOverlay.applyReadableTextStyle(targetInfoWnd.title, testLayout)
     TargetOverlay.applyReadableTextStyle(targetInfoWnd.simpleMeta, testLayout)
@@ -1844,7 +2135,8 @@ local function updateTrackedBuffs()
 end
 
 local function trackedSkillCooldownKey(row, skillName, skillId)
-    return tostring(row and (row.importKey or row.id or row.skillId or row.pattern or row.name) or skillName or skillId or "")
+    -- formatBuffId: numeric ids must not go through this client's %.6g tostring.
+    return OverlayUtils.formatBuffId(row and (row.importKey or row.id or row.skillId or row.pattern or row.name) or skillName or skillId or "")
 end
 
 local function createSelfWindow()
@@ -2258,6 +2550,7 @@ function TargetOverlay.detectedRecipeRow(row, mode)
     mode = mode or "aura"
     local recipe = {
         enabled = true,
+        userManaged = true,
         recipeType = mode,
         unit = row.unit or "self",
         id = row.id,
@@ -2270,6 +2563,11 @@ function TargetOverlay.detectedRecipeRow(row, mode)
     if row.kind == "buff" and (row.name or row.pattern) then
         recipe.buffName = row.name or row.pattern
         recipe.buffNames = {row.name or row.pattern}
+        -- With a concrete buff id, never fall back to name matching: mounts like Raijin
+        -- give several DIFFERENT buffs the same display name ("4-Leg Lope" is both the
+        -- run buff 8000208 and the dash 8000211), so a name fallback cross-activates
+        -- the tracker from the sibling buff. The name stays for display only.
+        if tonumber(row.id) then recipe.matchByIdOnly = true end
     end
     if mode == "glider" then
         local glider = TargetOverlay.equippedGliderSnapshot()
@@ -2323,6 +2621,23 @@ function TargetOverlay.detectedRecipeRow(row, mode)
         if tonumber(row.playerManaSpent) and tonumber(row.playerManaSpent) > 0 then
             recipe.playerManaSpent = math.floor(tonumber(row.playerManaSpent) + 0.5)
         end
+        if tonumber(recipe.id) then
+            -- The row has a real aura id: that is the precise trigger (matchByIdOnly is
+            -- already set above), exactly like the old catalog defaults tracked mount
+            -- buffs. Discard incidentally captured mana deltas -- detected rows often
+            -- pick up a stray pet-mana spend from an unrelated action in the same probe
+            -- tick, and keeping it would (a) false-start the cooldown from the mana
+            -- branch while the buff is down and (b, historical bug) it used to REPLACE
+            -- the id entirely, producing an untrackable mana-only recipe.
+            recipe.petManaSpent = nil
+            recipe.playerManaSpent = nil
+        elseif recipe.petManaSpent or recipe.playerManaSpent then
+            -- No id at all: a genuine no-buff mount skill (old kirin/meatball style);
+            -- the mana spend is the only use-edge. Clear name matchers so the recipe
+            -- cannot cross-activate from a same-named aura.
+            recipe.buffName = nil
+            recipe.buffNames = nil
+        end
     end
     return recipe
 end
@@ -2340,8 +2655,16 @@ function TargetOverlay.detectedBuffTrackedIndex(row, mode)
         local trackedTriggerId = tonumber(tracked.id or tracked.buff_id)
         local trackedTriggerName = lowerPattern((tracked.buffNames and tracked.buffNames[1]) or tracked.buffName or tracked.name or "")
         if probeDevice ~= "" and trackedDevice == probeDevice then
-            if probeTriggerId and trackedTriggerId and probeTriggerId == trackedTriggerId then return i end
-            if probeTriggerName ~= "" and trackedTriggerName ~= "" and probeTriggerName == trackedTriggerName then return i end
+            if probeTriggerId and trackedTriggerId then
+                -- Both sides have concrete ids: equal means same ability, different
+                -- means DIFFERENT ability even when the display name is identical
+                -- (Raijin run 8000208 vs dash 8000211 are both "4-Leg Lope"). Never
+                -- fall through to the name comparison in that case, or tracking one
+                -- lights up / untracks the other.
+                if probeTriggerId == trackedTriggerId then return i end
+            elseif probeTriggerName ~= "" and trackedTriggerName ~= "" and probeTriggerName == trackedTriggerName then
+                return i
+            end
         end
     end
     return nil
@@ -2669,7 +2992,7 @@ end
 local function cooldownSettingName(entry)
     local row = entry and entry.row
     if not row then return "" end
-    return row.name or row.buffName or row.pattern or tostring(row.id or row.skillId or "")
+    return row.customName or row.name or row.buffName or row.pattern or tostring(row.id or row.skillId or "")
 end
 
 local function cooldownSettingSource(entry)
@@ -2984,7 +3307,25 @@ local function shiftCooldownSettingsPage(delta, group)
     refreshSettingsButtons()
 end
 
+-- Resolve a clicked visual row slot to the row's CURRENT index in
+-- settings.detectedSkills. While probe logging runs, new detections prepend to the
+-- list, so the visual index can go stale between render and click -- clicking "Dash"
+-- would act on the neighbouring row (e.g. Four-Legged Lope). Resolving through the
+-- key stamped at render time targets the row the user actually saw. Returns nil if
+-- that row no longer exists (then the click is a no-op instead of hitting a neighbour).
+function TargetOverlay.detectedIndexFromVisual(index)
+    local ui = detectedSkillsWnd and detectedSkillsWnd.rows and detectedSkillsWnd.rows[index]
+    local key = ui and ui.detectedKey
+    if not key then return index end
+    for i, row in ipairs((settings and settings.detectedSkills) or {}) do
+        if row.key == key then return i end
+    end
+    return nil
+end
+
 local function showDetectedDetails(index)
+    index = TargetOverlay.detectedIndexFromVisual(index)
+    if not index then return end
     TargetOverlay.detectedSkills.ShowDetails({
         window = detectedSkillsWnd,
         settings = settings,
@@ -2993,6 +3334,8 @@ local function showDetectedDetails(index)
 end
 
 local function toggleDetectedSkillTracking(index, mode)
+    index = TargetOverlay.detectedIndexFromVisual(index)
+    if not index then return end
     TargetOverlay.detectedSkills.ToggleTracking({
         settings = settings,
         buffState = buffState,
@@ -3038,7 +3381,12 @@ local function createDetectedSkillsWindow()
         applyDrag = applyDrag,
         safePosition = TargetOverlay.safeWindowPosition,
         showDetails = showDetectedDetails,
-        toggleTracking = toggleDetectedSkillTracking
+        toggleTracking = toggleDetectedSkillTracking,
+        clearDetected = function()
+            settings.detectedSkills = {}
+            saveSettings("saving (detected skills cleared)")
+            if refreshDetectedSkillRows then refreshDetectedSkillRows() end
+        end
     })
 end
 
@@ -3604,6 +3952,12 @@ function TargetOverlay.init()
     createEventWindow()
     TargetOverlay.travelSpeed.Init(settings, saveSettings, applyHandleDrag)
     TargetOverlay.ownersMark.Init(settings, applyHandleDrag)
+    api.On("POWER_RANGER_SS_MODE", onStumpySenseLayout)
+    if not stumpyDockHooksRegistered then
+        api.On("STUMPY_DOCK_WHO", registerStumpyDockMember)
+        stumpyDockHooksRegistered = true
+    end
+    registerStumpyDockMember()
     shiftUiScale(0)
 end
 
@@ -3693,6 +4047,7 @@ local function hideModelOverlay()
     clearModelWidgets()
     hideModelRange()
     if targetInfoWnd then targetInfoWnd:Show(false) end
+    TargetOverlay.clearStumpyStatsBox()
     lastScreenPosition = ""
     modelDataTargetId = nil
     targetInfoMisses = 0
@@ -3931,6 +4286,7 @@ function TargetOverlay.update(dt)
         refreshGuildFamilyWindow(usableInfo)
     elseif targetInfoWnd then
         targetInfoWnd:Show(false)
+        TargetOverlay.clearStumpyStatsBox()
         hideGuildFamilyWindow()
     end
 
@@ -3994,6 +4350,7 @@ function TargetOverlay.update(dt)
 end
 
 function TargetOverlay.cleanup()
+    stumpySenseLayout.enabled = false
     if eventWnd then
         pcall(function() eventWnd:UnregisterEvent("COMBAT_MSG") end)
         pcall(function() eventWnd:UnregisterEvent("SPELLCAST_START") end)
@@ -4010,6 +4367,7 @@ function TargetOverlay.cleanup()
     if guildFamilyWnd then guildFamilyWnd:Show(false) end
     TargetOverlay.travelSpeed.Cleanup()
     TargetOverlay.ownersMark.Cleanup()
+    unregisterStumpyDockMember()
     if selfWnd then selfWnd:Show(false) end
     if settingsWnd then settingsWnd:Show(false) end
     if detectedSkillsWnd then detectedSkillsWnd:Show(false) end

@@ -13,7 +13,9 @@ function DetectedSkills.DetailText(row)
     local pieces = {
         "Name: " .. short(row.name or row.pattern, 58),
         "Type: " .. tostring(row.kind or "-"),
-        "ID: " .. tostring(row.id or "-"),
+        -- formatBuffId: plain tostring is %.6g in this client and shows the SAME string
+        -- for distinct 7-digit ids, which made different buffs look identical.
+        "ID: " .. (row.id and OverlayUtils.formatBuffId(row.id) or "-"),
         "Seen: " .. tostring(row.seen or 0),
         "Unit: " .. tostring(row.unit or "-"),
         "Aura: " .. tostring(row.auraKind or "-"),
@@ -47,7 +49,7 @@ end
 local function detectionSummary(row)
     if not row then return "" end
     local parts = {}
-    if row.id then parts[#parts + 1] = "ID " .. tostring(row.id) end
+    if row.id then parts[#parts + 1] = "ID " .. OverlayUtils.formatBuffId(row.id) end
     local auraKind = tostring(row.auraKind or row.kind or "")
     local name = row.name or row.pattern
     if auraKind ~= "" and auraKind ~= "skill" then
@@ -191,6 +193,10 @@ function DetectedSkills.RefreshRows(ctx)
     local rows = settings.detectedSkills or {}
     for i, ui in ipairs(wnd.rows) do
         local row = rows[i]
+        -- Remember WHICH row this slot is showing. New detections prepend to the list
+        -- while logging is active, so by the time the user clicks, the visual index can
+        -- point at a neighbour. Click handlers resolve through this key instead.
+        ui.detectedKey = row and row.key or nil
         if row then
             if row.kind == "buff" then
                 ctx.setToggleButton(ui.auraButton, ctx.detectedBuffTrackedIndex(row, "aura") ~= nil, "Aura")

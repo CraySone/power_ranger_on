@@ -863,7 +863,12 @@ function HotSwap.createMain()
     queueDelay = 0
     if settings.floatShown == false then return end
 
-    local gearSets = settings.gear_sets or {}
+    -- Only sets with Show ON occupy a row on the floating window; hidden sets stay
+    -- available in settings and for auto-triggers.
+    local gearSets = {}
+    for _, set in ipairs(settings.gear_sets or {}) do
+        if set.showOnFloat ~= false then gearSets[#gearSets + 1] = set end
+    end
     local height = settings.hidden and MAIN.headerH or panelHeight(#gearSets)
     local opensUp = settings.open_direction == "up"
     local headerX, headerY = safeHeaderPosition(settings.x, settings.y, MAIN.width, height, opensUp, settings.hidden)
@@ -1233,7 +1238,7 @@ local function addSettingsControls()
             rowUi.row = row
             if row then
                 rowUi.name:SetText(shortText(row.name or row.pattern or tostring(row.id or "Buff"), 28))
-                rowUi.meta:SetText(row.id and ("ID " .. tostring(row.id)) or "buff")
+                rowUi.meta:SetText(row.id and ("ID " .. string.format("%.0f", tonumber(row.id) or 0)) or "buff")
                 rowUi.add:SetTone(HotSwap.CustomAuraTracked(row) and COLORS.active or COLORS.blue)
                 rowUi.add:SetCleanText(HotSwap.CustomAuraTracked(row) and "Added" or (selectedCustomIndex and "Bind" or "Add"))
                 rowUi.root:Show(true)
@@ -1278,6 +1283,11 @@ local function addSettingsControls()
             if set then
                 row.name:SetText(shortText(set.name, 28))
                 row.select:SetTone(index == selectedSetIndex and COLORS.active or COLORS.button)
+                if row.show then
+                    local shown = set.showOnFloat ~= false
+                    row.show:SetCleanText(shown and "Show ON" or "Show OFF")
+                    row.show:SetTone(shown and COLORS.active or COLORS.button)
+                end
                 row.root:Show(true)
             else
                 row.root:Show(false)
@@ -1404,6 +1414,15 @@ local function addSettingsControls()
             if settings.gear_sets[ui.setRows[i].index] then
                 table.remove(settings.gear_sets, ui.setRows[i].index)
                 selectedSetIndex = nil
+                saveSettings()
+                refreshMain()
+                refreshAll()
+            end
+        end, ALIGN.CENTER)
+        row.show = flatButton(root, "power_ranger_hs_set_show_" .. i, "Show ON", 458, 2, 90, 20, COLORS.active, function()
+            local set = settings.gear_sets[ui.setRows[i].index]
+            if set then
+                set.showOnFloat = set.showOnFloat == false
                 saveSettings()
                 refreshMain()
                 refreshAll()

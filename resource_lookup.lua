@@ -11,9 +11,14 @@ local iconOverrides = {
     [8000798] = "game/ui/icon/icon_skill_seahorse02.dds"
 }
 
+-- Cache keys MUST go through formatBuffId, never tostring: this client's tostring is
+-- %.6g, so all 7-digit ids print the same string. With tostring keys, sibling buffs
+-- (Raijin run 8000208 / dash 8000211) shared ONE cache slot -- whichever resolved
+-- first served its tooltip/name/icon for BOTH ids. Same for 7-digit item types
+-- (all Flamefeather tiers 8001101..8001108 collided onto one icon slot).
 function ResourceLookup.BuffTooltipById(id, optionalBuffHelper)
     if id == nil then return nil end
-    local key = tostring(id or "")
+    local key = OverlayUtils.formatBuffId(id)
     if buffTooltipCache[key] ~= nil then return buffTooltipCache[key] or nil end
     local tooltip = OverlayUtils.safeCall(function() return api.Ability:GetBuffTooltip(tonumber(id), 0) end)
     if not tooltip then
@@ -23,7 +28,7 @@ function ResourceLookup.BuffTooltipById(id, optionalBuffHelper)
         tooltip = OverlayUtils.safeCall(function() return api.Ability.GetBuffTooltip(tonumber(id)) end)
     end
     if not tooltip and optionalBuffHelper and optionalBuffHelper.GetBuffName then
-        local name = OverlayUtils.safeCall(function() return optionalBuffHelper.GetBuffName(tostring(id)) end)
+        local name = OverlayUtils.safeCall(function() return optionalBuffHelper.GetBuffName(OverlayUtils.formatBuffId(id)) end)
         if name then tooltip = { name = name } end
     end
     OverlayUtils.cachePut(buffTooltipCache, key, tooltip or false)
@@ -31,19 +36,19 @@ function ResourceLookup.BuffTooltipById(id, optionalBuffHelper)
 end
 
 function ResourceLookup.BuffIconById(id, optionalBuffHelper)
-    local key = tostring(id or "")
+    local key = OverlayUtils.formatBuffId(id)
     if buffIconCache[key] ~= nil then return buffIconCache[key] end
     local tooltip = ResourceLookup.BuffTooltipById(id, optionalBuffHelper)
     local path = OverlayUtils.iconPath(tooltip)
     if not path and optionalBuffHelper and optionalBuffHelper.GetBuffIcon then
-        path = OverlayUtils.safeCall(function() return optionalBuffHelper.GetBuffIcon(tostring(id)) end)
+        path = OverlayUtils.safeCall(function() return optionalBuffHelper.GetBuffIcon(OverlayUtils.formatBuffId(id)) end)
     end
     OverlayUtils.cachePut(buffIconCache, key, path or false)
     return path
 end
 
 function ResourceLookup.ItemIconByType(itemType)
-    local key = "item:" .. tostring(itemType or "")
+    local key = "item:" .. OverlayUtils.formatBuffId(itemType)
     if buffIconCache[key] ~= nil then return buffIconCache[key] or nil end
     local info = OverlayUtils.safeCall(function() return api.Item:GetItemInfoByType(tonumber(itemType)) end)
     local path = OverlayUtils.iconPath(info)
@@ -108,7 +113,7 @@ end
 function ResourceLookup.BuffCooldownById(id, optionalBuffHelper)
     if not id then return 30 end
     if optionalBuffHelper and optionalBuffHelper.GetBuffCooldown then
-        local cooldown = OverlayUtils.safeCall(function() return optionalBuffHelper.GetBuffCooldown(tostring(id)) end)
+        local cooldown = OverlayUtils.safeCall(function() return optionalBuffHelper.GetBuffCooldown(OverlayUtils.formatBuffId(id)) end)
         cooldown = tonumber(cooldown)
         if cooldown and cooldown > 0 then return cooldown end
     end
@@ -120,7 +125,7 @@ function ResourceLookup.BuffNameById(id, optionalBuffHelper)
     local name = OverlayUtils.textField(tooltip, {"name", "title", "buff_name"})
     if name then return name end
     if optionalBuffHelper and optionalBuffHelper.GetBuffName then
-        return OverlayUtils.safeCall(function() return optionalBuffHelper.GetBuffName(tostring(id)) end)
+        return OverlayUtils.safeCall(function() return optionalBuffHelper.GetBuffName(OverlayUtils.formatBuffId(id)) end)
     end
     return nil
 end
@@ -139,7 +144,7 @@ end
 
 function ResourceLookup.SkillIconById(id)
     if id == nil then return nil end
-    local key = tostring(id or "")
+    local key = OverlayUtils.formatBuffId(id)
     if skillIconCache[key] ~= nil then return skillIconCache[key] end
     local override = iconOverrides[tonumber(id)]
     if override then
