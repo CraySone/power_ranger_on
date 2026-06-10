@@ -22,12 +22,17 @@ local Store = {}
 local INT_THRESHOLD = 100000
 local INT_PREFIX = "__n__"
 local INT_PREFIX_LEN = #INT_PREFIX
--- Primary lives in .data/, but the game's File:Write does io.open(path, "w") with NO
--- directory creation -- if a user's copy of the addon is missing the .data folder
--- (zip extractors and manual copies often drop dot-folders), every write there fails.
--- The fallback paths sit in the addon root, which always exists.
-local SETTINGS_PATH = "power_ranger_on/.data/settings.lua"
-local BACKUP_PATH = "power_ranger_on/.data/settings_backup.lua"
+-- Primary lives in data/ -- deliberately NOT a dot-folder: addon managers/updaters
+-- filter dot-entries when installing (to skip .git etc.), so a ".data" folder never
+-- reached manager users, and the game's File:Write does io.open(path, "w") with NO
+-- directory creation, so the addon could not create it either. data/ ships with a
+-- plain readme.txt so extractors cannot treat it as empty. The legacy .data paths
+-- stay readable for git users who already have settings there; the root-level
+-- fallbacks cover installs where even data/ is missing.
+local SETTINGS_PATH = "power_ranger_on/data/settings.lua"
+local BACKUP_PATH = "power_ranger_on/data/settings_backup.lua"
+local LEGACY_SETTINGS_PATH = "power_ranger_on/.data/settings.lua"
+local LEGACY_BACKUP_PATH = "power_ranger_on/.data/settings_backup.lua"
 local FALLBACK_SETTINGS_PATH = "power_ranger_on/settings_data.lua"
 local FALLBACK_BACKUP_PATH = "power_ranger_on/settings_data_backup.lua"
 
@@ -125,8 +130,10 @@ function Store.Load(addonId)
     local source = "shared (first run / migration)"
     for _, candidate in ipairs({
         { path = SETTINGS_PATH, label = "private" },
+        { path = LEGACY_SETTINGS_PATH, label = "private (legacy .data)" },
         { path = FALLBACK_SETTINGS_PATH, label = "private (root fallback)" },
         { path = BACKUP_PATH, label = "backup" },
+        { path = LEGACY_BACKUP_PATH, label = "backup (legacy .data)" },
         { path = FALLBACK_BACKUP_PATH, label = "backup (root fallback)" }
     }) do
         local data = safeRead(candidate.path)
@@ -163,9 +170,14 @@ function Store.Save()
         safeWrite(BACKUP_PATH, encoded)
         return true
     end
+    if safeWrite(LEGACY_SETTINGS_PATH, encoded) then
+        safeWrite(LEGACY_BACKUP_PATH, encoded)
+        logInfo("settings saved to legacy .data folder (the data folder is missing)")
+        return true
+    end
     if safeWrite(FALLBACK_SETTINGS_PATH, encoded) then
         safeWrite(FALLBACK_BACKUP_PATH, encoded)
-        logInfo("settings saved to root fallback (the .data folder is missing)")
+        logInfo("settings saved to root fallback (no data folder present)")
         return true
     end
     logError("private settings save FAILED on all paths; falling back to shared addon_settings")
