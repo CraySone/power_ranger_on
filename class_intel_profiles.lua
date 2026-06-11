@@ -152,6 +152,17 @@ function ClassIntelProfiles.CycleEditProfile(settings, delta)
     return settings.classIntelEditProfile
 end
 
+function ClassIntelProfiles.SetEditProfile(settings, profileKey)
+    ClassIntelProfiles.Ensure(settings)
+    for _, entry in ipairs(ClassIntelProfiles.PROFILES) do
+        if entry.key == profileKey then
+            settings.classIntelEditProfile = profileKey
+            return profileKey
+        end
+    end
+    return settings.classIntelEditProfile
+end
+
 function ClassIntelProfiles.ToggleStat(settings, statKey)
     ClassIntelProfiles.Ensure(settings)
     local profile = settings.classIntelProfiles[settings.classIntelEditProfile or "general"]

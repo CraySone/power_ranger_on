@@ -26,6 +26,8 @@ TargetOverlay.resourceLookup = require("power_ranger_on/resource_lookup")
 TargetOverlay.windowHelpers = require("power_ranger_on/window_helpers")
 TargetOverlay.travelSpeed = require("power_ranger_on/travel_speed")
 TargetOverlay.ownersMark = require("power_ranger_on/owners_mark")
+TargetOverlay.weaponProc = require("power_ranger_on/weapon_proc")
+TargetOverlay.statsCatalog = require("power_ranger_on/target_stats_catalog")
 TargetOverlay.optionalBuffHelper = OverlayUtils.safeCall(function() return require("CooldawnBuffTracker/buff_helper") end)
 TargetOverlay.simpleStatsGrid = {
     pdef = 0,
@@ -106,6 +108,11 @@ local defaults = {
     showOwnOwnersMark = false,
     showTargetOwnersMark = true,
     warnMissingOwnersMark = true,
+    weaponProcEnabled = false,
+    weaponProcReadyPopup = true,
+    weaponProcDamageChat = true,
+    weaponProcX = 500,
+    weaponProcY = 230,
     debugLogging = false,
     showInfoDefense = true,
     showInfoPdef = true,
@@ -1507,6 +1514,24 @@ local function buildInfoRows(targetInfo, className, gearscore, pdef, mdef, pdefP
         addRow(defense, "resilience", extraStats.resilience and ("Resil: " .. extraStats.resilience) or nil)
     end
     if classProfileStatVisible(targetInfo, className, "critRate") then addRow(defense, "critRate", extraStats.critRate and ("Crit: " .. extraStats.critRate) or nil) end
+    -- Catalog stats (target_stats_catalog): profile-selected raw UnitInfo stats.
+    -- Expanded mode lists them under their own "Stats" header; compact/simple
+    -- mode merges them into the stats grid, balanced across both grid rows.
+    local catalogStats = {}
+    if extraStats.catalogInfos then
+        for _, stat in ipairs(TargetOverlay.statsCatalog.STATS) do
+            if not stat.legacy and classProfileStatVisible(targetInfo, className, stat.key) then
+                local text = TargetOverlay.statsCatalog.Value(OverlayUtils, extraStats.catalogInfos, stat)
+                if text then addRow(catalogStats, stat.key, stat.label .. ": " .. text) end
+            end
+        end
+    end
+    if compact then
+        for _, row in ipairs(catalogStats) do
+            row.catalog = true
+            table.insert(defense, row)
+        end
+    end
 
     local rows = {}
     if not compact and (#identity > 0 or rangeHeader ~= "") then
@@ -1519,8 +1544,9 @@ local function buildInfoRows(targetInfo, className, gearscore, pdef, mdef, pdefP
             local simpleRows = {}
             for _, row in ipairs(defense) do
                 local gridRow = TargetOverlay.simpleStatsGrid[row.key]
+                if gridRow == nil and row.catalog then gridRow = -1 end
                 if gridRow ~= nil then
-                    if row.key == "critRate" then
+                    if row.key == "critRate" or gridRow == -1 then
                         local topCount = #(simpleRows[0] or {})
                         local bottomCount = #(simpleRows[1] or {})
                         gridRow = topCount <= bottomCount and 0 or 1
@@ -1542,8 +1568,9 @@ local function buildInfoRows(targetInfo, className, gearscore, pdef, mdef, pdefP
             local compactRows = {}
             for _, row in ipairs(defense) do
                 local gridRow = TargetOverlay.simpleStatsGrid[row.key]
+                if gridRow == nil and row.catalog then gridRow = -1 end
                 if gridRow ~= nil then
-                    if row.key == "critRate" then
+                    if row.key == "critRate" or gridRow == -1 then
                         local topCount = #(compactRows[0] or {})
                         local bottomCount = #(compactRows[1] or {})
                         gridRow = topCount <= bottomCount and 0 or 1
@@ -1564,6 +1591,12 @@ local function buildInfoRows(targetInfo, className, gearscore, pdef, mdef, pdefP
         else
             for _, row in ipairs(defense) do table.insert(rows, row) end
         end
+    end
+    -- Expanded mode only: in compact/simple the catalog rows were already merged
+    -- into the defense grid above, so appending here would duplicate them.
+    if not compact and #catalogStats > 0 then
+        table.insert(rows, { header = true, text = "Stats" })
+        for _, row in ipairs(catalogStats) do table.insert(rows, row) end
     end
     return rows, TargetOverlay.compactSummaryText(compactSummary), simpleGuild or "", table.concat(simpleMeta, "  |  "), compactSummary
 end
@@ -1630,7 +1663,7 @@ function TargetOverlay.applyTextShadow()
         local simpleEnabled = settings.testTargetWindow == true
         TargetOverlay.applyReadableTextStyle(targetInfoWnd.title, simpleEnabled)
         TargetOverlay.applyReadableTextStyle(targetInfoWnd.simpleMeta, simpleEnabled)
-        for i = 1, 16 do
+        for i = 1, 30 do
             TargetOverlay.applyReadableTextStyle(targetInfoWnd.rows[i], simpleEnabled)
             TargetOverlay.applyReadableTextStyle(targetInfoWnd.simpleValues[i], simpleEnabled)
         end
@@ -1838,7 +1871,7 @@ local function renderStumpyStatsWindow(rows, compactSummary, scale, targetInfo, 
     local y = headerHeight + 7
     local col = 0
     for _, row in ipairs(rows or {}) do
-        if widgetIndex > 16 or y + rowHeight > height - 3 then break end
+        if widgetIndex > 30 or y + rowHeight > height - 3 then break end
         local widget = targetInfoWnd.rows[widgetIndex]
         local valueWidget = targetInfoWnd.simpleValues[widgetIndex]
         widget.style:SetFontSize(math.floor((11 * scale) + 0.5))
@@ -1894,7 +1927,7 @@ local function renderStumpyStatsWindow(rows, compactSummary, scale, targetInfo, 
             end
         end
     end
-    for i = widgetIndex, 16 do
+    for i = widgetIndex, 30 do
         setInfoCell(targetInfoWnd.rows[i], nil)
         setInfoCell(targetInfoWnd.simpleValues[i], nil)
     end
@@ -1955,60 +1988,55 @@ local function refreshTargetInfoWindow(targetInfo, className, gearscore, pdef, m
     TargetOverlay.applyReadableTextStyle(targetInfoWnd.simpleMeta, testLayout)
     local headerHeight = math.floor(((compact and 18 or 22) * scale) + 0.5)
     local sideMargin = math.floor(((testLayout and 4 or compact and 6 or 12) * scale) + 0.5)
-    local simpleColumnGap = math.max(0, math.min(73, tonumber(settings.simpleColumnGap) or 0)) - 43
+    -- Snug grid: every column sizes to its own content, so the column gap is a
+    -- true pixel gap now. (The old layout used wide uniform 108px cells with a
+    -- -43px default offset to fake density, which fell apart once long catalog
+    -- stat labels inflated every cell.)
+    local simpleColumnGap = math.max(0, math.min(73, tonumber(settings.simpleColumnGap) or 0))
     local simpleLineGap = math.max(0, math.min(23, tonumber(settings.simpleLineGap) or 0)) - 4
-    local colGap = math.floor(((testLayout and simpleColumnGap or compact and 6 or 12) * scale) + 0.5)
+    local colGap = math.floor(((testLayout and (4 + simpleColumnGap) or compact and 5 or 12) * scale) + 0.5)
     local titleMargin = math.floor(((testLayout and 4 or compact and 6 or 8) * scale) + 0.5)
     local outlinePad = testLayout and math.floor((4 * scale) + 0.5) or 0
-    local minCellWidth = math.floor(((testLayout and 108 or 58) * scale) + 0.5) + outlinePad
-    local simpleValueOffset = nil
+    local minCellWidth = math.floor(((testLayout and 44 or 40) * scale) + 0.5) + outlinePad
     local wantedWidth = math.floor((430 * scale) + 0.5)
-    for i = 1, 16 do
+    for i = 1, 30 do
         targetInfoWnd.rows[i].style:SetFontSize(math.floor((12 * scale) + 0.5))
         targetInfoWnd.simpleValues[i].style:SetFontSize(math.floor((12 * scale) + 0.5))
         TargetOverlay.applyReadableTextStyle(targetInfoWnd.rows[i], testLayout)
         TargetOverlay.applyReadableTextStyle(targetInfoWnd.simpleValues[i], testLayout)
         setInfoCell(targetInfoWnd.simpleValues[i], nil)
     end
-    simpleValueOffset = math.ceil(targetInfoWnd.rows[1].style:GetTextWidth("Tough:")) + math.floor((2 * scale) + 0.5)
+    -- Measure each grid column's own widest cell and lay columns out snugly.
+    local gridCols = 0
+    local gridColWidths = {}
+    local gridColOffsets = {}
+    local maxColWidth = minCellWidth
     if compact then
-        local summaryWidth = testLayout and targetInfoWnd.title.style:GetTextWidth(simpleGuild) or 0
-        if testLayout then summaryWidth = math.max(summaryWidth, targetInfoWnd.simpleMeta.style:GetTextWidth(simpleMeta)) end
-        local widestCell = 0
-        local gridCols = 0
-        for _, row in ipairs(rows) do
-            if not row.header and row.text then
-                widestCell = math.max(widestCell, targetInfoWnd.rows[1].style:GetTextWidth(row.text))
-                if row.compactGridCol ~= nil then
-                    gridCols = math.max(gridCols, row.compactGridCol + 1)
-                end
-            end
-        end
-        local statsWidth = 0
-        if gridCols > 0 then
-            widestCell = math.max(widestCell + outlinePad, minCellWidth)
-            statsWidth = (widestCell * gridCols) + (colGap * math.max(0, gridCols - 1)) + (sideMargin * 2)
-            wantedWidth = math.ceil(testLayout and math.max(summaryWidth + (titleMargin * 2) + outlinePad, statsWidth) or statsWidth)
-        else
-            statsWidth = math.floor((150 * scale) + 0.5)
-            wantedWidth = math.ceil(testLayout and math.max(summaryWidth + (titleMargin * 2) + outlinePad, statsWidth) or statsWidth)
-        end
-    end
-    local cellWidth = compact and math.floor((wantedWidth - (sideMargin * 2) - colGap) / 2) or 198
-    if compact then
-        local gridCols = 0
-        local widestCell = 0
         for _, row in ipairs(rows) do
             if row.compactGridCol ~= nil then
                 gridCols = math.max(gridCols, row.compactGridCol + 1)
-                widestCell = math.max(widestCell, targetInfoWnd.rows[1].style:GetTextWidth(row.text or "") + outlinePad)
+                local w = math.ceil(targetInfoWnd.rows[1].style:GetTextWidth(row.text or "")) + outlinePad
+                if w > (gridColWidths[row.compactGridCol] or 0) then gridColWidths[row.compactGridCol] = w end
             end
         end
-        if gridCols > 0 then
-            cellWidth = math.max(minCellWidth, math.ceil(widestCell))
+        local acc = sideMargin
+        for c = 0, gridCols - 1 do
+            local w = math.max(gridColWidths[c] or 0, minCellWidth)
+            gridColWidths[c] = w
+            gridColOffsets[c] = acc
+            acc = acc + w + colGap
+            if w > maxColWidth then maxColWidth = w end
+        end
+        local statsWidth = gridCols > 0 and (acc - colGap + sideMargin) or math.floor((150 * scale) + 0.5)
+        if testLayout then
+            local summaryWidth = targetInfoWnd.title.style:GetTextWidth(simpleGuild)
+            summaryWidth = math.max(summaryWidth, targetInfoWnd.simpleMeta.style:GetTextWidth(simpleMeta))
+            wantedWidth = math.ceil(math.max(summaryWidth + (titleMargin * 2) + outlinePad, statsWidth))
+        else
+            wantedWidth = math.ceil(statsWidth)
         end
     end
-    if not compact then cellWidth = math.floor((cellWidth * scale) + 0.5) end
+    local cellWidth = compact and maxColWidth or math.floor((198 * scale) + 0.5)
     local colStep = compact and (cellWidth + colGap) or math.floor((210 * scale) + 0.5)
     local rowStep = math.floor(((testLayout and (15 + simpleLineGap) or compact and 15 or 19) * scale) + 0.5)
     targetInfoWnd.header:SetExtent(wantedWidth, headerHeight)
@@ -2032,7 +2060,7 @@ local function refreshTargetInfoWindow(targetInfo, className, gearscore, pdef, m
     local y = math.floor(((testLayout and 36 or compact and 20 or 29) * scale) + 0.5)
     local col = 0
     for _, row in ipairs(rows) do
-        if widgetIndex > 16 then break end
+        if widgetIndex > 30 then break end
         if row.header then
             if col ~= 0 then
                 y = y + rowStep
@@ -2049,15 +2077,22 @@ local function refreshTargetInfoWindow(targetInfo, className, gearscore, pdef, m
             if compact and row.compactGridRow ~= nil then
                 local widget = targetInfoWnd.rows[widgetIndex]
                 local valueWidget = targetInfoWnd.simpleValues[widgetIndex]
+                local colX = gridColOffsets[row.compactGridCol] or (sideMargin + (row.compactGridCol * colStep))
+                local colW = gridColWidths[row.compactGridCol] or cellWidth
                 widget:RemoveAllAnchors()
-                widget:SetExtent(cellWidth, math.floor(((testLayout and 15 or 13) * scale) + 0.5))
-                widget:AddAnchor("TOPLEFT", targetInfoWnd, sideMargin + (row.compactGridCol * colStep), y + (row.compactGridRow * rowStep))
+                widget:SetExtent(colW, math.floor(((testLayout and 15 or 13) * scale) + 0.5))
+                widget:AddAnchor("TOPLEFT", targetInfoWnd, colX, y + (row.compactGridRow * rowStep))
                 if testLayout then
                     local labelText, valueText = tostring(row.text or ""):match("^(.-):%s*(.*)$")
-                    valueWidget:RemoveAllAnchors()
-                    valueWidget:SetExtent(math.max(0, cellWidth - simpleValueOffset), math.floor((15 * scale) + 0.5))
-                    valueWidget:AddAnchor("TOPLEFT", targetInfoWnd, sideMargin + (row.compactGridCol * colStep) + simpleValueOffset, y + (row.compactGridRow * rowStep))
                     if labelText == "Evasion" then labelText = "Evas" end
+                    -- Value hugs its own label instead of a shared global column.
+                    local valueOffset = colW
+                    if labelText then
+                        valueOffset = math.ceil(targetInfoWnd.rows[1].style:GetTextWidth(labelText .. ":")) + math.floor((2 * scale) + 0.5)
+                    end
+                    valueWidget:RemoveAllAnchors()
+                    valueWidget:SetExtent(math.max(0, colW - valueOffset), math.floor((15 * scale) + 0.5))
+                    valueWidget:AddAnchor("TOPLEFT", targetInfoWnd, colX + valueOffset, y + (row.compactGridRow * rowStep))
                     setInfoCell(widget, labelText and (labelText .. ":") or row.text, COLORS.white)
                     setInfoCell(valueWidget, valueText, COLORS.white)
                 else
@@ -2102,7 +2137,7 @@ local function refreshTargetInfoWindow(targetInfo, className, gearscore, pdef, m
         targetInfoWnd._lastHeight = wantedHeight
         targetInfoWnd._lastWidth = wantedWidth
     end
-    for i = widgetIndex, 16 do
+    for i = widgetIndex, 30 do
         setInfoCell(targetInfoWnd.rows[i], nil)
     end
     targetInfoWnd:Show(true)
@@ -2786,9 +2821,10 @@ local function startSkillCooldown(row, skillName, skillId)
 end
 
 local function onCombatMessage(targetUnitId, combatEvent, source, target, ...)
+    local args = {...}
+    TargetOverlay.weaponProc.OnCombatMessage(source, target, args)
     local logging = settings.skillProbeLogging == true
     if not logging and not TargetOverlay.hasEnabledTrackedSkills() then return end
-    local args = {...}
     local result = SkillProbe.parsedCombatMessage(combatEvent, args)
     local skillName, skillId = SkillProbe.extractSkillFields(result, args)
     local row = findTrackedSkill(skillName, skillId)
@@ -2859,7 +2895,9 @@ end
 
 function TargetOverlay.refreshEventSubscriptions()
     if not eventWnd then return end
-    local shouldListen = settings and (settings.skillProbeLogging == true or TargetOverlay.hasEnabledTrackedSkills()) or false
+    local shouldListen = settings and (settings.skillProbeLogging == true
+        or TargetOverlay.hasEnabledTrackedSkills()
+        or (settings.weaponProcEnabled == true and settings.weaponProcDamageChat == true)) or false
     if eventWnd._powerRangerListening == shouldListen then return end
     if shouldListen then
         pcall(function() eventWnd:RegisterEvent("COMBAT_MSG") end)
@@ -3416,16 +3454,12 @@ function refreshSettingsButtons()
         settingsWnd.shadowBtn:SetTone(COLORS.active)
     end
     TargetOverlay.uiContext.setToggleButton(settingsWnd.targetWindowBtn, settings.showTargetWindow, "Stats window")
-    if settingsWnd.classIntelProfileLabel then
-        settingsWnd.classIntelProfileLabel:SetText(ClassIntelProfiles.Label(settings.classIntelEditProfile))
+    if settingsWnd.weaponProcBtn then
+        TargetOverlay.uiContext.setToggleButton(settingsWnd.weaponProcBtn, settings.weaponProcEnabled == true, "Weapon proc")
+        TargetOverlay.uiContext.setToggleButton(settingsWnd.weaponProcPopupBtn, settings.weaponProcReadyPopup ~= false, "Ready popup")
+        TargetOverlay.uiContext.setToggleButton(settingsWnd.weaponProcChatBtn, settings.weaponProcDamageChat ~= false, "Hit dmg chat")
     end
-    if settingsWnd.classIntelFieldButtons then
-        local profile = settings.classIntelProfiles and settings.classIntelProfiles[settings.classIntelEditProfile or "general"] or {}
-        for _, field in ipairs(ClassIntelProfiles.STATS) do
-            local btn = settingsWnd.classIntelFieldButtons[field.key]
-            if btn then TargetOverlay.uiContext.setToggleButton(btn, profile[field.key] == true, field.label) end
-        end
-    end
+    require("power_ranger_on/stats_picker_window").Refresh()
     TargetOverlay.uiContext.setToggleButton(settingsWnd.compactWindowBtn, settings.compactTargetWindow, "Compact")
     TargetOverlay.uiContext.setToggleButton(settingsWnd.testWindowBtn, settings.testTargetWindow, "Compact/Simple")
     TargetOverlay.uiContext.setToggleButton(settingsWnd.ownershipBtn, settings.showOwnershipLabels ~= false, "Ownership")
@@ -3557,6 +3591,10 @@ local function toggleSetting(key)
     end
     if key == "importNuziCooldowns" then
         refreshNuziCooldownRows(true)
+        TargetOverlay.refreshEventSubscriptions()
+    end
+    if key == "weaponProcEnabled" or key == "weaponProcReadyPopup" or key == "weaponProcDamageChat" then
+        TargetOverlay.weaponProc.Refresh()
         TargetOverlay.refreshEventSubscriptions()
     end
     saveSettings()
@@ -3742,7 +3780,7 @@ local function createSettingsWindow()
         id = "PowerRangerSettings",
         title = "Power Ranger ON",
         width = 620,
-        height = 1000,
+        height = 1060,
         x = settings.settingsX,
         y = settings.settingsY,
         xKey = "settingsX",
@@ -3780,17 +3818,7 @@ local function createSettingsWindow()
         shiftGuildFamilyScale = shiftUiScale,
         shiftSimpleSpacing = TargetOverlay.shiftSimpleSpacing,
         fields = TARGET_INFO_FIELDS,
-        classProfiles = ClassIntelProfiles,
-        cycleClassProfile = function(delta)
-            ClassIntelProfiles.CycleEditProfile(settings, delta)
-            saveSettings()
-            refreshSettingsButtons()
-        end,
-        toggleClassProfileStat = function(statKey)
-            ClassIntelProfiles.ToggleStat(settings, statKey)
-            saveSettings()
-            refreshSettingsButtons()
-        end
+        openStatsPicker = function() TargetOverlay.openStatsPickerWindow() end
     })
 
     settingsSections.BuildSelfCooldowns(settingsWnd, {
@@ -3832,6 +3860,13 @@ local function createSettingsWindow()
         shiftSpeedOpacity = TargetOverlay.shiftSpeedOpacity,
         setSpeedOpacityFromMouse = TargetOverlay.setSpeedOpacityFromMouse
     }, 732)
+    settingsSections.BuildWeaponProc(settingsWnd, {
+        colors = COLORS,
+        sectionPanel = TargetOverlay.uiContext.sectionPanel,
+        label = TargetOverlay.uiContext.label,
+        flatButton = TargetOverlay.uiContext.flatButton,
+        toggleSetting = toggleSetting
+    }, 968)
 
     refreshSettingsButtons()
     settingsWnd:Show(false)
@@ -3900,6 +3935,21 @@ function TargetOverlay.openCooldownSkillsWindow(rowIndex, group, mode)
     })
 end
 
+function TargetOverlay.openStatsPickerWindow()
+    require("power_ranger_on/stats_picker_window").Open({
+        colors = COLORS,
+        settings = settings,
+        label = TargetOverlay.uiContext.label,
+        flatButton = TargetOverlay.uiContext.flatButton,
+        safePosition = TargetOverlay.safeWindowPosition,
+        applyDrag = applyDrag,
+        cycleColor = cycleSettingColor,
+        settingColor = settingColor,
+        save = saveSettings,
+        refresh = refreshSettingsButtons
+    })
+end
+
 function TargetOverlay.openCooldownManagerWindow(group)
     require("power_ranger_on/cooldown_manager_window").Open({
         colors = COLORS,
@@ -3952,6 +4002,7 @@ function TargetOverlay.init()
     createEventWindow()
     TargetOverlay.travelSpeed.Init(settings, saveSettings, applyHandleDrag)
     TargetOverlay.ownersMark.Init(settings, applyHandleDrag)
+    TargetOverlay.weaponProc.Init(settings, applyHandleDrag)
     api.On("POWER_RANGER_SS_MODE", onStumpySenseLayout)
     if not stumpyDockHooksRegistered then
         api.On("STUMPY_DOCK_WHO", registerStumpyDockMember)
@@ -4156,6 +4207,7 @@ function TargetOverlay.update(dt)
     local elapsed = dt or 0
     TargetOverlay.travelSpeed.Update(elapsed)
     TargetOverlay.ownersMark.Update(elapsed)
+    TargetOverlay.weaponProc.Update(elapsed)
     updateElapsed = updateElapsed + elapsed
     selfUpdateElapsed = selfUpdateElapsed + elapsed
     TargetOverlay.cooldownRuntimeElapsed = (TargetOverlay.cooldownRuntimeElapsed or SELF_UPDATE_MS) + elapsed
@@ -4273,14 +4325,18 @@ function TargetOverlay.update(dt)
     local pdef, mdef, pdefPct, mdefPct = TargetOverlay.fillDefense(nil, nil, nil, nil, tokenInfo)
     pdef, mdef, pdefPct, mdefPct = TargetOverlay.fillDefense(pdef, mdef, pdefPct, mdefPct, targetInfo or usableInfo)
     local needsExtraStats = ClassIntelProfiles.NeedsExtraStats(settings)
+    local needsCatalogStats = TargetOverlay.statsCatalog.AnyEnabled(settings)
     local modifierInfo = nil
-    if needsExtraStats or not pdef or not mdef or not pdefPct or not mdefPct then
+    if needsExtraStats or needsCatalogStats or not pdef or not mdef or not pdefPct or not mdefPct then
         modifierInfo = OverlayUtils.safeCall(function() return api.Unit:UnitModifierInfo("target") end)
         if modifierInfo then
             pdef, mdef, pdefPct, mdefPct = TargetOverlay.fillDefense(pdef, mdef, pdefPct, mdefPct, modifierInfo)
         end
     end
     local extraStats = needsExtraStats and TargetOverlay.targetExtraStats(tokenInfo, targetInfo or usableInfo, modifierInfo) or {}
+    if needsCatalogStats then
+        extraStats.catalogInfos = { tokenInfo or {}, targetInfo or usableInfo or {}, modifierInfo or {} }
+    end
     if isPlayer then
         refreshTargetInfoWindow(usableInfo, className, gearscore, pdef, mdef, pdefPct, mdefPct, extraStats)
         refreshGuildFamilyWindow(usableInfo)
@@ -4367,6 +4423,8 @@ function TargetOverlay.cleanup()
     if guildFamilyWnd then guildFamilyWnd:Show(false) end
     TargetOverlay.travelSpeed.Cleanup()
     TargetOverlay.ownersMark.Cleanup()
+    TargetOverlay.weaponProc.Cleanup()
+    require("power_ranger_on/stats_picker_window").Cleanup()
     unregisterStumpyDockMember()
     if selfWnd then selfWnd:Show(false) end
     if settingsWnd then settingsWnd:Show(false) end

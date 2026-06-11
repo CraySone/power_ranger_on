@@ -65,9 +65,6 @@ function SettingsSections.BuildIntelWindow(wnd, ctx)
     local shiftSimpleSpacing = ctx.shiftSimpleSpacing
     local shiftGuildFamilyScale = ctx.shiftGuildFamilyScale or shiftUiScale
     local fields = ctx.fields or {}
-    local classProfiles = ctx.classProfiles
-    local cycleClassProfile = ctx.cycleClassProfile
-    local toggleClassProfileStat = ctx.toggleClassProfileStat
 
     local p = sectionPanel(wnd, "power_ranger_window_panel", 18, 232, 584, 320, "Stats Window")
     local function band(id, y, h)
@@ -111,26 +108,11 @@ function SettingsSections.BuildIntelWindow(wnd, ctx)
 
     band("profiles", 140, 82)
     label(p, "power_ranger_class_profile_title", "Profile stats", 24, 146, 92, 14, 10, colors.gold, ALIGN.LEFT)
-    label(p, "power_ranger_class_profile_label", "Edit", 154, 146, 28, 14, 10, colors.muted, ALIGN.LEFT)
-    flatButton(p, "power_ranger_class_profile_prev", "<", 190, 142, 24, 20, colors.button, function() cycleClassProfile(-1) end)
-    wnd.classIntelProfileLabel = label(p, "power_ranger_class_profile_value", "Fallback", 220, 145, 116, 14, 10, colors.white, ALIGN.CENTER)
-    flatButton(p, "power_ranger_class_profile_next", ">", 342, 142, 24, 20, colors.button, function() cycleClassProfile(1) end)
-    wnd.classIntelFieldButtons = {}
-    if classProfiles then
-        for i, field in ipairs(classProfiles.STATS or {}) do
-            local x = 24 + (((i - 1) % 4) * 134)
-            local y = 170 + (math.floor((i - 1) / 4) * 26)
-            local row = math.floor((i - 1) / 4)
-            local tone = row % 2 == 0 and 0.08 or 0.12
-            local blueTone = row % 2 == 0 and 0.095 or 0.135
-            local bg = p:CreateColorDrawable(tone, tone, blueTone, 0.72, "background")
-            bg:SetExtent(124, 22)
-            bg:AddAnchor("TOPLEFT", p, x - 4, y - 1)
-            bg:Show(true)
-            wnd.classIntelFieldButtons[field.key] = flatButton(p, "power_ranger_class_profile_stat_" .. field.key, "", x, y, 94, 20, colors.active, function() toggleClassProfileStat(field.key) end)
-            wnd.colorCubes[field.key] = colorCube(p, "power_ranger_class_profile_color_" .. field.key, x + 102, y, field.key)
-        end
-    end
+    label(p, "power_ranger_class_profile_hint1", "All target stats moved into their own picker window:", 24, 170, 330, 14, 10, colors.muted, ALIGN.LEFT)
+    label(p, "power_ranger_class_profile_hint2", "pick a profile on top, then toggle stats per category.", 24, 188, 330, 14, 10, colors.muted, ALIGN.LEFT)
+    flatButton(p, "power_ranger_stats_picker_open", "Open Stats Picker", 380, 170, 162, 26, colors.blue, function()
+        if ctx.openStatsPicker then ctx.openStatsPicker() end
+    end)
 
     band("identity", 230, 64)
     label(p, "power_ranger_stats_field_title", "Identity fields", 24, 236, 96, 14, 10, colors.gold, ALIGN.LEFT)
@@ -258,6 +240,23 @@ function SettingsSections.BuildTravelTools(wnd, ctx, y)
         ctx.toggleSetting("warnMissingOwnersMark")
     end)
     ctx.label(p, "power_ranger_travel_move_hint", "Shift-drag speed and personal mark windows.", labelX, 116, 276, 14, 10, colors.muted, ALIGN.LEFT)
+    return p
+end
+
+function SettingsSections.BuildWeaponProc(wnd, ctx, y)
+    local colors = ctx.colors
+    local p = ctx.sectionPanel(wnd, "power_ranger_weapon_proc_panel", 18, y, 584, 80, "Weapon Proc")
+    ctx.label(p, "power_ranger_weapon_proc_hint", "Hidden mainhand proc tracker: Nodachi/Katana crit, Spear armor pen, Staff magic pen.", 14, 30, 470, 14, 10, colors.muted, ALIGN.LEFT)
+    wnd.weaponProcBtn = ctx.flatButton(p, "power_ranger_weapon_proc_toggle", "", 16, 50, 126, 22, colors.active, function()
+        ctx.toggleSetting("weaponProcEnabled")
+    end)
+    wnd.weaponProcPopupBtn = ctx.flatButton(p, "power_ranger_weapon_proc_popup", "", 150, 50, 130, 22, colors.active, function()
+        ctx.toggleSetting("weaponProcReadyPopup")
+    end)
+    wnd.weaponProcChatBtn = ctx.flatButton(p, "power_ranger_weapon_proc_chat", "", 288, 50, 140, 22, colors.active, function()
+        ctx.toggleSetting("weaponProcDamageChat")
+    end)
+    ctx.label(p, "power_ranger_weapon_proc_drag_hint", "Shift-drag the proc bar.", 438, 54, 134, 14, 10, colors.muted, ALIGN.LEFT)
     return p
 end
 

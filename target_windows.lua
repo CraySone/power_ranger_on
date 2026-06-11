@@ -170,7 +170,9 @@ function TargetWindows.CreateTargetInfo(ctx)
     ctx.applyHandleDrag(wnd, dragHandle, "targetWindowX", "targetWindowY")
     wnd.rows = {}
     wnd.simpleValues = {}
-    for i = 1, 16 do
+    -- 30 row cells: the expanded window can now list the full catalog stats
+    -- (target_stats_catalog) on top of identity + the core defense block.
+    for i = 1, 30 do
         wnd.rows[i] = label(wnd, "power_ranger_info_row_" .. i, "", 12, 30, 198, 16, 12, colors.white, ALIGN.LEFT)
         wnd.rows[i]:Clickable(false)
         wnd.simpleValues[i] = label(wnd, "power_ranger_info_simple_value_" .. i, "", 12, 30, 96, 16, 12, colors.white, ALIGN.LEFT)
