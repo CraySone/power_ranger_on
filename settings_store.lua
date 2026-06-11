@@ -22,17 +22,25 @@ local Store = {}
 local INT_THRESHOLD = 100000
 local INT_PREFIX = "__n__"
 local INT_PREFIX_LEN = #INT_PREFIX
--- Primary lives in data/ -- deliberately NOT a dot-folder: addon managers/updaters
--- filter dot-entries when installing (to skip .git etc.), so a ".data" folder never
--- reached manager users, and the game's File:Write does io.open(path, "w") with NO
--- directory creation, so the addon could not create it either. data/ ships with a
--- plain readme.txt so extractors cannot treat it as empty. The legacy .data paths
--- stay readable for git users who already have settings there; the root-level
--- fallbacks cover installs where even data/ is missing.
-local SETTINGS_PATH = "power_ranger_on/data/settings.lua"
-local BACKUP_PATH = "power_ranger_on/data/settings_backup.lua"
-local LEGACY_SETTINGS_PATH = "power_ranger_on/.data/settings.lua"
-local LEGACY_BACKUP_PATH = "power_ranger_on/.data/settings_backup.lua"
+-- Primary lives at the Addon ROOT (next to addon_settings, outside our addon folder),
+-- like other addons keep their data files. The File API is rooted there and the folder
+-- always exists, so a write can never fail on a missing directory -- File:Write is
+-- io.open(path, "w") with NO directory creation, which is why every folder-based
+-- location (.data/, data/) kept dying on installs that did not ship the folder. Living
+-- outside power_ranger_on/ also means the file survives addon updates and even full
+-- delete-and-reinstalls, since managers only ever touch the addon folder itself.
+local SETTINGS_PATH = "power_ranger_on_settings.lua"
+local BACKUP_PATH = "power_ranger_on_settings_backup.lua"
+-- Read-only legacy paths from older builds, ordered newest-first per install type:
+-- data/ only holds settings if the game saved there (the short-lived data-folder
+-- build), .data/ covers older git installs, and the in-addon root files cover
+-- installs where both folders were missing. The Addon-root file is read first and
+-- always wins once it exists, so these only matter on the first load after this
+-- update. Remove them a few releases from now.
+local LEGACY_DATA_SETTINGS_PATH = "power_ranger_on/data/settings.lua"
+local LEGACY_DATA_BACKUP_PATH = "power_ranger_on/data/settings_backup.lua"
+local LEGACY_DOTDATA_SETTINGS_PATH = "power_ranger_on/.data/settings.lua"
+local LEGACY_DOTDATA_BACKUP_PATH = "power_ranger_on/.data/settings_backup.lua"
 local FALLBACK_SETTINGS_PATH = "power_ranger_on/settings_data.lua"
 local FALLBACK_BACKUP_PATH = "power_ranger_on/settings_data_backup.lua"
 
@@ -129,12 +137,14 @@ function Store.Load(addonId)
     local private = nil
     local source = "shared (first run / migration)"
     for _, candidate in ipairs({
-        { path = SETTINGS_PATH, label = "private" },
-        { path = LEGACY_SETTINGS_PATH, label = "private (legacy .data)" },
-        { path = FALLBACK_SETTINGS_PATH, label = "private (root fallback)" },
-        { path = BACKUP_PATH, label = "backup" },
-        { path = LEGACY_BACKUP_PATH, label = "backup (legacy .data)" },
-        { path = FALLBACK_BACKUP_PATH, label = "backup (root fallback)" }
+        { path = SETTINGS_PATH, label = "private (Addon root)" },
+        { path = LEGACY_DATA_SETTINGS_PATH, label = "private (legacy data/)" },
+        { path = LEGACY_DOTDATA_SETTINGS_PATH, label = "private (legacy .data/)" },
+        { path = FALLBACK_SETTINGS_PATH, label = "private (legacy addon-folder fallback)" },
+        { path = BACKUP_PATH, label = "backup (Addon root)" },
+        { path = LEGACY_DATA_BACKUP_PATH, label = "backup (legacy data/)" },
+        { path = LEGACY_DOTDATA_BACKUP_PATH, label = "backup (legacy .data/)" },
+        { path = FALLBACK_BACKUP_PATH, label = "backup (legacy addon-folder fallback)" }
     }) do
         local data = safeRead(candidate.path)
         if data and not looksEmpty(data) then
@@ -158,9 +168,10 @@ end
 
 -- Persist to the private file (+ backup mirror). Sanitizes first so a stray bad value
 -- can't break our file, then encodes large ids so they survive the serializer.
--- NEVER fails silently: if .data/ is missing we fall back to addon-root files, and if
--- even those fail we fall back to the old shared api.SaveSettings() path (sanitized,
--- so it cannot corrupt the shared file) rather than lose the user's data.
+-- NEVER fails silently: if the Addon-root write fails we fall back to a file inside
+-- the addon folder, and if even that fails we fall back to the old shared
+-- api.SaveSettings() path (sanitized, so it cannot corrupt the shared file) rather
+-- than lose the user's data.
 function Store.Save()
     local root = state.root
     if type(root) ~= "table" then return false end
@@ -170,14 +181,9 @@ function Store.Save()
         safeWrite(BACKUP_PATH, encoded)
         return true
     end
-    if safeWrite(LEGACY_SETTINGS_PATH, encoded) then
-        safeWrite(LEGACY_BACKUP_PATH, encoded)
-        logInfo("settings saved to legacy .data folder (the data folder is missing)")
-        return true
-    end
     if safeWrite(FALLBACK_SETTINGS_PATH, encoded) then
         safeWrite(FALLBACK_BACKUP_PATH, encoded)
-        logInfo("settings saved to root fallback (no data folder present)")
+        logInfo("settings saved to addon-folder fallback (Addon-root write failed)")
         return true
     end
     logError("private settings save FAILED on all paths; falling back to shared addon_settings")

@@ -1,0 +1,8 @@
+# User settings are stored OUTSIDE the addon folder (Addon root,
+# power_ranger_on_settings.lua) and are never part of the repo.
+# These entries only cover leftover local files from older builds
+# (legacy read-only migration paths in settings_store.lua).
+.data/
+data/
+settings_data.lua
+settings_data_backup.lua
