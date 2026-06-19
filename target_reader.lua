@@ -11,29 +11,14 @@ end
 
 function TargetReader.GetInfoById(safeCall, targetId)
     if not targetId then return nil end
-    local info = safeCall(function() return api.Unit:GetUnitInfoById(targetId) end)
-    if info then return info end
-    local textId = tostring(targetId)
-    if string.find(textId, "^0x") then
-        info = safeCall(function() return api.Unit:GetUnitInfoById(string.sub(textId, 3)) end)
-        if info then return info end
-    end
-    if type(targetId) == "number" then
-        info = safeCall(function() return api.Unit:GetUnitInfoById(string.format("%x", targetId)) end)
-        if info then return info end
-    end
-    local numericId = tonumber(targetId)
-    if numericId and numericId ~= targetId then
-        return safeCall(function() return api.Unit:GetUnitInfoById(numericId) end)
-    end
-    return nil
+    return safeCall(function() return api.Unit:GetUnitInfoById(targetId) end)
 end
 
 function TargetReader.IsCharacter(info, gearscore)
-    if not info then return false end
+    if not info then return (tonumber(gearscore) or 0) > 0 end
     if info.type == "character" or info.type == "player" then return true end
     if info.type ~= nil and info.type ~= "" then return false end
-    return tonumber(gearscore) ~= nil
+    return (tonumber(gearscore) or 0) > 0
 end
 
 function TargetReader.IsPlayer(info)
@@ -83,6 +68,34 @@ function TargetReader.GetClassName(safeCall, targetInfo)
     local apiName = safeCall(function() return api.Ability:GetUnitClassName("target") end)
     if type(apiName) == "string" and apiName ~= "" and apiName ~= "0" then return apiName end
     return nil
+end
+
+function TargetReader.GetTokenName(safeCall, token)
+    local name = safeCall(function() return api.Unit:UnitName(token) end)
+    if type(name) == "string" and name ~= "" and name ~= "0" then return name end
+    return nil
+end
+
+function TargetReader.GetTokenFaction(safeCall, token)
+    local faction = safeCall(function() return api.Unit:GetFactionName(token) end)
+    if type(faction) == "string" and faction ~= "" and faction ~= "0" then return faction end
+    return nil
+end
+
+function TargetReader.GetGearScore(safeCall, token)
+    local gearscore = tonumber(safeCall(function() return api.Unit:UnitGearScore(token) end))
+    if gearscore and gearscore > 0 then return gearscore end
+    return nil
+end
+
+function TargetReader.MakeRestrictedCharacterInfo(name, faction)
+    return {
+        type = "character",
+        name = name,
+        faction = faction,
+        unitFaction = faction,
+        apiRestricted = true
+    }
 end
 
 function TargetReader.GetDefense(numField, info)

@@ -14,11 +14,14 @@ local StatsPicker = {
 }
 
 local WIDTH = 560
-local HEIGHT = 508
+local HEIGHT = 580
 local RED = {0.24, 0.09, 0.09, 0.95}
+local OPACITY_TRACK_X = 140
+local OPACITY_TRACK_W = 300
+local OPACITY_MAX = 20
 local MAX_ROWS = 10
 local LIST_X = 16
-local LIST_Y = 100
+local LIST_Y = 114
 local ROW_STEP = 31
 
 local function currentProfileKey(settings)
@@ -39,6 +42,20 @@ local function refreshRows()
     end
     for _, entry in ipairs(wnd.categoryButtons) do
         entry.btn:SetTone(entry.key == StatsPicker.category and ctx.colors.blue or ctx.colors.button)
+    end
+    if wnd.hGapValue then wnd.hGapValue:SetText(tostring(settings.statsColGap or 0)) end
+    if wnd.vGapValue then wnd.vGapValue:SetText(tostring(settings.statsRowGap or 0)) end
+    if wnd.opacityValue then
+        local level = math.max(0, math.min(OPACITY_MAX, tonumber(settings.statsOpacityLevel) or 10))
+        wnd.opacityValue:SetText(string.format("%.2f", level / 10))
+        if wnd.opacityFill then
+            if level > 0 then
+                wnd.opacityFill:SetExtent(math.max(1, math.floor((level / OPACITY_MAX) * (OPACITY_TRACK_W - 2))), 14)
+                wnd.opacityFill:Show(true)
+            else
+                wnd.opacityFill:Show(false)
+            end
+        end
     end
 
     local stats = TargetStatsCatalog.ByCategory(StatsPicker.category)
@@ -82,6 +99,21 @@ local function clearStats(stats)
     refreshRows()
 end
 
+-- Click-to-set on the opacity track: convert mouse X (screen) to a 0..1 fraction
+-- relative to the track's left edge, using the picker window's current X.
+local function setOpacityFromMouse()
+    local wnd = StatsPicker.wnd
+    local ctx = StatsPicker.ctx
+    if not wnd or not ctx or not ctx.setStatsOpacity then return end
+    local okPos, mx = pcall(function() return api.Input:GetMousePos() end)
+    if not okPos or not tonumber(mx) then return end
+    local winX = ctx.windowX and ctx.windowX(wnd) or nil
+    if not tonumber(winX) then winX = ctx.settings.statsPickerX or 420 end
+    local trackLeft = tonumber(winX) + OPACITY_TRACK_X
+    ctx.setStatsOpacity((tonumber(mx) - trackLeft) / OPACITY_TRACK_W)
+    refreshRows()
+end
+
 local function createWindow()
     local ctx = StatsPicker.ctx
     local colors = ctx.colors
@@ -120,7 +152,9 @@ local function createWindow()
 
     wnd.categoryButtons = {}
     for i, cat in ipairs(TargetStatsCatalog.CATEGORIES) do
-        local btn = ctx.flatButton(wnd, "power_ranger_stats_picker_cat_" .. cat.key, cat.label, 16 + ((i - 1) * 45), 72, 42, 20, colors.button, function()
+        local catX = 16 + (((i - 1) % 7) * 78)
+        local catY = 68 + (math.floor((i - 1) / 7) * 22)
+        local btn = ctx.flatButton(wnd, "power_ranger_stats_picker_cat_" .. cat.key, cat.label, catX, catY, 74, 20, colors.button, function()
             StatsPicker.category = cat.key
             refreshRows()
         end)
@@ -159,6 +193,46 @@ local function createWindow()
         end)
         cube:Show(false)
         wnd.rows[i] = { bg = bg, label = label, toggle = toggle, cube = cube }
+    end
+
+    -- Expanded stats-window spacing (horizontal/vertical). Lets the user open up
+    -- the layout so long Effective-stat values don't crowd the next column.
+    if ctx.shiftStatsSpacing then
+        ctx.label(wnd, "power_ranger_stats_picker_spacing_label", "Stats window spacing", 16, HEIGHT - 144, 160, 14, 10, colors.muted, ALIGN.LEFT)
+        ctx.label(wnd, "power_ranger_stats_picker_hgap_label", "Horizontal", 188, HEIGHT - 144, 64, 14, 10, colors.white, ALIGN.LEFT)
+        ctx.flatButton(wnd, "power_ranger_stats_picker_hgap_down", "-", 256, HEIGHT - 146, 22, 20, colors.button, function()
+            ctx.shiftStatsSpacing("statsColGap", -4); refreshRows()
+        end)
+        wnd.hGapValue = ctx.label(wnd, "power_ranger_stats_picker_hgap_value", "0", 280, HEIGHT - 143, 26, 14, 10, colors.white, ALIGN.CENTER)
+        ctx.flatButton(wnd, "power_ranger_stats_picker_hgap_up", "+", 308, HEIGHT - 146, 22, 20, colors.button, function()
+            ctx.shiftStatsSpacing("statsColGap", 4); refreshRows()
+        end)
+        ctx.label(wnd, "power_ranger_stats_picker_vgap_label", "Vertical", 348, HEIGHT - 144, 50, 14, 10, colors.white, ALIGN.LEFT)
+        ctx.flatButton(wnd, "power_ranger_stats_picker_vgap_down", "-", 402, HEIGHT - 146, 22, 20, colors.button, function()
+            ctx.shiftStatsSpacing("statsRowGap", -2); refreshRows()
+        end)
+        wnd.vGapValue = ctx.label(wnd, "power_ranger_stats_picker_vgap_value", "0", 426, HEIGHT - 143, 26, 14, 10, colors.white, ALIGN.CENTER)
+        ctx.flatButton(wnd, "power_ranger_stats_picker_vgap_up", "+", 454, HEIGHT - 146, 22, 20, colors.button, function()
+            ctx.shiftStatsSpacing("statsRowGap", 2); refreshRows()
+        end)
+    end
+
+    -- Background opacity for the intel / stats window, mirroring the other opacity
+    -- sliders (track click + -/+). 1.00 = current look; lower = more see-through.
+    if ctx.setStatsOpacity then
+        ctx.label(wnd, "power_ranger_stats_picker_opacity_label", "Window opacity", 16, HEIGHT - 114, 120, 14, 10, colors.muted, ALIGN.LEFT)
+        wnd.opacityTrack = ctx.flatButton(wnd, "power_ranger_stats_picker_opacity_track", "", OPACITY_TRACK_X, HEIGHT - 115, OPACITY_TRACK_W, 16, {0.10, 0.10, 0.11, 0.96}, setOpacityFromMouse)
+        wnd.opacityFill = wnd.opacityTrack:CreateColorDrawable(1, 0.84, 0, 0.55, "background")
+        wnd.opacityFill:AddAnchor("TOPLEFT", wnd.opacityTrack, 1, 1)
+        wnd.opacityFill:SetExtent(1, 14)
+        wnd.opacityFill:Show(false)
+        ctx.flatButton(wnd, "power_ranger_stats_picker_opacity_down", "-", 446, HEIGHT - 116, 22, 20, colors.button, function()
+            ctx.shiftStatsOpacity(-1); refreshRows()
+        end)
+        wnd.opacityValue = ctx.label(wnd, "power_ranger_stats_picker_opacity_value", "1.00", 470, HEIGHT - 113, 40, 14, 10, colors.white, ALIGN.CENTER)
+        ctx.flatButton(wnd, "power_ranger_stats_picker_opacity_up", "+", 512, HEIGHT - 116, 22, 20, colors.button, function()
+            ctx.shiftStatsOpacity(1); refreshRows()
+        end)
     end
 
     ctx.label(wnd, "power_ranger_stats_picker_clear_label", "Reset (selected profile)", 16, HEIGHT - 82, 200, 14, 10, colors.muted, ALIGN.LEFT)

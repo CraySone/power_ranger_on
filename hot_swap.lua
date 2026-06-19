@@ -11,6 +11,11 @@ local QUEUE_DELAY_MS = 250
 local TITLE_RETRY_DELAY_MS = 250
 local TITLE_RETRY_COUNT = 3
 local AUTO_CHECK_MS = 150
+-- The WakeUp ("Good day to work") rested buff lingers ~30 min, so on beds where the sleep
+-- buff briefly drops while you're still lying down it would flip sleep -> wakeup. Only fire
+-- WakeUp once the sleep buff has been gone for this long, so flickers / a quick second sleep
+-- never steal the swap. ~3s at a 150ms check cadence.
+local WAKEUP_GRACE_MS = 3000
 local EQUIP_VERIFY_DELAY_MS = 700
 local BAG_SLOT_COUNT = 150
 local SWIMMING_BLOCKED_ZONE_HINTS = {"growlgate", "freedich"}
@@ -94,6 +99,8 @@ local pendingCheck = nil
 local pendingCheckDelay = 0
 local autoElapsed = 0
 local autoActiveKey = nil
+-- Milliseconds since the sleep buff was last seen (starts "long ago" so WakeUp works at login).
+local sleepClearMs = WAKEUP_GRACE_MS
 local autoZoneMs = 1000
 local autoZoneName = ""
 local selectedSetIndex = nil
@@ -262,16 +269,16 @@ local function chatWarning(text)
     end
 end
 
-local function refreshActiveLabel()
-    if canvas and canvas.activeLabel then
-        local name = settings and settings.activeLoadoutName or ""
-        name = tostring(name or "")
-        if #name > 11 then name = name:sub(1, 10) .. "." end
-        canvas.activeLabel:SetText(name ~= "" and ("Active: " .. name) or "Active: -")
-        if name ~= "" then
-            canvas.activeLabel.style:SetColor(COLORS.green[1], COLORS.green[2], COLORS.green[3], COLORS.green[4])
-        else
-            canvas.activeLabel.style:SetColor(COLORS.muted[1], COLORS.muted[2], COLORS.muted[3], COLORS.muted[4])
+
+-- Active-set green highlight. IN-MEMORY ONLY: it never calls saveSettings (that
+-- disk write firing during a gear swap is what froze PCs). No "Active:" label either.
+local function retoneSetButtons()
+    if type(buttons) ~= "table" then return end
+    local activeName = settings and settings.activeLoadoutName or nil
+    for _, button in ipairs(buttons) do
+        if button and button.SetTone then
+            local isActive = activeName and activeName ~= "" and button._hsSetName == activeName
+            button:SetTone(isActive and COLORS.active or COLORS.button)
         end
     end
 end
@@ -279,8 +286,7 @@ end
 local function setActiveLoadout(set)
     if not settings or type(set) ~= "table" then return end
     settings.activeLoadoutName = tostring(set.name or "")
-    saveSettings()
-    refreshActiveLabel()
+    retoneSetButtons()
 end
 
 local function shortText(value, maxLen)
@@ -781,6 +787,10 @@ local function queueSet(set, reason)
         setStatus("Hot Swap is OFF.", true)
         return
     end
+    -- Mark active immediately on press so the green shows right away and survives createMain's
+    -- mid-swap rebuild (rebuilt buttons read settings.activeLoadoutName). verifyLoadout re-confirms
+    -- it on success. setActiveLoadout is in-memory only (no disk write), so this is cheap.
+    setActiveLoadout(set)
     gearQueue = {}
     pendingTitle = set.title_id
     titleDelay = 0
@@ -842,13 +852,16 @@ end
 
 local function createSetButton(set, index, rowStartY)
     local id = "power_ranger_hot_swap_set_" .. tostring(index)
+    -- Re-apply the active green on rebuild (createMain rebuilds on every swap/refresh).
+    local isActive = settings and set.name and set.name ~= "" and settings.activeLoadoutName == set.name
     local button = flatButton(canvas, id, set.name, MAIN.left, rowStartY + ((index - 1) * MAIN.rowStep),
-        MAIN.width - (MAIN.left * 2), MAIN.rowH, COLORS.button, function()
+        MAIN.width - (MAIN.left * 2), MAIN.rowH, isActive and COLORS.active or COLORS.button, function()
             for _, other in ipairs(buttons) do
                 other:SetTone(other == button and COLORS.active or COLORS.button)
             end
             queueSet(set)
         end)
+    button._hsSetName = set.name
     buttons[#buttons + 1] = button
     button:Show(settings.hidden ~= true)
 end
@@ -892,9 +905,6 @@ function HotSwap.createMain()
     header:AddAnchor("TOPLEFT", canvas, 0, headerWidgetY)
     header:Show(true)
     label(canvas, "power_ranger_hot_swap_title", "Hot Swap", 8, headerWidgetY + 4, 54, 15, 11, COLORS.gold, ALIGN.LEFT):Clickable(false)
-    canvas.activeLabel = label(canvas, "power_ranger_hot_swap_active", "", 62, headerWidgetY + 5, 70, 14, 9, COLORS.muted, ALIGN.LEFT)
-    canvas.activeLabel:Clickable(false)
-    refreshActiveLabel()
 
     canvas:SetHandler("OnDragStart", function()
         if api.Input:IsShiftKeyDown() then
@@ -943,6 +953,15 @@ end
 local function activeAutoLoadout()
     ensureAutoSettings()
     local buffs, debuffs = readPlayerAuras()
+    -- Track how long the sleep buff has been gone. While it's active (or only just gone), the
+    -- WakeUp trigger below is held off so a flickering sleep buff / a quick second sleep can't
+    -- flip us to the wakeup set mid-bed. This is called once per AUTO_CHECK_MS tick.
+    local sleepNow = sleepActive(buffs, debuffs)
+    if sleepNow then
+        sleepClearMs = 0
+    elseif sleepClearMs < WAKEUP_GRACE_MS then
+        sleepClearMs = sleepClearMs + AUTO_CHECK_MS
+    end
     if settings.autoTriggers.swimming.enabled ~= false and not isSwimmingZoneBlocked() and swimmingActive(buffs, debuffs) then
         local set = gearSetByName(settings.autoTriggers.swimming.loadoutName)
         if set then return "swimming:" .. tostring(set.name), set, "Swimming" end
@@ -951,19 +970,23 @@ local function activeAutoLoadout()
         local set = gearSetByName(settings.autoTriggers.captain.loadoutName)
         if set then return "captain:" .. tostring(set.name), set, "Captain" end
     end
-    if settings.autoTriggers.sleep.enabled ~= false and sleepActive(buffs, debuffs) then
+    if settings.autoTriggers.sleep.enabled ~= false and sleepNow then
         local set = gearSetByName(settings.autoTriggers.sleep.loadoutName)
         if set then return "sleep:" .. tostring(set.name), set, "Deep Sleep" end
-    end
-    if settings.autoTriggers.wakeup.enabled ~= false and wakeupActive(buffs, debuffs) then
-        local set = gearSetByName(settings.autoTriggers.wakeup.loadoutName)
-        if set then return "wakeup:" .. tostring(set.name), set, "WakeUp" end
     end
     for _, entry in ipairs(settings.customAuras or {}) do
         if entry.enabled ~= false and customAuraMatches(entry, buffs, debuffs) then
             local set = gearSetByName(entry.loadoutName)
             if set then return "custom:" .. tostring(entry.key or entry.name), set, entry.name or "Custom" end
         end
+    end
+    -- WakeUp is the lowest-priority trigger (checked last, after sleep and custom auras) and
+    -- only fires once the sleep buff has been gone for the full grace window, so sleep always
+    -- wins and you can sleep twice in a row without it bouncing to the wakeup set.
+    if settings.autoTriggers.wakeup.enabled ~= false and sleepClearMs >= WAKEUP_GRACE_MS
+        and wakeupActive(buffs, debuffs) then
+        local set = gearSetByName(settings.autoTriggers.wakeup.loadoutName)
+        if set then return "wakeup:" .. tostring(set.name), set, "WakeUp" end
     end
     return nil, nil, nil
 end

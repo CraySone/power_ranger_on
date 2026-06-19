@@ -6,17 +6,47 @@ local michaelClientLib = require("power_ranger_on/michael_client")
 local power_ranger_on = {
     name = "Power Ranger ON",
     author = "CraySone",
-    desc = "PvP Overlay and self tracking",
-    version = "1.5.3"
+    desc = "PvP self tracking and gear tools",
+    version = "1.5.4"
 }
 
 local active = false
-local updateRegistered = false
+local updateFrame = nil
+local lastUpdateErrorLog = 0
 
 local function OnUpdate(dt)
     if not active then return end
     TargetOverlay.update(dt)
     HotSwap.update(dt)
+end
+
+local function OnWidgetUpdate(self, dt)
+    local ok, err = pcall(OnUpdate, dt or 0)
+    if not ok then
+        local now = api.Time:GetUiMsec()
+        if now - lastUpdateErrorLog > 5000 then
+            lastUpdateErrorLog = now
+            api.Log:Error("[Power Ranger ON] update failed: " .. tostring(err))
+        end
+    end
+end
+
+local function StartUpdateDriver()
+    if updateFrame then return end
+    -- Post-2026-06-18 API behavior can throttle api.On("UPDATE") to about 1fps
+    -- while a target is held. A shown 1x1 widget keeps UI-driven updates full-speed.
+    updateFrame = api.Interface:CreateEmptyWindow("powerRangerOnUpdate")
+    updateFrame:SetExtent(1, 1)
+    updateFrame:AddAnchor("TOPLEFT", "UIParent", "TOPLEFT", 0, 0)
+    updateFrame:Show(true)
+    updateFrame:SetHandler("OnUpdate", OnWidgetUpdate)
+end
+
+local function StopUpdateDriver()
+    if not updateFrame then return end
+    updateFrame:SetHandler("OnUpdate", function() return end)
+    updateFrame:Show(false)
+    updateFrame = nil
 end
 
 local function Load()
@@ -36,14 +66,12 @@ local function Load()
             end)
         end
     end)
-    if not updateRegistered then
-        api.On("UPDATE", OnUpdate)
-        updateRegistered = true
-    end
+    StartUpdateDriver()
 end
 
 local function Unload()
     active = false
+    StopUpdateDriver()
     pcall(function() michaelClientLib.OnUnload() end)
     HotSwap.cleanup()
     TargetOverlay.cleanup()

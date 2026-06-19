@@ -54,6 +54,10 @@ local ADDON_ID = "power_ranger_on"
 local TARGET_UPDATE_MS = 100
 local SELF_UPDATE_MS = 50
 local PROBE_LOG_INTERVAL_MS = 250
+-- June 2026 API security update: detailed target reads by raw id / target token are
+-- restricted. Keep target-side code below for future reuse, but hide it until we have
+-- a supported replacement for stats/overhead/ownership target data.
+local TARGET_API_FEATURES_DISABLED = true
 
 local COLORS = {
     gold = {1, 0.84, 0, 1},
@@ -71,14 +75,15 @@ local defaults = {
     showModelOverlay = true,
     showArmorIcon = true,
     showWeaponIcon = true,
-    showRoleIcon = true,
+    showRoleIcon = false,
     showModelGearscore = true,
     showModelClass = true,
     showModelRange = true,
-    showModelDefense = true,
+    showModelDefense = false,
     compactModelOverlay = true,
     nuziUiCompatMode = "auto",
     compactModelLeftOffset = 45,
+    compactModelYOffset = 0,
     modelRangeOffsetX = 0,
     modelRangeOffsetY = 0,
     overlayTextShadow = true,
@@ -90,6 +95,8 @@ local defaults = {
     selfOpacityLevel = 8,
     speedMeterOpacityLevel = 8,
     guildFamilyLabelScaleLevel = 0,
+    guildFamilyGuildScaleLevel = nil,
+    guildFamilyFamilyScaleLevel = nil,
     showTargetWindow = true,
     compactTargetWindow = true,
     testTargetWindow = false,
@@ -97,6 +104,9 @@ local defaults = {
     simpleSpacingVersion = 6,
     simpleColumnGap = 0,
     simpleLineGap = 0,
+    statsColGap = 0,
+    statsRowGap = 0,
+    statsOpacityLevel = 10,
     showInfoRange = true,
     showInfoClass = true,
     showInfoGearscore = true,
@@ -110,7 +120,10 @@ local defaults = {
     warnMissingOwnersMark = true,
     weaponProcEnabled = false,
     weaponProcReadyPopup = true,
-    weaponProcDamageChat = true,
+    weaponProcZeal = false,
+    weaponProcScaleLevel = 0,
+    weaponProcPopupScale = 0,
+    weaponProcOpacityLevel = 8,
     weaponProcX = 500,
     weaponProcY = 230,
     debugLogging = false,
@@ -141,6 +154,7 @@ local defaults = {
     speedMeterY = 180,
     ownersMarkX = 500,
     ownersMarkY = 180,
+    ownersMarkOpacityLevel = 8,
     targetInfoColors = {
         range = {1, 0.84, 0, 1},
         class = {0.82, 0.90, 1, 1},
@@ -315,12 +329,9 @@ local weaponBuffIcon = nil
 local targetRoleIcon = nil
 local targetGearscoreLabel = nil
 local targetClassLabel = nil
-local targetPdefTitleLabel = nil
-local targetPdefValueLabel = nil
-local targetMdefTitleLabel = nil
-local targetMdefValueLabel = nil
-local targetRangeCanvas = nil
-local targetRangeLabel = nil
+local targetDefense = {}
+local targetRange = {}
+local targetOwnersMark = {}
 local targetInfoWnd = nil
 local ownershipWnd = nil
 local guildFamilyWnd = nil
@@ -334,11 +345,15 @@ local curTargetIcon = nil
 local lastScreenPosition = ""
 local previousTargetId = nil
 local modelDataTargetId = nil
-local targetTokenMisses = 0
-local targetInfoMisses = 0
-local screenPositionMisses = 0
-local updateElapsed = TARGET_UPDATE_MS
-local selfUpdateElapsed = SELF_UPDATE_MS
+local targetMisses = { token = 0, info = 0, screen = 0 }
+local runtimeState = {
+    updateElapsed = TARGET_UPDATE_MS,
+    selfUpdateElapsed = SELF_UPDATE_MS,
+    skillProbeDirty = false,
+    lastSkillProbeSave = 0,
+    probeLogElapsed = 0,
+    lastSelfEquipmentUpdate = 0
+}
 local compatState = Compat.Resolve(defaults)
 local compatRefreshElapsed = 1000
 local nuziCooldownRows = NuziCooldownImport.EmptyRows()
@@ -348,11 +363,7 @@ local triggerState = {}
 local skillCooldowns = {}
 local playerName = nil
 local skillProbe = { entries = {}, maxEntries = 240 }
-local skillProbeDirty = false
-local lastSkillProbeSave = 0
-local probeLogElapsed = 0
 local detectManaState = { init = false, mountKey = nil, mountMana = 0, playerMana = 0, mountSpent = 0, playerSpent = 0 }
-local lastSelfEquipmentUpdate = 0
 local recordSkillProbe
 local recordDetectedSkill
 local refreshSettingsButtons
@@ -392,21 +403,39 @@ local function onStumpySenseLayout(opts)
     if type(opts) ~= "table" then
         stumpySenseLayout.enabled = false
         stumpySenseLayout.anchor = nil
+        stumpySenseLayout.anchorWindow = nil
+        stumpySenseLayout.fullWidth = false
         return
     end
     stumpySenseLayout.enabled = opts.enabled == true
     stumpySenseLayout.width = tonumber(opts.width)
     stumpySenseLayout.height = tonumber(opts.height)
     stumpySenseLayout.anchor = opts.anchor
+    -- Preferred: anchor relative to the hub overlay window. Absolute anchorX/Y
+    -- remain only as a fallback for older Stumpy builds; mixing absolute screen
+    -- coords with AddAnchor offsets caused position fights/drift under UI scale.
+    stumpySenseLayout.anchorWindow = opts.anchorWindow
+    stumpySenseLayout.relX = tonumber(opts.relX)
+    stumpySenseLayout.relY = tonumber(opts.relY)
+    stumpySenseLayout.relAnchorX = tonumber(opts.relAnchorX)
     stumpySenseLayout.anchorX = tonumber(opts.anchorX)
     stumpySenseLayout.anchorY = tonumber(opts.anchorY)
+    stumpySenseLayout.fullWidth = opts.fullWidth == true
     if targetInfoWnd then
         targetInfoWnd._lastWidth = nil
         targetInfoWnd._lastHeight = nil
     end
 end
 
+-- Direct accessor for Stumpy_Sense (shared require cache): more reliable than the
+-- window-name fallback, which can hand Stumpy a fresh invisible dummy window.
+function TargetOverlay.GetTargetInfoWindow()
+    if TARGET_API_FEATURES_DISABLED then return nil end
+    return targetInfoWnd
+end
+
 local function registerStumpyDockMember()
+    if TARGET_API_FEATURES_DISABLED then return end
     if not targetInfoWnd then return end
     StumpyDock = StumpyDock or { members = {} }
     StumpyDock.members = StumpyDock.members or {}
@@ -432,6 +461,7 @@ function TargetOverlay.clearStumpyStatsBox()
 end
 
 function TargetOverlay.publishStumpyStatsBox(width, height)
+    if TARGET_API_FEATURES_DISABLED then return end
     if not stumpySenseLayout or stumpySenseLayout.enabled ~= true then return end
     local anchorX = tonumber(stumpySenseLayout.anchorX)
     local anchorY = tonumber(stumpySenseLayout.anchorY)
@@ -441,7 +471,7 @@ function TargetOverlay.publishStumpyStatsBox(width, height)
     StumpyDock = StumpyDock or { members = {} }
     StumpyDock.boxes = StumpyDock.boxes or {}
     local nextBox = {
-        x = math.floor(anchorX - w - 8 + 0.5),
+        x = math.floor((stumpySenseLayout.fullWidth and anchorX or (anchorX - w - 8)) + 0.5),
         y = math.floor(anchorY + 0.5),
         w = math.floor(w + 0.5),
         h = math.floor(h + 0.5)
@@ -461,6 +491,7 @@ local function unregisterStumpyDockMember()
 end
 
 local function notifyStumpyStatsVisible()
+    if TARGET_API_FEATURES_DISABLED then return end
     if stumpyStatsDockVisible == true then return end
     stumpyStatsDockVisible = true
     registerStumpyDockMember()
@@ -869,6 +900,9 @@ local function loadSettings()
     local simpleSpacingVersion = tonumber(settings.simpleSpacingVersion) or 1
     local hadSimpleSpacing = settings.simpleColumnGap ~= nil or settings.simpleLineGap ~= nil
     copyDefaults(settings, defaults)
+    settings.compactModelOverlay = true
+    settings.showRoleIcon = false
+    settings.showModelDefense = false
     ClassIntelProfiles.Ensure(settings)
     CooldownLearning.Ensure(settings)
     if (tonumber(settings.removedCooldownDefaultsVersion) or 0) < 2 then
@@ -901,6 +935,12 @@ local function loadSettings()
     settings.modelRangeOffsetX = math.max(-120, math.min(120, tonumber(settings.modelRangeOffsetX) or 0))
     settings.modelRangeOffsetY = math.max(-120, math.min(120, tonumber(settings.modelRangeOffsetY) or 0))
     settings.modelRangeScaleLevel = math.max(0, math.min(10, tonumber(settings.modelRangeScaleLevel) or 0))
+    settings.compactModelYOffset = math.max(-80, math.min(80, tonumber(settings.compactModelYOffset) or 0))
+    local legacyGuildFamilyScale = tonumber(settings.guildFamilyLabelScaleLevel) or 0
+    if settings.guildFamilyGuildScaleLevel == nil then settings.guildFamilyGuildScaleLevel = legacyGuildFamilyScale end
+    if settings.guildFamilyFamilyScaleLevel == nil then settings.guildFamilyFamilyScaleLevel = legacyGuildFamilyScale end
+    settings.guildFamilyGuildScaleLevel = math.max(-5, math.min(10, tonumber(settings.guildFamilyGuildScaleLevel) or legacyGuildFamilyScale))
+    settings.guildFamilyFamilyScaleLevel = math.max(-5, math.min(10, tonumber(settings.guildFamilyFamilyScaleLevel) or legacyGuildFamilyScale))
     settings.overlayShadowSize = nil
     settings.simpleColumnGap = math.max(0, math.min(73, tonumber(settings.simpleColumnGap) or 0))
     settings.simpleLineGap = math.max(0, math.min(23, tonumber(settings.simpleLineGap) or 0))
@@ -1044,6 +1084,14 @@ local function guildFamilyScaleFactor()
     return uiScaleFactor("guildFamilyLabelScaleLevel") * 0.75
 end
 
+local function guildFamilyLineScaleFactor(key)
+    local levelKey = key == "family" and "guildFamilyFamilyScaleLevel" or "guildFamilyGuildScaleLevel"
+    local legacy = tonumber(settings and settings.guildFamilyLabelScaleLevel) or 0
+    local level = tonumber(settings and settings[levelKey])
+    if level == nil then level = legacy end
+    return (1 + (level * 0.1)) * 0.75
+end
+
 local function normalizeStumpyPriorityName(name)
     local text = string.lower(tostring(name or ""))
     text = text:gsub("^%s+", ""):gsub("%s+$", "")
@@ -1165,6 +1213,22 @@ end
 
 function TargetOverlay.getClassName(targetInfo)
     return TargetOverlay.targetReader.GetClassName(OverlayUtils.safeCall, targetInfo)
+end
+
+function TargetOverlay.getTokenName(token)
+    return TargetOverlay.targetReader.GetTokenName(OverlayUtils.safeCall, token)
+end
+
+function TargetOverlay.getTokenFaction(token)
+    return TargetOverlay.targetReader.GetTokenFaction(OverlayUtils.safeCall, token)
+end
+
+function TargetOverlay.getTokenGearScore(token)
+    return TargetOverlay.targetReader.GetGearScore(OverlayUtils.safeCall, token)
+end
+
+function TargetOverlay.makeRestrictedCharacterInfo(name, faction)
+    return TargetOverlay.targetReader.MakeRestrictedCharacterInfo(name, faction)
 end
 
 function TargetOverlay.getDefense(info)
@@ -1359,12 +1423,23 @@ local function hideModelLabel(row)
 end
 
 local function hideModelRange()
-    if targetRangeCanvas then targetRangeCanvas:Show(false) end
-    if targetRangeLabel then
-        targetRangeLabel:SetText("")
-        targetRangeLabel._lastText = ""
-        targetRangeLabel:Show(false)
-        targetRangeLabel._visible = false
+    if targetRange.canvas then targetRange.canvas:Show(false) end
+    if targetRange.label then
+        targetRange.label:SetText("")
+        targetRange.label._lastText = ""
+        targetRange.label:Show(false)
+        targetRange.label._visible = false
+    end
+end
+
+local function hideTargetOwnersMarkOverlay()
+    if targetOwnersMark.canvas then targetOwnersMark.canvas:Show(false) end
+    if targetOwnersMark.icon then targetOwnersMark.icon:Show(false) end
+    if targetOwnersMark.time then
+        targetOwnersMark.time:SetText("")
+        targetOwnersMark.time._lastText = ""
+        targetOwnersMark.time:Show(false)
+        targetOwnersMark.time._visible = false
     end
 end
 
@@ -1644,8 +1719,8 @@ end
 
 function TargetOverlay.applyTextShadow()
     local modelLabels = {
-        targetPdefTitleLabel, targetPdefValueLabel, targetMdefTitleLabel, targetMdefValueLabel,
-        targetGearscoreLabel, targetClassLabel, targetRangeLabel
+        targetDefense.pdefTitle, targetDefense.pdefValue, targetDefense.mdefTitle, targetDefense.mdefValue,
+        targetGearscoreLabel, targetClassLabel, targetRange.label
     }
     for _, widget in ipairs(modelLabels) do
         TargetOverlay.applyReadableTextStyle(widget, true)
@@ -1757,17 +1832,19 @@ local function refreshGuildFamilyWindow(info)
         hideGuildFamilyWindow()
         return
     end
-    local scale = guildFamilyScaleFactor()
-    local wantedWidth = math.floor((360 * scale) + 0.5)
-    local pad = math.floor((10 * scale) + 0.5)
+    local baseScale = guildFamilyScaleFactor()
+    local guildScale = guildFamilyLineScaleFactor("guild")
+    local familyScale = guildFamilyLineScaleFactor("family")
+    local wantedWidth = math.floor((360 * baseScale) + 0.5)
+    local pad = math.floor((10 * baseScale) + 0.5)
     local textWidth = math.max(80, wantedWidth - (pad * 2))
     local guildText = tostring(guild or "")
     local familyText = tostring(family or "")
-    local guildHeight = math.floor((28 * scale) + 0.5)
-    local familyHeight = math.floor((16 * scale) + 0.5)
-    local gap = math.floor((2 * scale) + 0.5)
-    guildFamilyWnd.guild.style:SetFontSize(math.floor((22 * scale) + 0.5))
-    guildFamilyWnd.family.style:SetFontSize(math.floor((12 * scale) + 0.5))
+    local guildHeight = math.floor((28 * guildScale) + 0.5)
+    local familyHeight = math.floor((16 * familyScale) + 0.5)
+    local gap = math.floor((2 * baseScale) + 0.5)
+    guildFamilyWnd.guild.style:SetFontSize(math.floor((22 * guildScale) + 0.5))
+    guildFamilyWnd.family.style:SetFontSize(math.floor((12 * familyScale) + 0.5))
     guildText = TargetOverlay.fitTextToWidth(guildFamilyWnd.guild, guildText, textWidth, 8)
     familyText = TargetOverlay.fitTextToWidth(guildFamilyWnd.family, familyText, textWidth, 6)
     guildFamilyWnd.guild:SetText(guildText)
@@ -1796,6 +1873,26 @@ local function applyStumpySenseAnchor(width)
     if not targetInfoWnd or not stumpySenseLayout or stumpySenseLayout.enabled ~= true then
         return
     end
+    if stumpySenseLayout.fullWidth == true then
+        -- Same relative anchor Stumpy itself applies, so both owners agree exactly.
+        if stumpySenseLayout.anchorWindow and stumpySenseLayout.relY then
+            pcall(function()
+                targetInfoWnd:RemoveAllAnchors()
+                targetInfoWnd:AddAnchor("TOPLEFT", stumpySenseLayout.anchorWindow,
+                    math.floor((stumpySenseLayout.relX or 0) + 0.5), math.floor(stumpySenseLayout.relY + 0.5))
+            end)
+            return
+        end
+        local anchorX = tonumber(stumpySenseLayout.anchorX)
+        local anchorY = tonumber(stumpySenseLayout.anchorY)
+        if anchorX and anchorY then
+            pcall(function()
+                targetInfoWnd:RemoveAllAnchors()
+                targetInfoWnd:AddAnchor("TOPLEFT", "UIParent", math.floor(anchorX + 0.5), math.floor(anchorY + 0.5))
+            end)
+        end
+        return
+    end
     if stumpySenseLayout.anchor then
         local ok = pcall(function()
             targetInfoWnd:RemoveAllAnchors()
@@ -1803,9 +1900,17 @@ local function applyStumpySenseAnchor(width)
         end)
         if ok then return end
     end
+    local w = tonumber(width) or tonumber(stumpySenseLayout.width) or 290
+    if stumpySenseLayout.anchorWindow and stumpySenseLayout.relAnchorX and stumpySenseLayout.relY then
+        pcall(function()
+            targetInfoWnd:RemoveAllAnchors()
+            targetInfoWnd:AddAnchor("TOPLEFT", stumpySenseLayout.anchorWindow,
+                math.floor(stumpySenseLayout.relAnchorX - w - 8 + 0.5), math.floor(stumpySenseLayout.relY + 0.5))
+        end)
+        return
+    end
     local anchorX = tonumber(stumpySenseLayout.anchorX)
     local anchorY = tonumber(stumpySenseLayout.anchorY)
-    local w = tonumber(width) or tonumber(stumpySenseLayout.width) or 290
     if anchorX and anchorY then
         pcall(function()
             targetInfoWnd:RemoveAllAnchors()
@@ -1819,21 +1924,36 @@ local function renderStumpyStatsWindow(rows, compactSummary, scale, targetInfo, 
     local height = math.max(120, math.floor((tonumber(stumpySenseLayout.height) or 286) + 0.5))
     local headerHeight = 28
     local side = 9
-    local gap = 8
-    local rowHeight = 17
-    local colWidth = math.floor((width - (side * 2) - gap) / 2)
-    local labelWidth = math.min(68, math.max(46, math.floor(colWidth * 0.48)))
+    -- Honor the Stats Picker spacing controls in docked (Stumpy) mode too: horizontal
+    -- widens the column gap, vertical raises the row height. Clamped so columns/rows
+    -- stay usable inside Stumpy's fixed slot width.
+    local statsColGap = math.max(0, math.min(120, tonumber(settings.statsColGap) or 0))
+    local statsRowGap = math.max(0, math.min(26, tonumber(settings.statsRowGap) or 0))
+    -- 0 is the tight baseline (what used to be -40 / -10); the slider only opens up from here.
+    -- gap may be negative (columns hug); the colWidth math keeps the three columns filling the
+    -- full width either way, so this is safe. rowHeight floored at 7 so text stays legible.
+    local gap = math.min(statsColGap - 32, math.max(8, width - (side * 2) - 60))
+    local rowHeight = math.max(7, 7 + statsRowGap)
+    -- Three columns across the width: 3 cells + 2 gaps fill [side, width-side]. Floored at 20
+    -- so a narrow slot (single faction column) + wide spacing can't drive the cell negative.
+    local colWidth = math.max(20, math.floor((width - (side * 2) - (gap * 2)) / 3))
+    -- Label gets the larger share of the cell so long Effective-stat labels
+    -- ("Magic Effect Resist") don't clip; cap scales with the (scaled) column
+    -- width instead of a fixed 68px that clipped at higher Stumpy scales.
+    local labelWidth = math.max(54, math.floor(colWidth * 0.62))
     local valueWidth = math.max(18, colWidth - labelWidth)
     local guild = TargetOverlay.ownershipField(targetInfo, {"expeditionName", "expedition", "guildName", "guild"})
     local family = TargetOverlay.ownershipField(targetInfo, {"family_name", "familyName", "family"})
     local targetName = stumpyTargetName(targetInfo)
     local priority = isStumpyPriorityTargetName(targetName)
     local titleText = (priority and "\226\152\133 " or "") .. tostring(targetName or guild or "Power Ranger ON")
+    -- Identity only here (class / GS). Distance is intentionally NOT in this line:
+    -- it updates every frame, and since the line is fit-truncated to width, a changing
+    -- distance digit re-truncated the whole string each frame and made the class/GS
+    -- text bounce. Live distance still shows in the "Identity | Xm" header row below.
     local metaParts = {}
     if className and className ~= "" then table.insert(metaParts, tostring(className)) end
     if gearscore then table.insert(metaParts, "GS " .. tostring(gearscore)) end
-    local range = TargetOverlay.getDistance("target")
-    if range then table.insert(metaParts, tostring(range) .. "m") end
     if #metaParts == 0 and compactSummary and compactSummary ~= "" then table.insert(metaParts, compactSummary) end
     titleText = TargetOverlay.fitTextToWidth(targetInfoWnd.title, titleText, width - (side * 2), 8)
     local metaText = TargetOverlay.fitTextToWidth(targetInfoWnd.simpleMeta, table.concat(metaParts, "  |  "), width - (side * 2), 8)
@@ -1845,8 +1965,9 @@ local function renderStumpyStatsWindow(rows, compactSummary, scale, targetInfo, 
     end
     targetInfoWnd.bg:Show(true)
     targetInfoWnd.header:Show(true)
-    pcall(function() targetInfoWnd.bg:SetColor(0, 0, 0, 0.34) end)
-    pcall(function() targetInfoWnd.header:SetColor(0.12, 0.135, 0.155, 0.58) end)
+    targetInfoWnd._statsBgBase = {0, 0, 0, 0.34}
+    targetInfoWnd._statsHeaderBase = {0.12, 0.135, 0.155, 0.58}
+    TargetOverlay.applyStatsOpacity()
     targetInfoWnd.header:SetExtent(width, headerHeight)
     targetInfoWnd.dragHandle:SetExtent(width, headerHeight)
 
@@ -1906,24 +2027,34 @@ local function renderStumpyStatsWindow(rows, compactSummary, scale, targetInfo, 
             local text = tostring(row.text or "")
             local labelText, valueText = text:match("^(.-):%s*(.*)$")
             local x = side + (col * (colWidth + gap))
-            widget:SetExtent(labelText and labelWidth or colWidth, rowHeight)
+            widget:SetExtent(colWidth, rowHeight)
             widget:AddAnchor("TOPLEFT", targetInfoWnd, x, y)
             if labelText then
                 if labelText == "Evasion" then labelText = "Evas" end
-                setInfoCell(widget, labelText .. ":", COLORS.white)
-                valueWidget:SetExtent(valueWidth, rowHeight)
-                valueWidget:AddAnchor("TOPLEFT", targetInfoWnd, x + labelWidth, y)
+                local labelStr = labelText .. ":"
+                setInfoCell(widget, labelStr, COLORS.white)
+                -- Value hugs the measured label width (not a fixed label column) so a short
+                -- label like "PDef:" doesn't leave a big gap before the number. Capped to the
+                -- visual column pitch so a long value can't run into the next column.
+                local valueOffset = math.ceil(widget.style:GetTextWidth(labelStr)) + math.floor((3 * scale) + 0.5)
+                -- Columns 0/1 have a neighbour to the right; cap their value to the pitch so it
+                -- can't run into it. The rightmost column (2) may use the full cell width.
+                local avail = (col < 2 and gap < 0) and (colWidth + gap) or colWidth
+                if avail < 1 then avail = 1 end
+                if valueOffset > avail - 1 then valueOffset = math.max(0, avail - 1) end
+                valueWidget:SetExtent(math.max(0, avail - valueOffset), rowHeight)
+                valueWidget:AddAnchor("TOPLEFT", targetInfoWnd, x + valueOffset, y)
                 setInfoCell(valueWidget, valueText, row.color or COLORS.white)
             else
                 setInfoCell(widget, text, row.color or COLORS.white)
                 setInfoCell(valueWidget, nil)
             end
             widgetIndex = widgetIndex + 1
-            if col == 1 then
+            if col >= 2 then
                 y = y + rowHeight
                 col = 0
             else
-                col = 1
+                col = col + 1
             end
         end
     end
@@ -1981,8 +2112,9 @@ local function refreshTargetInfoWindow(targetInfo, className, gearscore, pdef, m
     end
     targetInfoWnd.bg:Show(not testLayout)
     targetInfoWnd.header:Show(not testLayout)
-    pcall(function() targetInfoWnd.bg:SetColor(0, 0, 0, 0.62) end)
-    pcall(function() targetInfoWnd.header:SetColor(0.06, 0.075, 0.095, 0.76) end)
+    targetInfoWnd._statsBgBase = {0, 0, 0, 0.62}
+    targetInfoWnd._statsHeaderBase = {0.06, 0.075, 0.095, 0.76}
+    TargetOverlay.applyStatsOpacity()
     setTextColor(targetInfoWnd.title, testLayout and COLORS.white or COLORS.gold)
     TargetOverlay.applyReadableTextStyle(targetInfoWnd.title, testLayout)
     TargetOverlay.applyReadableTextStyle(targetInfoWnd.simpleMeta, testLayout)
@@ -2006,28 +2138,32 @@ local function refreshTargetInfoWindow(targetInfo, className, gearscore, pdef, m
         TargetOverlay.applyReadableTextStyle(targetInfoWnd.simpleValues[i], testLayout)
         setInfoCell(targetInfoWnd.simpleValues[i], nil)
     end
-    -- Measure each grid column's own widest cell and lay columns out snugly.
-    local gridCols = 0
-    local gridColWidths = {}
-    local gridColOffsets = {}
-    local maxColWidth = minCellWidth
+    -- Flow-pack each grid row independently: every cell takes exactly its own
+    -- width. Column-aligned layout padded short cells to the widest cell sharing
+    -- their column (one long Effective stat opened visible gaps in the other row).
+    local maxCellWidth = minCellWidth
     if compact then
+        local rowAcc = {}
+        local anyCell = false
         for _, row in ipairs(rows) do
-            if row.compactGridCol ~= nil then
-                gridCols = math.max(gridCols, row.compactGridCol + 1)
-                local w = math.ceil(targetInfoWnd.rows[1].style:GetTextWidth(row.text or "")) + outlinePad
-                if w > (gridColWidths[row.compactGridCol] or 0) then gridColWidths[row.compactGridCol] = w end
+            if row.compactGridRow ~= nil then
+                anyCell = true
+                local r = row.compactGridRow
+                rowAcc[r] = rowAcc[r] or sideMargin
+                local w = math.max(minCellWidth, math.ceil(targetInfoWnd.rows[1].style:GetTextWidth(row.text or "")) + outlinePad)
+                row.cellX = rowAcc[r]
+                row.cellW = w
+                rowAcc[r] = rowAcc[r] + w + colGap
+                if w > maxCellWidth then maxCellWidth = w end
             end
         end
-        local acc = sideMargin
-        for c = 0, gridCols - 1 do
-            local w = math.max(gridColWidths[c] or 0, minCellWidth)
-            gridColWidths[c] = w
-            gridColOffsets[c] = acc
-            acc = acc + w + colGap
-            if w > maxColWidth then maxColWidth = w end
+        local statsWidth = math.floor((150 * scale) + 0.5)
+        if anyCell then
+            statsWidth = 0
+            for _, acc in pairs(rowAcc) do
+                statsWidth = math.max(statsWidth, acc - colGap + sideMargin)
+            end
         end
-        local statsWidth = gridCols > 0 and (acc - colGap + sideMargin) or math.floor((150 * scale) + 0.5)
         if testLayout then
             local summaryWidth = targetInfoWnd.title.style:GetTextWidth(simpleGuild)
             summaryWidth = math.max(summaryWidth, targetInfoWnd.simpleMeta.style:GetTextWidth(simpleMeta))
@@ -2036,9 +2172,16 @@ local function refreshTargetInfoWindow(targetInfo, className, gearscore, pdef, m
             wantedWidth = math.ceil(statsWidth)
         end
     end
-    local cellWidth = compact and maxColWidth or math.floor((198 * scale) + 0.5)
-    local colStep = compact and (cellWidth + colGap) or math.floor((210 * scale) + 0.5)
-    local rowStep = math.floor(((testLayout and (15 + simpleLineGap) or compact and 15 or 19) * scale) + 0.5)
+    -- Expanded (non-compact) stats window: user spacing widens both the cell (so
+    -- long Effective-stat values stop bleeding into the next column) and the column
+    -- step, and grows the window to match so columns truly separate.
+    local statsColGap = math.max(0, math.min(120, tonumber(settings.statsColGap) or 0))
+    local statsRowGap = math.max(0, math.min(26, tonumber(settings.statsRowGap) or 0))
+    -- 0 is the tight baseline (old -40 / -10); slider only opens up from here.
+    local cellWidth = compact and maxCellWidth or math.floor(((158 + statsColGap) * scale) + 0.5)
+    local colStep = compact and (cellWidth + colGap) or math.floor(((170 + statsColGap) * scale) + 0.5)
+    local rowStep = math.floor(((testLayout and (15 + simpleLineGap) or compact and 15 or (9 + statsRowGap)) * scale) + 0.5)
+    if not compact then wantedWidth = math.floor(((350 + (statsColGap * 2)) * scale) + 0.5) end
     targetInfoWnd.header:SetExtent(wantedWidth, headerHeight)
     targetInfoWnd.dragHandle:SetExtent(wantedWidth, headerHeight)
     targetInfoWnd.title:RemoveAllAnchors()
@@ -2077,8 +2220,8 @@ local function refreshTargetInfoWindow(targetInfo, className, gearscore, pdef, m
             if compact and row.compactGridRow ~= nil then
                 local widget = targetInfoWnd.rows[widgetIndex]
                 local valueWidget = targetInfoWnd.simpleValues[widgetIndex]
-                local colX = gridColOffsets[row.compactGridCol] or (sideMargin + (row.compactGridCol * colStep))
-                local colW = gridColWidths[row.compactGridCol] or cellWidth
+                local colX = row.cellX or (sideMargin + (row.compactGridCol * colStep))
+                local colW = row.cellW or cellWidth
                 widget:RemoveAllAnchors()
                 widget:SetExtent(colW, math.floor(((testLayout and 15 or 13) * scale) + 0.5))
                 widget:AddAnchor("TOPLEFT", targetInfoWnd, colX, y + (row.compactGridRow * rowStep))
@@ -2231,8 +2374,8 @@ local function updateSelfPanel()
         gliderSlot = TargetOverlay.gliderEquipSlot,
         mainhandSlot = function() return EQUIP_SLOT and EQUIP_SLOT.MAINHAND end,
         offhandSlot = function() return EQUIP_SLOT and EQUIP_SLOT.OFFHAND end,
-        lastEquipmentUpdate = function() return lastSelfEquipmentUpdate end,
-        setLastEquipmentUpdate = function(value) lastSelfEquipmentUpdate = value end
+        lastEquipmentUpdate = function() return runtimeState.lastSelfEquipmentUpdate end,
+        setLastEquipmentUpdate = function(value) runtimeState.lastSelfEquipmentUpdate = value end
     })
 end
 
@@ -2354,20 +2497,20 @@ end
 
 local function updateProbeLogging(dt)
     if settings.skillProbeLogging ~= true then
-        probeLogElapsed = 0
+        runtimeState.probeLogElapsed = 0
         return
     end
-    probeLogElapsed = probeLogElapsed + (dt or 0)
-    if probeLogElapsed < PROBE_LOG_INTERVAL_MS then return end
-    probeLogElapsed = 0
+    runtimeState.probeLogElapsed = runtimeState.probeLogElapsed + (dt or 0)
+    if runtimeState.probeLogElapsed < PROBE_LOG_INTERVAL_MS then return end
+    runtimeState.probeLogElapsed = 0
     local snapshot = probeSnapshot("PROBE_LOG_TICK")
     recordSkillProbe(snapshot)
     detectFromProbeSnapshot(snapshot)
 end
 
 local function saveSkillProbe()
-    if not skillProbeDirty then return end
-    skillProbeDirty = false
+    if not runtimeState.skillProbeDirty then return end
+    runtimeState.skillProbeDirty = false
     OverlayUtils.safeCall(function() api.File:Write("power_ranger_skill_probe.lua", skillProbe.entries) end)
 end
 
@@ -2375,7 +2518,7 @@ function recordSkillProbe(entry)
     entry.time = api.Time:GetUiMsec()
     table.insert(skillProbe.entries, entry)
     while #skillProbe.entries > skillProbe.maxEntries do table.remove(skillProbe.entries, 1) end
-    skillProbeDirty = true
+    runtimeState.skillProbeDirty = true
 end
 
 local function findTrackedSkill(skillName, skillId)
@@ -2822,7 +2965,6 @@ end
 
 local function onCombatMessage(targetUnitId, combatEvent, source, target, ...)
     local args = {...}
-    TargetOverlay.weaponProc.OnCombatMessage(source, target, args)
     local logging = settings.skillProbeLogging == true
     if not logging and not TargetOverlay.hasEnabledTrackedSkills() then return end
     local result = SkillProbe.parsedCombatMessage(combatEvent, args)
@@ -2895,9 +3037,7 @@ end
 
 function TargetOverlay.refreshEventSubscriptions()
     if not eventWnd then return end
-    local shouldListen = settings and (settings.skillProbeLogging == true
-        or TargetOverlay.hasEnabledTrackedSkills()
-        or (settings.weaponProcEnabled == true and settings.weaponProcDamageChat == true)) or false
+    local shouldListen = settings and (settings.skillProbeLogging == true or TargetOverlay.hasEnabledTrackedSkills()) or false
     if eventWnd._powerRangerListening == shouldListen then return end
     if shouldListen then
         pcall(function() eventWnd:RegisterEvent("COMBAT_MSG") end)
@@ -2922,7 +3062,7 @@ local function dumpSkillProbe()
     local snapshot = probeSnapshot("MANUAL_SKILL_DUMP")
     recordSkillProbe(snapshot)
     detectFromProbeSnapshot(snapshot)
-    skillProbeDirty = true
+    runtimeState.skillProbeDirty = true
     saveSkillProbe()
     api.Log:Info("[Power Ranger On] wrote power_ranger_skill_probe.lua")
 end
@@ -3436,49 +3576,69 @@ end
 
 function refreshSettingsButtons()
     if not settingsWnd then return end
+    local function setToggle(btn, value, label)
+        if btn then TargetOverlay.uiContext.setToggleButton(btn, value, label) end
+    end
     local compat = updateCompatState(true)
     local showNuziOptions = Compat.ShouldShowOptions(compat)
-    TargetOverlay.uiContext.setToggleButton(settingsWnd.compatModeBtn, compat.active, Compat.ModeLabel(compat))
-    settingsWnd.compatModeBtn:Show(showNuziOptions)
-    TargetOverlay.uiContext.setToggleButton(settingsWnd.modelBtn, settings.showModelOverlay, "Overhead")
-    TargetOverlay.uiContext.setToggleButton(settingsWnd.armorBtn, settings.showArmorIcon, "Armor")
-    TargetOverlay.uiContext.setToggleButton(settingsWnd.weaponBtn, settings.showWeaponIcon, "Weapon")
-    TargetOverlay.uiContext.setToggleButton(settingsWnd.roleBtn, settings.showRoleIcon, "Role")
-    TargetOverlay.uiContext.setToggleButton(settingsWnd.modelGsBtn, settings.showModelGearscore, "Gear")
-    TargetOverlay.uiContext.setToggleButton(settingsWnd.modelClassBtn, settings.showModelClass, "Class")
-    TargetOverlay.uiContext.setToggleButton(settingsWnd.modelRangeBtn, settings.showModelRange, "Range")
-    TargetOverlay.uiContext.setToggleButton(settingsWnd.modelDefBtn, settings.showModelDefense, "Defense")
-    TargetOverlay.uiContext.setToggleButton(settingsWnd.modelCompactBtn, settings.compactModelOverlay, "Compact")
+    setToggle(settingsWnd.compatModeBtn, compat.active, Compat.ModeLabel(compat))
+    if settingsWnd.compatModeBtn then settingsWnd.compatModeBtn:Show(showNuziOptions) end
+    setToggle(settingsWnd.modelBtn, settings.showModelOverlay, "Overhead")
+    setToggle(settingsWnd.armorBtn, settings.showArmorIcon, "Armor")
+    setToggle(settingsWnd.weaponBtn, settings.showWeaponIcon, "Weapon")
+    setToggle(settingsWnd.modelGsBtn, settings.showModelGearscore, "Gear")
+    setToggle(settingsWnd.modelClassBtn, settings.showModelClass, "Class")
+    setToggle(settingsWnd.modelRangeBtn, settings.showModelRange, "Range")
     if settingsWnd.shadowBtn then
         settingsWnd.shadowBtn:SetCleanText(settings.overlayTextStyle == "outline" and "Text Border" or "Text Shadow")
         settingsWnd.shadowBtn:SetTone(COLORS.active)
     end
-    TargetOverlay.uiContext.setToggleButton(settingsWnd.targetWindowBtn, settings.showTargetWindow, "Stats window")
+    setToggle(settingsWnd.targetWindowBtn, settings.showTargetWindow, "Stats window")
     if settingsWnd.weaponProcBtn then
-        TargetOverlay.uiContext.setToggleButton(settingsWnd.weaponProcBtn, settings.weaponProcEnabled == true, "Weapon proc")
-        TargetOverlay.uiContext.setToggleButton(settingsWnd.weaponProcPopupBtn, settings.weaponProcReadyPopup ~= false, "Ready popup")
-        TargetOverlay.uiContext.setToggleButton(settingsWnd.weaponProcChatBtn, settings.weaponProcDamageChat ~= false, "Hit dmg chat")
+        setToggle(settingsWnd.weaponProcBtn, settings.weaponProcEnabled == true, "Weapon proc")
+        setToggle(settingsWnd.weaponProcPopupBtn, settings.weaponProcReadyPopup ~= false, "Ready popup")
+        setToggle(settingsWnd.weaponProcZealBtn, settings.weaponProcZeal == true, "Zeal proc")
     end
-    require("power_ranger_on/stats_picker_window").Refresh()
-    TargetOverlay.uiContext.setToggleButton(settingsWnd.compactWindowBtn, settings.compactTargetWindow, "Compact")
-    TargetOverlay.uiContext.setToggleButton(settingsWnd.testWindowBtn, settings.testTargetWindow, "Compact/Simple")
-    TargetOverlay.uiContext.setToggleButton(settingsWnd.ownershipBtn, settings.showOwnershipLabels ~= false, "Ownership")
-    TargetOverlay.uiContext.setToggleButton(settingsWnd.guildFamilyLabelBtn, settings.showGuildFamilyLabel == true, "Guild/Fam")
-    TargetOverlay.uiContext.setToggleButton(settingsWnd.speedMeterBtn, settings.showSpeedMeter == true, "Speed meter")
-    TargetOverlay.uiContext.setToggleButton(settingsWnd.ownOwnersMarkBtn, settings.showOwnOwnersMark == true, "Personal")
-    TargetOverlay.uiContext.setToggleButton(settingsWnd.targetOwnersMarkBtn, settings.showTargetOwnersMark ~= false, "Target mark")
-    TargetOverlay.uiContext.setToggleButton(settingsWnd.warnOwnersMarkBtn, settings.warnMissingOwnersMark ~= false, "Missing warning")
-    TargetOverlay.uiContext.setToggleButton(settingsWnd.selfBtn, settings.showSelfPanel, "Self win")
-    TargetOverlay.uiContext.setToggleButton(settingsWnd.selfCdBtn, settings.showSelfCooldowns, "Cooldowns")
-    TargetOverlay.uiContext.setToggleButton(settingsWnd.selfEquipmentBtn, settings.showSelfEquipment ~= false, "Equipment")
-    TargetOverlay.uiContext.setToggleButton(settingsWnd.selfBorderBtn, settings.showSelfBorder ~= false, "Border")
-    TargetOverlay.uiContext.setToggleButton(settingsWnd.nuziImportBtn, settings.importNuziCooldowns ~= false, "Nuzi CDs")
-    settingsWnd.nuziImportBtn:Show(showNuziOptions)
-    TargetOverlay.uiContext.setToggleButton(settingsWnd.probeLogBtn, settings.skillProbeLogging, "Log")
+    if settingsWnd.weaponProcScaleValue then
+        settingsWnd.weaponProcScaleValue:SetText(tostring(settings.weaponProcScaleLevel or 0))
+    end
+    if settingsWnd.weaponProcPopupScaleValue then
+        settingsWnd.weaponProcPopupScaleValue:SetText(tostring(settings.weaponProcPopupScale or 0))
+    end
+    if settingsWnd.weaponProcOpacityValue then
+        local opacity = math.max(0, math.min(10, tonumber(settings.weaponProcOpacityLevel) or 8))
+        settingsWnd.weaponProcOpacityValue:SetText(string.format("%.2f", opacity / 10))
+        if settingsWnd.weaponProcOpacityFill then
+            if opacity > 0 then
+                settingsWnd.weaponProcOpacityFill:SetExtent(math.max(1, math.floor((opacity / 10) * 108)), 14)
+                settingsWnd.weaponProcOpacityFill:Show(true)
+            else
+                settingsWnd.weaponProcOpacityFill:Show(false)
+            end
+        end
+    end
+    if not TARGET_API_FEATURES_DISABLED then
+        require("power_ranger_on/stats_picker_window").Refresh()
+    end
+    setToggle(settingsWnd.compactWindowBtn, settings.compactTargetWindow, "Compact")
+    setToggle(settingsWnd.testWindowBtn, settings.testTargetWindow, "Compact/Simple")
+    setToggle(settingsWnd.ownershipBtn, settings.showOwnershipLabels ~= false, "Ownership")
+    setToggle(settingsWnd.guildFamilyLabelBtn, settings.showGuildFamilyLabel == true, "Guild/Fam")
+    setToggle(settingsWnd.speedMeterBtn, settings.showSpeedMeter == true, "Speed meter")
+    setToggle(settingsWnd.ownOwnersMarkBtn, settings.showOwnOwnersMark == true, "Personal")
+    setToggle(settingsWnd.targetOwnersMarkBtn, settings.showTargetOwnersMark ~= false, "Target mark")
+    -- warnOwnersMarkBtn parked (API lock) -- missing-warning toggle removed from the UI.
+    setToggle(settingsWnd.selfBtn, settings.showSelfPanel, "Self win")
+    setToggle(settingsWnd.selfCdBtn, settings.showSelfCooldowns, "Cooldowns")
+    setToggle(settingsWnd.selfEquipmentBtn, settings.showSelfEquipment ~= false, "Equipment")
+    setToggle(settingsWnd.selfBorderBtn, settings.showSelfBorder ~= false, "Border")
+    setToggle(settingsWnd.nuziImportBtn, settings.importNuziCooldowns ~= false, "Nuzi CDs")
+    if settingsWnd.nuziImportBtn then settingsWnd.nuziImportBtn:Show(showNuziOptions) end
+    setToggle(settingsWnd.probeLogBtn, settings.skillProbeLogging, "Log")
     local hotSwap = require("power_ranger_on/hot_swap")
-    TargetOverlay.uiContext.setToggleButton(settingsWnd.hotSwapEnabledBtn, hotSwap.IsEnabled(), "HotSwap")
-    TargetOverlay.uiContext.setToggleButton(settingsWnd.hotSwapFloatBtn, hotSwap.IsFloatShown(), "Float")
-    TargetOverlay.uiContext.setToggleButton(settingsWnd.debugLogBtn, settings.debugLogging == true, "Debug")
+    setToggle(settingsWnd.hotSwapEnabledBtn, hotSwap.IsEnabled(), "HotSwap")
+    setToggle(settingsWnd.hotSwapFloatBtn, hotSwap.IsFloatShown(), "Float")
+    setToggle(settingsWnd.debugLogBtn, settings.debugLogging == true, "Debug")
     if settingsWnd.scaleValue then
         settingsWnd.scaleValue:SetText(tostring(settings.uiScaleLevel or 0))
     end
@@ -3493,6 +3653,9 @@ function refreshSettingsButtons()
     end
     if settingsWnd.modelLeftValue then
         settingsWnd.modelLeftValue:SetText(tostring(settings.compactModelLeftOffset or CONFIG.compactModelLeftOffset))
+    end
+    if settingsWnd.modelYValue then
+        settingsWnd.modelYValue:SetText(tostring(settings.compactModelYOffset or 0))
     end
     if settingsWnd.intelScaleValue then
         settingsWnd.intelScaleValue:SetText(tostring(settings.targetWindowScaleLevel or 0))
@@ -3530,11 +3693,29 @@ function refreshSettingsButtons()
             end
         end
     end
+    if settingsWnd.ownersMarkOpacityValue then
+        local opacity = math.max(0, math.min(10, tonumber(settings.ownersMarkOpacityLevel) or 8))
+        settingsWnd.ownersMarkOpacityValue:SetText(string.format("%.2f", opacity / 10))
+        if settingsWnd.ownersMarkOpacityFill then
+            if opacity > 0 then
+                settingsWnd.ownersMarkOpacityFill:SetExtent(math.max(1, math.floor((opacity / 10) * 130)), 14)
+                settingsWnd.ownersMarkOpacityFill:Show(true)
+            else
+                settingsWnd.ownersMarkOpacityFill:Show(false)
+            end
+        end
+    end
     if settingsWnd.ownershipScaleValue then
         settingsWnd.ownershipScaleValue:SetText(tostring(settings.ownershipScaleLevel or 0))
     end
     if settingsWnd.guildFamilyScaleValue then
         settingsWnd.guildFamilyScaleValue:SetText(tostring(settings.guildFamilyLabelScaleLevel or 0))
+    end
+    if settingsWnd.guildFamilyGuildScaleValue then
+        settingsWnd.guildFamilyGuildScaleValue:SetText(tostring(settings.guildFamilyGuildScaleLevel or 0))
+    end
+    if settingsWnd.guildFamilyFamilyScaleValue then
+        settingsWnd.guildFamilyFamilyScaleValue:SetText(tostring(settings.guildFamilyFamilyScaleLevel or 0))
     end
     refreshCooldownSettingRows()
     if settingsWnd.fieldButtons then
@@ -3593,9 +3774,8 @@ local function toggleSetting(key)
         refreshNuziCooldownRows(true)
         TargetOverlay.refreshEventSubscriptions()
     end
-    if key == "weaponProcEnabled" or key == "weaponProcReadyPopup" or key == "weaponProcDamageChat" then
+    if key == "weaponProcEnabled" or key == "weaponProcReadyPopup" or key == "weaponProcZeal" then
         TargetOverlay.weaponProc.Refresh()
-        TargetOverlay.refreshEventSubscriptions()
     end
     saveSettings()
     refreshSettingsButtons()
@@ -3622,6 +3802,16 @@ function TargetOverlay.shiftSpeedOpacity(delta)
     TargetOverlay.travelSpeed.Refresh()
 end
 
+function TargetOverlay.shiftOwnersMarkOpacity(delta)
+    local level = (tonumber(settings.ownersMarkOpacityLevel) or 8) + (tonumber(delta) or 0)
+    if level < 0 then level = 0 end
+    if level > 10 then level = 10 end
+    settings.ownersMarkOpacityLevel = level
+    saveSettings()
+    refreshSettingsButtons()
+    TargetOverlay.ownersMark.Refresh()
+end
+
 function TargetOverlay.setSpeedOpacityFromMouse()
     if not settingsWnd then return end
     local okPos, mx = pcall(function() return api.Input:GetMousePos() end)
@@ -3636,6 +3826,68 @@ function TargetOverlay.setSpeedOpacityFromMouse()
     saveSettings()
     refreshSettingsButtons()
     TargetOverlay.travelSpeed.Refresh()
+end
+
+function TargetOverlay.setOwnersMarkOpacityFromMouse()
+    if not settingsWnd then return end
+    local okPos, mx = pcall(function() return api.Input:GetMousePos() end)
+    if not okPos or not mx then return end
+    local windowX = tonumber(settings.settingsX) or 650
+    local currentX = TargetOverlay.windowHelpers.Position(settingsWnd)
+    if tonumber(currentX) then windowX = tonumber(currentX) end
+    local trackLeft = windowX + 18 + 112
+    local frac = (tonumber(mx) - trackLeft) / 132
+    if frac < 0 then frac = 0 elseif frac > 1 then frac = 1 end
+    settings.ownersMarkOpacityLevel = math.floor((frac * 10) + 0.5)
+    saveSettings()
+    refreshSettingsButtons()
+    TargetOverlay.ownersMark.Refresh()
+end
+
+function TargetOverlay.shiftWeaponProcOpacity(delta)
+    local level = (tonumber(settings.weaponProcOpacityLevel) or 8) + (tonumber(delta) or 0)
+    if level < 0 then level = 0 end
+    if level > 10 then level = 10 end
+    settings.weaponProcOpacityLevel = level
+    saveSettings()
+    refreshSettingsButtons()
+    TargetOverlay.weaponProc.Refresh()
+end
+
+function TargetOverlay.shiftWeaponProcScale(delta)
+    local level = (tonumber(settings.weaponProcScaleLevel) or 0) + (tonumber(delta) or 0)
+    if level < 0 then level = 0 end
+    if level > 6 then level = 6 end
+    settings.weaponProcScaleLevel = level
+    saveSettings()
+    refreshSettingsButtons()
+    TargetOverlay.weaponProc.Refresh()
+end
+
+-- Over-the-character ready popup size (separate from the bar scale; applies on the next popup).
+function TargetOverlay.shiftWeaponProcPopupScale(delta)
+    local level = (tonumber(settings.weaponProcPopupScale) or 0) + (tonumber(delta) or 0)
+    if level < 0 then level = 0 end
+    if level > 6 then level = 6 end
+    settings.weaponProcPopupScale = level
+    saveSettings()
+    refreshSettingsButtons()
+end
+
+function TargetOverlay.setWeaponProcOpacityFromMouse()
+    if not settingsWnd then return end
+    local okPos, mx = pcall(function() return api.Input:GetMousePos() end)
+    if not okPos or not mx then return end
+    local windowX = tonumber(settings.settingsX) or 650
+    local currentX = TargetOverlay.windowHelpers.Position(settingsWnd)
+    if tonumber(currentX) then windowX = tonumber(currentX) end
+    local trackLeft = windowX + 18 + 348
+    local frac = (tonumber(mx) - trackLeft) / 110
+    if frac < 0 then frac = 0 elseif frac > 1 then frac = 1 end
+    settings.weaponProcOpacityLevel = math.floor((frac * 10) + 0.5)
+    saveSettings()
+    refreshSettingsButtons()
+    TargetOverlay.weaponProc.Refresh()
 end
 
 function TargetOverlay.toggleCooldownGroup(group)
@@ -3683,6 +3935,37 @@ function TargetOverlay.setSelfOpacityFromMouse()
     updateSelfPanel()
 end
 
+-- Stats / intel window background opacity. Multiplies the per-mode base bg + header
+-- alphas (stored on the window at render time) so the slider works in either docked
+-- or expanded layout, and re-applies live for immediate feedback while idle.
+-- Level range is 0..20 -> multiplier 0.0..2.0 of the per-mode base alpha (final alpha
+-- clamped to 1.0), so the window can go well past its old "1.00" look to nearly solid.
+function TargetOverlay.applyStatsOpacity()
+    if not targetInfoWnd then return end
+    local op = math.max(0, math.min(20, tonumber(settings.statsOpacityLevel) or 10)) / 10
+    local bg = targetInfoWnd._statsBgBase
+    local hd = targetInfoWnd._statsHeaderBase
+    if bg then pcall(function() targetInfoWnd.bg:SetColor(bg[1], bg[2], bg[3], math.min(1, bg[4] * op)) end) end
+    if hd then pcall(function() targetInfoWnd.header:SetColor(hd[1], hd[2], hd[3], math.min(1, hd[4] * op)) end) end
+end
+
+function TargetOverlay.shiftStatsOpacity(delta)
+    local level = (tonumber(settings.statsOpacityLevel) or 10) + (tonumber(delta) or 0)
+    if level < 0 then level = 0 end
+    if level > 20 then level = 20 end
+    settings.statsOpacityLevel = level
+    saveSettings()
+    TargetOverlay.applyStatsOpacity()
+end
+
+function TargetOverlay.setStatsOpacity(frac)
+    frac = tonumber(frac) or 0
+    if frac < 0 then frac = 0 elseif frac > 1 then frac = 1 end
+    settings.statsOpacityLevel = math.floor((frac * 20) + 0.5)
+    saveSettings()
+    TargetOverlay.applyStatsOpacity()
+end
+
 function TargetOverlay.shiftSimpleSpacing(key, delta, minValue, maxValue)
     settings[key] = math.max(minValue, math.min(maxValue, (tonumber(settings[key]) or minValue) + delta))
     if targetInfoWnd then
@@ -3700,6 +3983,14 @@ function TargetOverlay.shiftCompactModelLeft(delta)
     refreshSettingsButtons()
 end
 
+function TargetOverlay.shiftCompactModelY(delta)
+    settings.compactModelYOffset = math.max(-80, math.min(80, (tonumber(settings.compactModelYOffset) or 0) + (tonumber(delta) or 0)))
+    if mainCanvas then mainCanvas._layoutScale = nil end
+    lastScreenPosition = ""
+    saveSettings()
+    refreshSettingsButtons()
+end
+
 function TargetOverlay.shiftModelRangeOffset(axis, delta)
     local key = axis == "y" and "modelRangeOffsetY" or "modelRangeOffsetX"
     settings[key] = math.max(-120, math.min(120, (tonumber(settings[key]) or 0) + delta))
@@ -3709,7 +4000,8 @@ end
 
 local function shiftUiScale(delta, key)
     key = key or "uiScaleLevel"
-    local level = math.max(0, math.min(10, (tonumber(settings[key]) or 0) + (tonumber(delta) or 0)))
+    local minLevel = (key == "guildFamilyGuildScaleLevel" or key == "guildFamilyFamilyScaleLevel") and -5 or 0
+    local level = math.max(minLevel, math.min(10, (tonumber(settings[key]) or 0) + (tonumber(delta) or 0)))
     settings[key] = level
     if selfWnd then
         selfWnd._lastWidth = nil
@@ -3734,6 +4026,9 @@ local function shiftUiScale(delta, key)
     if settingsWnd and settingsWnd.modelRangeYValue then
         settingsWnd.modelRangeYValue:SetText(tostring(settings.modelRangeOffsetY or 0))
     end
+    if settingsWnd and settingsWnd.modelYValue then
+        settingsWnd.modelYValue:SetText(tostring(settings.compactModelYOffset or 0))
+    end
     if settingsWnd and settingsWnd.intelScaleValue then
         settingsWnd.intelScaleValue:SetText(tostring(settings.targetWindowScaleLevel or 0))
     end
@@ -3749,6 +4044,12 @@ local function shiftUiScale(delta, key)
     end
     if settingsWnd and settingsWnd.guildFamilyScaleValue then
         settingsWnd.guildFamilyScaleValue:SetText(tostring(settings.guildFamilyLabelScaleLevel or 0))
+    end
+    if settingsWnd and settingsWnd.guildFamilyGuildScaleValue then
+        settingsWnd.guildFamilyGuildScaleValue:SetText(tostring(settings.guildFamilyGuildScaleLevel or 0))
+    end
+    if settingsWnd and settingsWnd.guildFamilyFamilyScaleValue then
+        settingsWnd.guildFamilyFamilyScaleValue:SetText(tostring(settings.guildFamilyFamilyScaleLevel or 0))
     end
     if ownershipWnd then
         ownershipWnd._lastWidth = nil
@@ -3780,7 +4081,7 @@ local function createSettingsWindow()
         id = "PowerRangerSettings",
         title = "Power Ranger ON",
         width = 620,
-        height = 1060,
+        height = TARGET_API_FEATURES_DISABLED and 820 or 1120,
         x = settings.settingsX,
         y = settings.settingsY,
         xKey = "settingsX",
@@ -3803,23 +4104,36 @@ local function createSettingsWindow()
         toggleSetting = toggleSetting,
         shiftUiScale = shiftUiScale,
         shiftCompactModelLeft = TargetOverlay.shiftCompactModelLeft,
+        shiftCompactModelY = TargetOverlay.shiftCompactModelY,
         shiftModelRangeOffset = TargetOverlay.shiftModelRangeOffset,
         cycleOverlayTextStyle = TargetOverlay.cycleOverlayTextStyle
     })
 
-    settingsSections.BuildIntelWindow(settingsWnd, {
-        colors = COLORS,
-        sectionPanel = TargetOverlay.uiContext.sectionPanel,
-        label = TargetOverlay.uiContext.label,
-        flatButton = TargetOverlay.uiContext.flatButton,
-        colorCube = TargetOverlay.uiContext.colorCube,
-        toggleSetting = toggleSetting,
-        shiftUiScale = shiftUiScale,
-        shiftGuildFamilyScale = shiftUiScale,
-        shiftSimpleSpacing = TargetOverlay.shiftSimpleSpacing,
-        fields = TARGET_INFO_FIELDS,
-        openStatsPicker = function() TargetOverlay.openStatsPickerWindow() end
-    })
+    local selfY = 232
+    local travelY = 398
+    local hotSwapY = 544
+    local weaponY = 640
+
+    if not TARGET_API_FEATURES_DISABLED then
+        settingsSections.BuildIntelWindow(settingsWnd, {
+            colors = COLORS,
+            sectionPanel = TargetOverlay.uiContext.sectionPanel,
+            label = TargetOverlay.uiContext.label,
+            flatButton = TargetOverlay.uiContext.flatButton,
+            colorCube = TargetOverlay.uiContext.colorCube,
+            toggleSetting = toggleSetting,
+            shiftUiScale = shiftUiScale,
+            shiftGuildFamilyScale = shiftUiScale,
+            shiftSimpleSpacing = TargetOverlay.shiftSimpleSpacing,
+            fields = TARGET_INFO_FIELDS,
+            openStatsPicker = function() TargetOverlay.openStatsPickerWindow() end
+        })
+
+        selfY = 566
+        travelY = 732
+        hotSwapY = 878
+        weaponY = 968
+    end
 
     settingsSections.BuildSelfCooldowns(settingsWnd, {
         colors = COLORS,
@@ -3840,7 +4154,8 @@ local function createSettingsWindow()
         moveCooldownSetting = moveCooldownSetting,
         toggleCooldownSetting = toggleCooldownSetting,
         toggleCooldownGroup = function(group) TargetOverlay.toggleCooldownGroup(group) end,
-        removeCooldownSetting = removeCooldownSetting
+        removeCooldownSetting = removeCooldownSetting,
+        y = selfY
     })
     settingsSections.BuildHotSwapLauncher(settingsWnd, {
         colors = COLORS,
@@ -3849,7 +4164,7 @@ local function createSettingsWindow()
         flatButton = TargetOverlay.uiContext.flatButton,
         toggleSetting = toggleSetting,
         refreshSettingsButtons = refreshSettingsButtons
-    }, 878)
+    }, hotSwapY)
     settingsSections.BuildTravelTools(settingsWnd, {
         colors = COLORS,
         sectionPanel = TargetOverlay.uiContext.sectionPanel,
@@ -3858,15 +4173,22 @@ local function createSettingsWindow()
         toggleSetting = toggleSetting,
         shiftUiScale = shiftUiScale,
         shiftSpeedOpacity = TargetOverlay.shiftSpeedOpacity,
-        setSpeedOpacityFromMouse = TargetOverlay.setSpeedOpacityFromMouse
-    }, 732)
+        setSpeedOpacityFromMouse = TargetOverlay.setSpeedOpacityFromMouse,
+        shiftOwnersMarkOpacity = TargetOverlay.shiftOwnersMarkOpacity,
+        setOwnersMarkOpacityFromMouse = TargetOverlay.setOwnersMarkOpacityFromMouse,
+        targetApiDisabled = TARGET_API_FEATURES_DISABLED
+    }, travelY)
     settingsSections.BuildWeaponProc(settingsWnd, {
         colors = COLORS,
         sectionPanel = TargetOverlay.uiContext.sectionPanel,
         label = TargetOverlay.uiContext.label,
         flatButton = TargetOverlay.uiContext.flatButton,
-        toggleSetting = toggleSetting
-    }, 968)
+        toggleSetting = toggleSetting,
+        shiftWeaponProcOpacity = TargetOverlay.shiftWeaponProcOpacity,
+        setWeaponProcOpacityFromMouse = TargetOverlay.setWeaponProcOpacityFromMouse,
+        shiftWeaponProcScale = TargetOverlay.shiftWeaponProcScale,
+        shiftWeaponProcPopupScale = TargetOverlay.shiftWeaponProcPopupScale
+    }, weaponY)
 
     refreshSettingsButtons()
     settingsWnd:Show(false)
@@ -3875,9 +4197,19 @@ end
 function TargetOverlay.openSettings()
     if settingsWnd then
         cleanDeprecatedTrackedSkills()
-        saveSettings()
         refreshSettingsButtons()
         settingsWnd:Show(true)
+    end
+end
+
+-- Toggle entry point for the Stumpy_Sense toolbar's "PR" button.
+function TargetOverlay.toggleSettings()
+    if not settingsWnd then return end
+    local ok, vis = pcall(function() return settingsWnd:IsVisible() end)
+    if ok and vis then
+        settingsWnd:Show(false)
+    else
+        TargetOverlay.openSettings()
     end
 end
 
@@ -3946,7 +4278,13 @@ function TargetOverlay.openStatsPickerWindow()
         cycleColor = cycleSettingColor,
         settingColor = settingColor,
         save = saveSettings,
-        refresh = refreshSettingsButtons
+        refresh = refreshSettingsButtons,
+        shiftStatsSpacing = function(key, delta)
+            TargetOverlay.shiftSimpleSpacing(key, delta, 0, key == "statsColGap" and 120 or 26)
+        end,
+        shiftStatsOpacity = function(delta) TargetOverlay.shiftStatsOpacity(delta) end,
+        setStatsOpacity = function(frac) TargetOverlay.setStatsOpacity(frac) end,
+        windowX = function(w) return TargetOverlay.windowPosition(w) end
     })
 end
 
@@ -3984,15 +4322,18 @@ function TargetOverlay.init()
     mainCanvas = widgets.canvas
     armorBuffIcon = widgets.armorBuffIcon
     weaponBuffIcon = widgets.weaponBuffIcon
-    targetPdefTitleLabel = widgets.targetPdefTitleLabel
-    targetPdefValueLabel = widgets.targetPdefValueLabel
-    targetMdefTitleLabel = widgets.targetMdefTitleLabel
-    targetMdefValueLabel = widgets.targetMdefValueLabel
+    targetDefense.pdefTitle = widgets.targetPdefTitleLabel
+    targetDefense.pdefValue = widgets.targetPdefValueLabel
+    targetDefense.mdefTitle = widgets.targetMdefTitleLabel
+    targetDefense.mdefValue = widgets.targetMdefValueLabel
     targetRoleIcon = widgets.targetRoleIcon
     targetGearscoreLabel = widgets.targetGearscoreLabel
     targetClassLabel = widgets.targetClassLabel
-    targetRangeCanvas = widgets.targetRangeCanvas
-    targetRangeLabel = widgets.targetRangeLabel
+    targetRange.canvas = widgets.targetRangeCanvas
+    targetRange.label = widgets.targetRangeLabel
+    targetOwnersMark.canvas = widgets.targetOwnersMarkCanvas
+    targetOwnersMark.icon = widgets.targetOwnersMarkIcon
+    targetOwnersMark.time = widgets.targetOwnersMarkTime
 
     createTargetInfoWindow()
     createOwnershipWindow()
@@ -4003,20 +4344,22 @@ function TargetOverlay.init()
     TargetOverlay.travelSpeed.Init(settings, saveSettings, applyHandleDrag)
     TargetOverlay.ownersMark.Init(settings, applyHandleDrag)
     TargetOverlay.weaponProc.Init(settings, applyHandleDrag)
-    api.On("POWER_RANGER_SS_MODE", onStumpySenseLayout)
-    if not stumpyDockHooksRegistered then
-        api.On("STUMPY_DOCK_WHO", registerStumpyDockMember)
-        stumpyDockHooksRegistered = true
+    if not TARGET_API_FEATURES_DISABLED then
+        api.On("POWER_RANGER_SS_MODE", onStumpySenseLayout)
+        if not stumpyDockHooksRegistered then
+            api.On("STUMPY_DOCK_WHO", registerStumpyDockMember)
+            stumpyDockHooksRegistered = true
+        end
+        registerStumpyDockMember()
     end
-    registerStumpyDockMember()
     shiftUiScale(0)
 end
 
 local function updateCanvasPosition()
     local x, y, z = api.Unit:GetUnitScreenPosition("target")
     if not x or not y or not z or z < 0 or z > CONFIG.maxScreenDistance then
-        screenPositionMisses = screenPositionMisses + 1
-        if screenPositionMisses >= 3 then
+        targetMisses.screen = targetMisses.screen + 1
+        if targetMisses.screen >= 3 then
             mainCanvas:Show(false)
             lastScreenPosition = ""
             return false
@@ -4024,15 +4367,13 @@ local function updateCanvasPosition()
         if modelDataTargetId then mainCanvas:Show(true) end
         return false
     end
-    screenPositionMisses = 0
+    targetMisses.screen = 0
     local px = tonumber(x) or 0
     local py = tonumber(y) or 0
     local pz = math.floor(((tonumber(z) or 0) * 10) + 0.5) / 10
     local scale = uiScaleFactor()
-    local anchorOffset = settings.compactModelOverlay and CONFIG.compactHealthbarOffset or CONFIG.healthbarOffset
-    if not settings.compactModelOverlay then
-        anchorOffset = math.floor((anchorOffset * scale) + 0.5)
-    end
+    local anchorOffset = CONFIG.compactHealthbarOffset
+    anchorOffset = anchorOffset + math.floor(((tonumber(settings.compactModelYOffset) or 0) * scale) + 0.5)
     local posString = string.format("%.2f,%.2f,%.1f,%d", px, py, pz, anchorOffset)
     if lastScreenPosition ~= posString then
         mainCanvas:AddAnchor("BOTTOM", "UIParent", "TOPLEFT", px, py + anchorOffset)
@@ -4085,10 +4426,11 @@ local function clearModelWidgets()
     updateBuffIcon(weaponBuffIcon, nil, false)
     hideModelLabel(targetGearscoreLabel)
     hideModelLabel(targetClassLabel)
-    hideModelLabel(targetPdefTitleLabel)
-    hideModelLabel(targetPdefValueLabel)
-    hideModelLabel(targetMdefTitleLabel)
-    hideModelLabel(targetMdefValueLabel)
+    hideModelLabel(targetDefense.pdefTitle)
+    hideModelLabel(targetDefense.pdefValue)
+    hideModelLabel(targetDefense.mdefTitle)
+    hideModelLabel(targetDefense.mdefValue)
+    hideTargetOwnersMarkOverlay()
     if targetRoleIcon then targetRoleIcon:SetVisible(false) end
     curTargetIcon = nil
 end
@@ -4097,12 +4439,13 @@ local function hideModelOverlay()
     if mainCanvas then mainCanvas:Show(false) end
     clearModelWidgets()
     hideModelRange()
+    hideTargetOwnersMarkOverlay()
     if targetInfoWnd then targetInfoWnd:Show(false) end
     TargetOverlay.clearStumpyStatsBox()
     lastScreenPosition = ""
     modelDataTargetId = nil
-    targetInfoMisses = 0
-    screenPositionMisses = 0
+    targetMisses.info = 0
+    targetMisses.screen = 0
 end
 
 local function applyModelLayout()
@@ -4110,13 +4453,14 @@ local function applyModelLayout()
     local textStyle = settings.overlayTextStyle or "shadow"
     local armorEnabled = settings.showArmorIcon ~= false
     local weaponEnabled = settings.showWeaponIcon ~= false
+    local compactOnly = true
     if not mainCanvas
-        or (mainCanvas._compactLayout == settings.compactModelOverlay
+        or (mainCanvas._compactLayout == compactOnly
             and mainCanvas._layoutScale == scale
             and mainCanvas._layoutTextStyle == textStyle
             and mainCanvas._layoutArmorEnabled == armorEnabled
             and mainCanvas._layoutWeaponEnabled == weaponEnabled) then return end
-    mainCanvas._compactLayout = settings.compactModelOverlay
+    mainCanvas._compactLayout = compactOnly
     mainCanvas._layoutScale = scale
     mainCanvas._layoutTextStyle = textStyle
     mainCanvas._layoutArmorEnabled = armorEnabled
@@ -4128,57 +4472,45 @@ local function applyModelLayout()
     targetGearscoreLabel:SetExtent(math.floor((90 * scale) + 0.5), math.floor(((CONFIG.fontSize + 7) * scale) + 0.5))
     targetClassLabel:SetExtent(math.floor((180 * scale) + 0.5), math.floor((16 * scale) + 0.5))
     targetClassLabel.style:SetFontSize(math.floor((CONFIG.fontSize * scale) + 0.5))
-    targetPdefTitleLabel:SetExtent(math.floor((54 * scale) + 0.5), math.floor((13 * scale) + 0.5))
-    targetPdefValueLabel:SetExtent(math.floor((54 * scale) + 0.5), math.floor((13 * scale) + 0.5))
-    targetMdefTitleLabel:SetExtent(math.floor((54 * scale) + 0.5), math.floor((13 * scale) + 0.5))
-    targetMdefValueLabel:SetExtent(math.floor((54 * scale) + 0.5), math.floor((13 * scale) + 0.5))
-    targetPdefTitleLabel.style:SetFontSize(math.floor((10 * scale) + 0.5))
-    targetPdefValueLabel.style:SetFontSize(math.floor((10 * scale) + 0.5))
-    targetMdefTitleLabel.style:SetFontSize(math.floor((10 * scale) + 0.5))
-    targetMdefValueLabel.style:SetFontSize(math.floor((10 * scale) + 0.5))
+    targetDefense.pdefTitle:SetExtent(math.floor((54 * scale) + 0.5), math.floor((13 * scale) + 0.5))
+    targetDefense.pdefValue:SetExtent(math.floor((54 * scale) + 0.5), math.floor((13 * scale) + 0.5))
+    targetDefense.mdefTitle:SetExtent(math.floor((54 * scale) + 0.5), math.floor((13 * scale) + 0.5))
+    targetDefense.mdefValue:SetExtent(math.floor((54 * scale) + 0.5), math.floor((13 * scale) + 0.5))
+    targetDefense.pdefTitle.style:SetFontSize(math.floor((10 * scale) + 0.5))
+    targetDefense.pdefValue.style:SetFontSize(math.floor((10 * scale) + 0.5))
+    targetDefense.mdefTitle.style:SetFontSize(math.floor((10 * scale) + 0.5))
+    targetDefense.mdefValue.style:SetFontSize(math.floor((10 * scale) + 0.5))
     armorBuffIcon:RemoveAllAnchors()
     weaponBuffIcon:RemoveAllAnchors()
     targetGearscoreLabel:RemoveAllAnchors()
     targetClassLabel:RemoveAllAnchors()
-    targetPdefTitleLabel:RemoveAllAnchors()
-    targetPdefValueLabel:RemoveAllAnchors()
-    targetMdefTitleLabel:RemoveAllAnchors()
-    targetMdefValueLabel:RemoveAllAnchors()
-    if settings.compactModelOverlay then
-        local leftOffset = -(tonumber(settings.compactModelLeftOffset) or CONFIG.compactModelLeftOffset)
-        local compactIconGap = math.floor((2 * scale) + 0.5)
-        local outlineOffset = TargetOverlay.useOutlineText() and math.floor((4 * scale) + 0.5) or 0
-        local compactTextRight = leftOffset - outlineOffset
-        targetGearscoreLabel.style:SetAlign(ALIGN.RIGHT)
-        targetClassLabel.style:SetAlign(ALIGN.RIGHT)
-        armorBuffIcon:AddAnchor("RIGHT", mainCanvas, "LEFT", leftOffset, 0)
-        if armorEnabled then
-            weaponBuffIcon:AddAnchor("RIGHT", armorBuffIcon, "LEFT", -compactIconGap, 0)
-        else
-            weaponBuffIcon:AddAnchor("RIGHT", mainCanvas, "LEFT", leftOffset, 0)
-        end
-        targetGearscoreLabel:SetHeight(math.floor(((CONFIG.fontSize + 7) * scale) + 0.5))
-        targetGearscoreLabel.style:SetFontSize(math.floor(((CONFIG.fontSize + 3) * scale) + 0.5))
-        targetGearscoreLabel:AddAnchor("BOTTOMRIGHT", mainCanvas, "LEFT", compactTextRight, math.floor((-16 * scale) + 0.5))
-        targetClassLabel:AddAnchor("TOPRIGHT", mainCanvas, "LEFT", compactTextRight, math.floor((16 * scale) + 0.5))
+    targetDefense.pdefTitle:RemoveAllAnchors()
+    targetDefense.pdefValue:RemoveAllAnchors()
+    targetDefense.mdefTitle:RemoveAllAnchors()
+    targetDefense.mdefValue:RemoveAllAnchors()
+    local leftOffset = -(tonumber(settings.compactModelLeftOffset) or CONFIG.compactModelLeftOffset)
+    local compactIconGap = math.floor((2 * scale) + 0.5)
+    local outlineOffset = TargetOverlay.useOutlineText() and math.floor((4 * scale) + 0.5) or 0
+    local compactTextRight = leftOffset - outlineOffset
+    targetGearscoreLabel.style:SetAlign(ALIGN.RIGHT)
+    targetClassLabel.style:SetAlign(ALIGN.RIGHT)
+    armorBuffIcon:AddAnchor("RIGHT", mainCanvas, "LEFT", leftOffset, 0)
+    if armorEnabled then
+        weaponBuffIcon:AddAnchor("RIGHT", armorBuffIcon, "LEFT", -compactIconGap, 0)
     else
-        targetGearscoreLabel.style:SetAlign(ALIGN.CENTER)
-        targetClassLabel.style:SetAlign(ALIGN.CENTER)
-        armorBuffIcon:AddAnchor("LEFT", mainCanvas, "RIGHT", math.floor((CONFIG.armorBuffOffset * scale) + 0.5), 0)
-        weaponBuffIcon:AddAnchor("RIGHT", mainCanvas, "LEFT", math.floor((CONFIG.weaponBuffOffset * scale) + 0.5), 0)
-        targetGearscoreLabel:SetHeight(math.floor(((CONFIG.fontSize + 4) * scale) + 0.5))
-        targetGearscoreLabel.style:SetFontSize(math.floor((CONFIG.fontSize * scale) + 0.5))
-        targetGearscoreLabel:AddAnchor("TOP", mainCanvas, "BOTTOM", 0, math.floor((CONFIG.gearscoreOffset * scale) + 0.5))
-        targetClassLabel:AddAnchor("TOP", targetGearscoreLabel, "BOTTOM", math.floor((-10 * scale) + 0.5), math.floor((-1 * scale) + 0.5))
+        weaponBuffIcon:AddAnchor("RIGHT", mainCanvas, "LEFT", leftOffset, 0)
     end
-    targetPdefTitleLabel:AddAnchor("RIGHT", weaponBuffIcon, "LEFT", 0, math.floor((-5 * scale) + 0.5))
-    targetPdefValueLabel:AddAnchor("TOP", targetPdefTitleLabel, "BOTTOM", 0, math.floor((-1 * scale) + 0.5))
-    targetMdefTitleLabel:AddAnchor("LEFT", armorBuffIcon, "RIGHT", math.floor((-3 * scale) + 0.5), math.floor((-5 * scale) + 0.5))
-    targetMdefValueLabel:AddAnchor("TOP", targetMdefTitleLabel, "BOTTOM", 0, math.floor((-1 * scale) + 0.5))
+    targetGearscoreLabel:SetHeight(math.floor(((CONFIG.fontSize + 7) * scale) + 0.5))
+    targetGearscoreLabel.style:SetFontSize(math.floor(((CONFIG.fontSize + 3) * scale) + 0.5))
+    targetGearscoreLabel:AddAnchor("BOTTOMRIGHT", mainCanvas, "LEFT", compactTextRight, math.floor((-16 * scale) + 0.5))
+    targetClassLabel:AddAnchor("TOPRIGHT", mainCanvas, "LEFT", compactTextRight, math.floor((16 * scale) + 0.5))
+    -- Defense labels are intentionally parked after the API lock. The widgets still
+    -- exist in the old window factory, but compact overhead no longer anchors/shows
+    -- PDEF/MDEF.
 end
 
 local function updateFastModelRange()
-    if not targetRangeCanvas or not targetRangeLabel then return end
+    if not targetRange.canvas or not targetRange.label then return end
     if settings.showModelOverlay == false or settings.showModelRange == false or Compat.ShouldHideTargetText(compatState) then
         hideModelRange()
         return
@@ -4192,15 +4524,115 @@ local function updateFastModelRange()
     if not dist or dist < 0 then dist = 0 end
     local scale = uiScaleFactor()
     local rangeScale = scale * uiScaleFactor("modelRangeScaleLevel")
-    targetRangeCanvas:SetExtent(math.floor((86 * rangeScale) + 0.5), math.floor(((CONFIG.fontSize + 6) * rangeScale) + 0.5))
-    targetRangeLabel:SetExtent(math.floor((86 * rangeScale) + 0.5), math.floor(((CONFIG.fontSize + 6) * rangeScale) + 0.5))
-    targetRangeLabel.style:SetFontSize(math.floor((CONFIG.fontSize * rangeScale) + 0.5))
-    setModelLabel(targetRangeLabel, string.format("%.1fm", dist))
-    setTextColor(targetRangeLabel, settingColor("modelRange"))
+    targetRange.canvas:SetExtent(math.floor((86 * rangeScale) + 0.5), math.floor(((CONFIG.fontSize + 6) * rangeScale) + 0.5))
+    targetRange.label:SetExtent(math.floor((86 * rangeScale) + 0.5), math.floor(((CONFIG.fontSize + 6) * rangeScale) + 0.5))
+    targetRange.label.style:SetFontSize(math.floor((CONFIG.fontSize * rangeScale) + 0.5))
+    setModelLabel(targetRange.label, string.format("%.1fm", dist))
+    setTextColor(targetRange.label, settingColor("modelRange"))
     local offsetX = math.floor(((tonumber(settings.modelRangeOffsetX) or 0) * scale) + 0.5)
     local offsetY = math.floor(((tonumber(settings.modelRangeOffsetY) or 0) * scale) + 0.5)
-    targetRangeCanvas:AddAnchor("BOTTOM", "UIParent", "TOPLEFT", sX + offsetX, sY - math.floor((44 * scale) + 0.5) + offsetY)
-    targetRangeCanvas:Show(true)
+    targetRange.canvas:AddAnchor("BOTTOM", "UIParent", "TOPLEFT", sX + offsetX, sY - math.floor((44 * scale) + 0.5) + offsetY)
+    targetRange.canvas:Show(true)
+end
+
+local function updateTargetOwnersMarkOverlay()
+    if not targetOwnersMark.canvas or not targetOwnersMark.icon or not targetOwnersMark.time then return end
+    if settings.showModelOverlay == false or settings.showTargetOwnersMark == false or Compat.ShouldHideTargetText(compatState) then
+        hideTargetOwnersMarkOverlay()
+        return
+    end
+    local mark = TargetOverlay.ownersMark.GetTargetMark()
+    if not mark then
+        hideTargetOwnersMarkOverlay()
+        return
+    end
+    local sX, sY, sZ = api.Unit:GetUnitScreenPosition("target")
+    if not sX or not sY or not sZ or sZ < 0 or sZ > CONFIG.maxScreenDistance then
+        hideTargetOwnersMarkOverlay()
+        return
+    end
+    local scale = uiScaleFactor()
+    local size = math.floor((40 * scale) + 0.5)
+    targetOwnersMark.canvas:SetExtent(size + 8, size + 8)
+    targetOwnersMark.icon:SetExtent(size, size)
+    targetOwnersMark.time:SetExtent(size + 8, size)
+    targetOwnersMark.time.style:SetFontSize(math.floor((13 * scale) + 0.5))
+    if mark.path and targetOwnersMark.icon._lastPath ~= mark.path then
+        F_SLOT.SetIconBackGround(targetOwnersMark.icon, mark.path)
+        targetOwnersMark.icon._lastPath = mark.path
+    end
+    targetOwnersMark.time:SetText(string.format("%.0fs", math.max(0, (tonumber(mark.timeLeft) or 0) - 750) / 1000))
+    targetOwnersMark.icon:Show(true)
+    targetOwnersMark.time:Show(true)
+    local offsetX = math.floor(((tonumber(settings.modelRangeOffsetX) or 0) * scale) + 0.5)
+    local offsetY = math.floor(((tonumber(settings.modelRangeOffsetY) or 0) * scale) + 0.5)
+    targetOwnersMark.canvas:RemoveAllAnchors()
+    targetOwnersMark.canvas:AddAnchor("TOP", "UIParent", "TOPLEFT", sX + offsetX, sY - math.floor((38 * scale) + 0.5) + offsetY)
+    targetOwnersMark.canvas:Show(true)
+end
+
+local function updateRestrictedTargetOverhead()
+    hideOwnershipWindow()
+    hideGuildFamilyWindow()
+    if targetInfoWnd then targetInfoWnd:Show(false) end
+    TargetOverlay.clearStumpyStatsBox()
+
+    local playerId = OverlayUtils.safeCall(function() return api.Unit:GetUnitId("player") end)
+    local targetId = OverlayUtils.safeCall(function() return api.Unit:GetUnitId("target") end)
+    if not targetId or targetId == playerId then
+        hideModelOverlay()
+        previousTargetId = nil
+        return
+    end
+    previousTargetId = targetId
+
+    if settings.showModelOverlay == false then
+        if mainCanvas then mainCanvas:Show(false) end
+        hideModelRange()
+        return
+    end
+
+    local gearscore = TargetOverlay.getTokenGearScore("target")
+    local className = TargetOverlay.getClassName(nil) or "Unknown"
+    if not gearscore and className == "Unknown" then
+        hideModelOverlay()
+        return
+    end
+
+    modelDataTargetId = targetId
+    if not updateCanvasPosition() then return end
+
+    local trackedBuffs = BuffDetector.getTrackedBuffObjects("target")
+    local armorBuff = TargetOverlay.findBuffByCategory(trackedBuffs, BUFF_CATEGORIES.armor)
+    local weaponBuff = TargetOverlay.findBuffByCategory(trackedBuffs, BUFF_CATEGORIES.weapon)
+    local showTargetText = not Compat.ShouldHideTargetText(compatState)
+
+    applyModelLayout()
+    updateBuffIcon(armorBuffIcon, armorBuff, settings.showArmorIcon)
+    updateBuffIcon(weaponBuffIcon, weaponBuff, settings.showWeaponIcon)
+
+    if showTargetText and settings.showModelGearscore and gearscore then
+        setModelLabel(targetGearscoreLabel, tostring(gearscore))
+        setTextColor(targetGearscoreLabel, settingColor("modelGearscore"))
+    else
+        hideModelLabel(targetGearscoreLabel)
+    end
+
+    if showTargetText and settings.showModelClass then
+        setModelLabel(targetClassLabel, className)
+        setTextColor(targetClassLabel, settingColor("modelClass"))
+    else
+        hideModelLabel(targetClassLabel)
+    end
+
+    updateFastModelRange()
+    updateTargetOwnersMarkOverlay()
+    hideModelLabel(targetDefense.pdefTitle)
+    hideModelLabel(targetDefense.pdefValue)
+    hideModelLabel(targetDefense.mdefTitle)
+    hideModelLabel(targetDefense.mdefValue)
+
+    updateRoleIcon(nil)
 end
 
 function TargetOverlay.update(dt)
@@ -4208,8 +4640,8 @@ function TargetOverlay.update(dt)
     TargetOverlay.travelSpeed.Update(elapsed)
     TargetOverlay.ownersMark.Update(elapsed)
     TargetOverlay.weaponProc.Update(elapsed)
-    updateElapsed = updateElapsed + elapsed
-    selfUpdateElapsed = selfUpdateElapsed + elapsed
+    runtimeState.updateElapsed = runtimeState.updateElapsed + elapsed
+    runtimeState.selfUpdateElapsed = runtimeState.selfUpdateElapsed + elapsed
     TargetOverlay.cooldownRuntimeElapsed = (TargetOverlay.cooldownRuntimeElapsed or SELF_UPDATE_MS) + elapsed
     compatRefreshElapsed = compatRefreshElapsed + elapsed
     NuziCooldownImport.AddElapsed(elapsed)
@@ -4217,21 +4649,33 @@ function TargetOverlay.update(dt)
     updateCompatState(false)
     refreshNuziCooldownRows(false)
     local now = api.Time:GetUiMsec()
-    if skillProbeDirty and now - lastSkillProbeSave >= 2000 then
-        lastSkillProbeSave = now
+    if runtimeState.skillProbeDirty and now - runtimeState.lastSkillProbeSave >= 2000 then
+        runtimeState.lastSkillProbeSave = now
         saveSkillProbe()
     end
     if TargetOverlay.cooldownRuntimeElapsed >= 25 then
         TargetOverlay.cooldownRuntimeElapsed = math.min(TargetOverlay.cooldownRuntimeElapsed - 25, 25)
         updateTrackedBuffs()
     end
-    local doSelfUpdate = selfUpdateElapsed >= SELF_UPDATE_MS
+    local doSelfUpdate = runtimeState.selfUpdateElapsed >= SELF_UPDATE_MS
     if doSelfUpdate then
-        selfUpdateElapsed = math.min(selfUpdateElapsed - SELF_UPDATE_MS, SELF_UPDATE_MS)
+        runtimeState.selfUpdateElapsed = math.min(runtimeState.selfUpdateElapsed - SELF_UPDATE_MS, SELF_UPDATE_MS)
         updateSelfPanel()
     end
-    local doSlowUpdate = updateElapsed >= TARGET_UPDATE_MS
-    if doSlowUpdate then updateElapsed = 0 end
+
+    if TARGET_API_FEATURES_DISABLED then
+        -- Detailed target stats/ownership depended on now-restricted raw-id/detail reads.
+        -- The overhead itself is still useful because screen position, class, range, and
+        -- gearscore are token-safe on current API builds.
+        updateRestrictedTargetOverhead()
+        previousTargetId = nil
+        targetMisses.token = 0
+        targetMisses.info = 0
+        return
+    end
+
+    local doSlowUpdate = runtimeState.updateElapsed >= TARGET_UPDATE_MS
+    if doSlowUpdate then runtimeState.updateElapsed = 0 end
 
     local playerId = api.Unit:GetUnitId("player")
     local targetId = api.Unit:GetUnitId("target")
@@ -4239,11 +4683,11 @@ function TargetOverlay.update(dt)
     if targetId and playerId ~= targetId and directOwnershipInfo
         and TargetOverlay.hasOwnershipFields(directOwnershipInfo)
         and not TargetOverlay.isPlayerTarget(directOwnershipInfo) then
-        targetTokenMisses = 0
-        targetInfoMisses = 0
+        targetMisses.token = 0
+        targetMisses.info = 0
         if targetId ~= previousTargetId then
             previousTargetId = targetId
-            updateElapsed = 0
+            runtimeState.updateElapsed = 0
         end
         hideModelOverlay()
         refreshOwnershipWindow(directOwnershipInfo)
@@ -4253,8 +4697,8 @@ function TargetOverlay.update(dt)
     if not targetId or playerId == targetId then
         local tokenInfo = OverlayUtils.safeCall(function() return api.Unit:UnitInfo("target") end)
         if TargetOverlay.isOwnershipTarget(tokenInfo) then
-            targetTokenMisses = 0
-            targetInfoMisses = 0
+            targetMisses.token = 0
+            targetMisses.info = 0
             previousTargetId = nil
             hideModelOverlay()
             if doSlowUpdate then
@@ -4263,8 +4707,8 @@ function TargetOverlay.update(dt)
             hideGuildFamilyWindow()
             return
         end
-        targetTokenMisses = targetTokenMisses + 1
-        if targetTokenMisses >= 3 then
+        targetMisses.token = targetMisses.token + 1
+        if targetMisses.token >= 3 then
             hideModelOverlay()
             hideOwnershipWindow()
             hideGuildFamilyWindow()
@@ -4272,14 +4716,14 @@ function TargetOverlay.update(dt)
         end
         return
     end
-    targetTokenMisses = 0
+    targetMisses.token = 0
     if targetId ~= previousTargetId then
         hideModelOverlay()
         hideOwnershipWindow()
         hideGuildFamilyWindow()
         previousTargetId = targetId
         doSlowUpdate = true
-        updateElapsed = 0
+        runtimeState.updateElapsed = 0
     end
     if settings.showModelOverlay ~= false and modelDataTargetId == targetId then
         updateCanvasPosition()
@@ -4293,9 +4737,21 @@ function TargetOverlay.update(dt)
 
     local targetInfo = directOwnershipInfo or TargetOverlay.getTargetInfoById(targetId)
     local tokenInfo = OverlayUtils.safeCall(function() return api.Unit:UnitInfo("target") end)
-    local gearscore = OverlayUtils.safeCall(function() return api.Unit:UnitGearScore("target") end)
+    local tokenName = TargetOverlay.getTokenName("target")
+    local tokenFaction = TargetOverlay.getTokenFaction("target")
+    local tokenClassName = TargetOverlay.getClassName(tokenInfo or targetInfo)
+    local gearscore = TargetOverlay.getTokenGearScore("target")
     gearscore = gearscore or OverlayUtils.numField(tokenInfo, {"gear_score", "gearScore"}) or OverlayUtils.numField(targetInfo, {"gear_score", "gearScore"})
-    local isPlayer = TargetOverlay.isPlayerTarget(targetInfo) or TargetOverlay.isPlayerTarget(tokenInfo)
+    local restrictedTargetInfo = nil
+    if not targetInfo and not tokenInfo and (gearscore or tokenClassName) then
+        restrictedTargetInfo = TargetOverlay.makeRestrictedCharacterInfo(tokenName or tostring(targetId), tokenFaction)
+    end
+    local isPlayer = TargetOverlay.isPlayerTarget(targetInfo)
+        or TargetOverlay.isPlayerTarget(tokenInfo)
+        or TargetOverlay.isPlayerTarget(restrictedTargetInfo)
+        or TargetOverlay.isCharacterTarget(targetInfo, gearscore)
+        or TargetOverlay.isCharacterTarget(tokenInfo, gearscore)
+        or TargetOverlay.isCharacterTarget(restrictedTargetInfo, gearscore)
     local ownershipInfo = nil
     if not isPlayer then
         if TargetOverlay.isOwnershipTarget(targetInfo) then
@@ -4304,15 +4760,20 @@ function TargetOverlay.update(dt)
             ownershipInfo = tokenInfo
         end
     end
-    local usableInfo = ownershipInfo or (TargetOverlay.isCharacterTarget(targetInfo, gearscore) and targetInfo or tokenInfo or targetInfo)
+    local usableInfo = ownershipInfo
+        or (TargetOverlay.isCharacterTarget(targetInfo, gearscore) and targetInfo)
+        or (TargetOverlay.isCharacterTarget(tokenInfo, gearscore) and tokenInfo)
+        or restrictedTargetInfo
+        or tokenInfo
+        or targetInfo
     if not usableInfo then
-        targetInfoMisses = targetInfoMisses + 1
-        if modelDataTargetId ~= targetId and targetInfoMisses >= 3 then
+        targetMisses.info = targetMisses.info + 1
+        if modelDataTargetId ~= targetId and targetMisses.info >= 3 then
             hideModelOverlay()
         end
         return
     end
-    targetInfoMisses = 0
+    targetMisses.info = 0
 
     if ownershipInfo then
         hideModelOverlay()
@@ -4321,7 +4782,7 @@ function TargetOverlay.update(dt)
         return
     end
 
-    local className = TargetOverlay.getClassName(usableInfo) or "Unknown"
+    local className = TargetOverlay.getClassName(usableInfo) or tokenClassName or "Unknown"
     local pdef, mdef, pdefPct, mdefPct = TargetOverlay.fillDefense(nil, nil, nil, nil, tokenInfo)
     pdef, mdef, pdefPct, mdefPct = TargetOverlay.fillDefense(pdef, mdef, pdefPct, mdefPct, targetInfo or usableInfo)
     local needsExtraStats = ClassIntelProfiles.NeedsExtraStats(settings)
@@ -4384,25 +4845,18 @@ function TargetOverlay.update(dt)
     end
 
     updateFastModelRange()
+    updateTargetOwnersMarkOverlay()
 
-    if showTargetText and settings.showModelDefense and not settings.compactModelOverlay then
-        setModelLabel(targetPdefTitleLabel, "PDef")
-        setModelLabel(targetPdefValueLabel, OverlayUtils.defenseText(pdef, pdefPct))
-        setModelLabel(targetMdefTitleLabel, "MDef")
-        setModelLabel(targetMdefValueLabel, OverlayUtils.defenseText(mdef, mdefPct))
-    else
-        hideModelLabel(targetPdefTitleLabel)
-        hideModelLabel(targetPdefValueLabel)
-        hideModelLabel(targetMdefTitleLabel)
-        hideModelLabel(targetMdefValueLabel)
-    end
+    -- Defense labels are intentionally parked after the API lock and compact-only
+    -- overhead cleanup. Keep the old widgets hidden until the target stat path is
+    -- deliberately rebuilt.
+    hideModelLabel(targetDefense.pdefTitle)
+    hideModelLabel(targetDefense.pdefValue)
+    hideModelLabel(targetDefense.mdefTitle)
+    hideModelLabel(targetDefense.mdefValue)
 
-    if settings.compactModelOverlay then
-        updateRoleIcon(nil)
-    else
-        local role = RoleHelper.getRoleFromClass(className)
-        updateRoleIcon(RoleHelper.getRoleIconPath(role))
-    end
+    -- Role icon belonged to the removed non-compact overhead layout.
+    updateRoleIcon(nil)
 end
 
 function TargetOverlay.cleanup()
@@ -4417,7 +4871,8 @@ function TargetOverlay.cleanup()
     end
     saveSkillProbe()
     if mainCanvas then mainCanvas:Show(false) end
-    if targetRangeCanvas then targetRangeCanvas:Show(false) end
+    if targetRange.canvas then targetRange.canvas:Show(false) end
+    hideTargetOwnersMarkOverlay()
     if targetInfoWnd then targetInfoWnd:Show(false) end
     if ownershipWnd then ownershipWnd:Show(false) end
     if guildFamilyWnd then guildFamilyWnd:Show(false) end
@@ -4443,21 +4898,16 @@ function TargetOverlay.cleanup()
     targetRoleIcon = nil
     targetGearscoreLabel = nil
     targetClassLabel = nil
-    targetPdefTitleLabel = nil
-    targetPdefValueLabel = nil
-    targetMdefTitleLabel = nil
-    targetMdefValueLabel = nil
-    targetRangeCanvas = nil
-    targetRangeLabel = nil
+    targetDefense = {}
+    targetRange = {}
+    targetOwnersMark = {}
     curTargetIcon = nil
     lastScreenPosition = ""
     previousTargetId = nil
     modelDataTargetId = nil
-    targetTokenMisses = 0
-    targetInfoMisses = 0
-    screenPositionMisses = 0
-    updateElapsed = TARGET_UPDATE_MS
-    selfUpdateElapsed = SELF_UPDATE_MS
+    targetMisses = { token = 0, info = 0, screen = 0 }
+    runtimeState.updateElapsed = TARGET_UPDATE_MS
+    runtimeState.selfUpdateElapsed = SELF_UPDATE_MS
     TargetOverlay.cooldownRuntimeElapsed = 25
     nuziCooldownRows = NuziCooldownImport.EmptyRows()
     NuziCooldownImport.Reset()
@@ -4466,10 +4916,10 @@ function TargetOverlay.cleanup()
     TargetOverlay.resourceLookup.Clear()
     skillCooldowns = {}
     skillProbe = { entries = {}, maxEntries = 240 }
-    skillProbeDirty = false
-    lastSkillProbeSave = 0
-    probeLogElapsed = 0
-    lastSelfEquipmentUpdate = 0
+    runtimeState.skillProbeDirty = false
+    runtimeState.lastSkillProbeSave = 0
+    runtimeState.probeLogElapsed = 0
+    runtimeState.lastSelfEquipmentUpdate = 0
     playerName = nil
 end
 

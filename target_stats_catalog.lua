@@ -11,15 +11,16 @@ local TargetStatsCatalog = {}
 
 TargetStatsCatalog.CATEGORIES = {
     { key = "core", label = "Core" },
+    { key = "effective", label = "Effective" },
     { key = "info", label = "Info" },
-    { key = "attributes", label = "Attr" },
-    { key = "defense", label = "Def" },
+    { key = "attributes", label = "Attributes" },
+    { key = "defense", label = "Defense" },
     { key = "melee", label = "Melee" },
-    { key = "ranged", label = "Range" },
+    { key = "ranged", label = "Ranged" },
     { key = "magic", label = "Magic" },
-    { key = "healing", label = "Heal" },
-    { key = "offense", label = "Off" },
-    { key = "mobility", label = "Move" },
+    { key = "healing", label = "Healing" },
+    { key = "offense", label = "Offense" },
+    { key = "mobility", label = "Mobility" },
     { key = "pve", label = "PvE" },
     { key = "misc", label = "Misc" }
 }
@@ -34,6 +35,15 @@ TargetStatsCatalog.STATS = {
     { key = "toughness", label = "Toughness", category = "core", legacy = true },
     { key = "resilience", label = "Resilience", category = "core", legacy = true },
     { key = "critRate", label = "Crit Rate", category = "core", legacy = true },
+
+    -- Derived stats: computed from several raw fields, see DERIVED below.
+    { key = "eff_melee_health", label = "Melee Health", category = "effective", derived = true },
+    { key = "eff_ranged_health", label = "Ranged Health", category = "effective", derived = true },
+    { key = "eff_magic_health", label = "Magic Health", category = "effective", derived = true },
+    { key = "eff_melee_power", label = "Melee Power", category = "effective", derived = true },
+    { key = "eff_ranged_power", label = "Ranged Power", category = "effective", derived = true },
+    { key = "eff_magic_power", label = "Magic Power", category = "effective", derived = true },
+    { key = "eff_heal_power", label = "Healing Power", category = "effective", derived = true },
 
     -- Unit info fields (GetUnitInfoById): text values render as "Kind: npc".
     { key = "level", label = "Level", category = "info", fields = {"level"} },
@@ -51,14 +61,14 @@ TargetStatsCatalog.STATS = {
     { key = "spi", label = "Spirit", category = "attributes", fields = {"spi"} },
 
     { key = "max_health", label = "Max Health", category = "defense", fields = {"max_health", "max_hp", "maxHealth"} },
-    { key = "incoming_melee_damage_mul", label = "Melee Dmg Reduction", category = "defense", suffix = "%", fields = {"incoming_melee_damage_mul"} },
-    { key = "incoming_ranged_damage_mul", label = "Ranged Dmg Reduction", category = "defense", suffix = "%", fields = {"incoming_ranged_damage_mul"} },
-    { key = "incoming_spell_damage_mul", label = "Magic Dmg Reduction", category = "defense", suffix = "%", fields = {"incoming_spell_damage_mul"} },
-    { key = "incoming_melee_damage_val", label = "Fixed Melee Reduction", category = "defense", fields = {"incoming_melee_damage_val"} },
-    { key = "incoming_ranged_damage_val", label = "Fixed Ranged Reduction", category = "defense", fields = {"incoming_ranged_damage_val"} },
-    { key = "incoming_spell_damage_val", label = "Fixed Magic Reduction", category = "defense", fields = {"incoming_spell_damage_val"} },
-    { key = "incoming_siege_damage_mul", label = "Siege Dmg Reduction", category = "defense", suffix = "%", fields = {"incoming_siege_damage_mul"} },
-    { key = "incoming_siege_damage_val", label = "Fixed Siege Reduction", category = "defense", fields = {"incoming_siege_damage_val"} },
+    { key = "incoming_melee_damage_mul", label = "Melee Dmg Redux", category = "defense", suffix = "%", fields = {"incoming_melee_damage_mul"} },
+    { key = "incoming_ranged_damage_mul", label = "Ranged Dmg Redux", category = "defense", suffix = "%", fields = {"incoming_ranged_damage_mul"} },
+    { key = "incoming_spell_damage_mul", label = "Magic Dmg Redux", category = "defense", suffix = "%", fields = {"incoming_spell_damage_mul"} },
+    { key = "incoming_melee_damage_val", label = "Fixed Melee Redux", category = "defense", fields = {"incoming_melee_damage_val"} },
+    { key = "incoming_ranged_damage_val", label = "Fixed Ranged Redux", category = "defense", fields = {"incoming_ranged_damage_val"} },
+    { key = "incoming_spell_damage_val", label = "Fixed Magic Redux", category = "defense", fields = {"incoming_spell_damage_val"} },
+    { key = "incoming_siege_damage_mul", label = "Siege Dmg Redux", category = "defense", suffix = "%", fields = {"incoming_siege_damage_mul"} },
+    { key = "incoming_siege_damage_val", label = "Fixed Siege Redux", category = "defense", fields = {"incoming_siege_damage_val"} },
     { key = "magic_effect_resist_percentage", label = "Magic Effect Resist", category = "defense", suffix = "%", fields = {"magic_effect_resist_percentage"} },
 
     { key = "melee_dps", label = "Melee Attack", category = "melee", fields = {"melee_dps"} },
@@ -112,10 +122,10 @@ TargetStatsCatalog.STATS = {
     { key = "mana_regen", label = "Mana Regen", category = "mobility", fields = {"mana_regen"} },
     { key = "persistent_mana_regen", label = "Cont. Mana Regen", category = "mobility", fields = {"persistent_mana_regen"} },
 
-    { key = "incoming_damage_mul_anti_npc", label = "PvE Dmg Reduction", category = "pve", suffix = "%", fields = {"incoming_damage_mul_anti_npc"} },
-    { key = "incoming_melee_damage_add_anti_npc", label = "PvE Melee Reduction", category = "pve", suffix = "%", fields = {"incoming_melee_damage_add_anti_npc"} },
-    { key = "incoming_ranged_damage_add_anti_npc", label = "PvE Ranged Reduction", category = "pve", suffix = "%", fields = {"incoming_ranged_damage_add_anti_npc"} },
-    { key = "incoming_spell_damage_add_anti_npc", label = "PvE Magic Reduction", category = "pve", suffix = "%", fields = {"incoming_spell_damage_add_anti_npc"} },
+    { key = "incoming_damage_mul_anti_npc", label = "PvE Dmg Redux", category = "pve", suffix = "%", fields = {"incoming_damage_mul_anti_npc"} },
+    { key = "incoming_melee_damage_add_anti_npc", label = "PvE Melee Redux", category = "pve", suffix = "%", fields = {"incoming_melee_damage_add_anti_npc"} },
+    { key = "incoming_ranged_damage_add_anti_npc", label = "PvE Ranged Redux", category = "pve", suffix = "%", fields = {"incoming_ranged_damage_add_anti_npc"} },
+    { key = "incoming_spell_damage_add_anti_npc", label = "PvE Magic Redux", category = "pve", suffix = "%", fields = {"incoming_spell_damage_add_anti_npc"} },
     { key = "melee_damage_mul_anti_npc", label = "PvE Melee Skill Dmg", category = "pve", suffix = "%", fields = {"melee_damage_mul_anti_npc"} },
     { key = "ranged_damage_mul_anti_npc", label = "PvE Ranged Skill Dmg", category = "pve", suffix = "%", fields = {"ranged_damage_mul_anti_npc"} },
     { key = "spell_damage_mul_anti_npc", label = "PvE Magic Skill Dmg", category = "pve", suffix = "%", fields = {"spell_damage_mul_anti_npc"} },
@@ -171,9 +181,99 @@ local function formatNumber(value)
     return string.format("%.1f", value)
 end
 
+-- ===== Derived "Effective" stats =====
+-- Toughness curve: reduction% = t / (t + 8000) * 100 (same curve CombatLogPro
+-- uses for this client's PvP mitigation math).
+local TOUGHNESS_CURVE = 8000
+
+local function readNum(utils, infos, keys)
+    return utils.firstNumAllowZero(infos, keys)
+end
+
+-- Each reduction layer r% multiplies effective health by 100/(100-r).
+local function reductionFactor(pct)
+    pct = math.max(0, math.min(99, tonumber(pct) or 0))
+    return 100 / (100 - pct)
+end
+
+local function toughnessPct(utils, infos)
+    local tough = readNum(utils, infos, {"battle_resist"}) or 0
+    if tough <= 0 then return 0 end
+    return tough / (tough + TOUGHNESS_CURVE) * 100
+end
+
+local function effectiveHealth(utils, infos, defPctKeys, incomingKeys)
+    local maxHp = readNum(utils, infos, {"max_health", "max_hp", "maxHealth"})
+    if not maxHp or maxHp <= 0 then return nil end
+    local defPct = readNum(utils, infos, defPctKeys) or 0
+    local incoming = readNum(utils, infos, incomingKeys) or 0
+    return maxHp * reductionFactor(toughnessPct(utils, infos)) * reductionFactor(defPct) * reductionFactor(incoming)
+end
+
+-- attack * (1 + critBonus% * critRate%) * (1 + skillDmg%) * accuracy%
+local function effectivePower(utils, infos, spec)
+    local attack = readNum(utils, infos, spec.attack)
+    if not attack or attack <= 0 then return nil end
+    local critRate = readNum(utils, infos, spec.critRate) or 0
+    local critBonus = readNum(utils, infos, spec.critBonus) or 0
+    local skill = readNum(utils, infos, spec.skill) or 0
+    local value = attack * (1 + (critBonus / 100) * (critRate / 100)) * (1 + (skill / 100))
+    if spec.accuracy then
+        local accuracy = readNum(utils, infos, spec.accuracy)
+        if accuracy then value = value * (accuracy / 100) end
+    end
+    return value
+end
+
+local DERIVED = {
+    eff_melee_health = function(utils, infos)
+        return effectiveHealth(utils, infos, {"armor_percentage"}, {"incoming_melee_damage_mul"})
+    end,
+    eff_ranged_health = function(utils, infos)
+        return effectiveHealth(utils, infos, {"armor_percentage"}, {"incoming_ranged_damage_mul"})
+    end,
+    eff_magic_health = function(utils, infos)
+        return effectiveHealth(utils, infos, {"magic_resist_percentage"}, {"incoming_spell_damage_mul"})
+    end,
+    eff_melee_power = function(utils, infos)
+        return effectivePower(utils, infos, {
+            attack = {"melee_dps"}, critRate = {"melee_critical_rate"},
+            critBonus = {"melee_critical_bonus"}, skill = {"melee_damage_mul"},
+            accuracy = {"melee_success_rate"}
+        })
+    end,
+    eff_ranged_power = function(utils, infos)
+        return effectivePower(utils, infos, {
+            attack = {"ranged_dps"}, critRate = {"ranged_critical_rate"},
+            critBonus = {"ranged_critical_bonus"}, skill = {"ranged_damage_mul"},
+            accuracy = {"ranged_success_rate"}
+        })
+    end,
+    eff_magic_power = function(utils, infos)
+        return effectivePower(utils, infos, {
+            attack = {"spell_dps"}, critRate = {"spell_critical_rate"},
+            critBonus = {"spell_critical_bonus"}, skill = {"spell_damage_mul"},
+            accuracy = {"spell_success_rate"}
+        })
+    end,
+    eff_heal_power = function(utils, infos)
+        return effectivePower(utils, infos, {
+            attack = {"heal_dps"}, critRate = {"heal_critical_rate"},
+            critBonus = {"heal_critical_bonus"}, skill = {"heal_mul"}
+        })
+    end
+}
+
 -- Formatted value text for one stat, or nil when no info table carries it.
 function TargetStatsCatalog.Value(utils, infos, stat)
-    if stat.legacy or not stat.fields then return nil end
+    if stat.legacy then return nil end
+    if stat.derived then
+        local calc = DERIVED[stat.key]
+        local value = calc and calc(utils, infos)
+        if value == nil then return nil end
+        return formatNumber(math.floor(value + 0.5)) .. (stat.suffix or "")
+    end
+    if not stat.fields then return nil end
     if stat.text then
         for _, info in ipairs(infos) do
             local value = utils.textField(info, stat.fields)

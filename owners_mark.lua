@@ -11,6 +11,9 @@ local OwnersMark = {
     ownExpiration = nil,
     targetMark = nil,
     lastVehicleId = nil,
+    lastVehicleUnitId = nil,
+    sawVehicleMark = false,
+    confirmedMissingMark = false,
     hadVehicle = false,
     wasBound = false,
     warnedVehicleKey = nil,
@@ -38,22 +41,6 @@ local function unitId(token)
     return id
 end
 
-local function unitInfo(token)
-    local id = unitId(token)
-    if not id then return nil end
-    return safeCall(function() return api.Unit:GetUnitInfoById(id) end)
-        or safeCall(function() return api.Unit:UnitInfo(token) end)
-end
-
-local function isOwnTarget()
-    local targetInfo = unitInfo("target")
-    local playerInfo = unitInfo("player")
-    if not targetInfo or not playerInfo then return false end
-    local owner = tostring(targetInfo.owner_name or targetInfo.ownerName or targetInfo.owner or "")
-    local player = tostring(playerInfo.name or playerInfo.unitName or "")
-    return owner ~= "" and player ~= "" and owner == player
-end
-
 local function buffPath(buff)
     if type(buff) ~= "table" then return nil end
     local path = buff.path or buff.icon or buff.iconPath or buff.icon_path
@@ -70,18 +57,25 @@ local function iconPath()
     return path
 end
 
-local function findMark(token)
-    local count = tonumber(safeCall(function() return api.Unit:UnitBuffCount(token) end)) or 0
+local function scanMark(token)
+    local rawCount = safeCall(function() return api.Unit:UnitBuffCount(token) end)
+    if rawCount == nil then return nil, false end
+    local count = tonumber(rawCount) or 0
     for i = 1, count do
         local buff = safeCall(function() return api.Unit:UnitBuff(token, i) end)
         if buff and tonumber(buff.buff_id or buff.buffId) == BUFF_ID then
             return {
                 timeLeft = math.max(0, tonumber(buff.timeLeft or buff.time_left) or 0),
                 path = buffPath(buff) or iconPath()
-            }
+            }, true
         end
     end
-    return nil
+    return nil, true
+end
+
+local function findMark(token)
+    local mark = scanMark(token)
+    return mark
 end
 
 local function isBoundSlave()
@@ -92,13 +86,25 @@ end
 
 local function vehicleContextKey()
     if isBoundSlave() then
-        return "bound:" .. tostring(unitId("slave") or "vehicle"), true
+        local id = unitId("slave")
+        return "bound:" .. tostring(id or "vehicle"), true, id
     end
 
     local slaveId = unitId("slave")
-    if slaveId then return "slave:" .. tostring(slaveId), true end
+    if slaveId then return "slave:" .. tostring(slaveId), true, slaveId end
 
-    return nil, false
+    return nil, false, nil
+end
+
+local function targetIsKnownVehicle()
+    local targetId = unitId("target")
+    if not targetId then return false end
+    if OwnersMark.lastVehicleUnitId and tostring(targetId) == tostring(OwnersMark.lastVehicleUnitId) then return true end
+    for _, token in ipairs({"slave", "playerpet", "playerpet1", "playerpet2"}) do
+        local id = unitId(token)
+        if id and tostring(id) == tostring(targetId) then return true end
+    end
+    return false
 end
 
 local function createWindow()
@@ -121,6 +127,15 @@ local function createWindow()
     window.dragHandle:AddAnchor("TOPLEFT", window, 0, 0)
     OwnersMark.applyDrag(window, window.dragHandle, "ownersMarkX", "ownersMarkY")
     OwnersMark.window = window
+end
+
+local function applyWindowOpacity()
+    local window = OwnersMark.window
+    if not window or not window.bg then return end
+    local level = math.max(0, math.min(10, tonumber(OwnersMark.settings and OwnersMark.settings.ownersMarkOpacityLevel) or 8))
+    local opacity = level / 10
+    window.bg:SetColor(0.025, 0.03, 0.04, opacity)
+    window.bg:Show(opacity > 0)
 end
 
 local function createAlert()
@@ -181,7 +196,14 @@ local function updatePopup(now)
     alert:Show(true)
 end
 
+-- DEPRECATED (June 2026 API lock): the missing-mark warning needs to read the Owner's Mark
+-- buff off the vehicle/target tokens to confirm it's genuinely missing. Those reads are now
+-- restricted, so "confirmed missing" can't be trusted and the warning fired spuriously / not at
+-- all. Parked like the other API-locked features. Code kept for if/when a supported read returns.
+local MISSING_WARNING_DISABLED = true
+
 local function warnMissing()
+    if MISSING_WARNING_DISABLED then return end
     local text = "[Power Ranger ON] Warning: vehicle dismissed without an active Owner's Mark."
     showPopup(tonumber(safeCall(function() return api.Time:GetUiMsec() end)) or 0)
     if api.Log and api.Log.Warning then
@@ -193,24 +215,48 @@ end
 
 local function refreshOwnMark(now)
     local found = nil
-    for _, token in ipairs({"slave", "playerpet", "playerpet1", "playerpet2"}) do
-        found = findMark(token)
+    for _, token in ipairs({"slave", "playerpet", "playerpet1", "playerpet2", "player"}) do
+        local mark = scanMark(token)
+        found = mark
         if found then break end
     end
-    -- Some vehicles expose their Owner's Mark buff only through the target token.
-    -- This feeds the personal timer only; warning state never depends on targeting.
-    if not found and isOwnTarget() then found = findMark("target") end
-    if found then OwnersMark.ownExpiration = now + found.timeLeft end
+    -- Some vehicles expose their Owner's Mark buff only through target. Use this
+    -- only when target is the same unit as a known personal vehicle/pet token.
+    if not found and targetIsKnownVehicle() then
+        local mark, scanned = scanMark("target")
+        if scanned and not mark then OwnersMark.confirmedMissingMark = true end
+        found = mark
+    end
+    -- Post-security API builds may no longer expose enough ownership info to
+    -- prove the target is ours. Still allow the movable personal timer to show
+    -- from target buff data; missing-mark warnings never depend on this fallback.
+    if not found and OwnersMark.settings.showOwnOwnersMark == true then
+        local mark = findMark("target")
+        found = mark
+    end
+    if found then
+        OwnersMark.ownExpiration = now + found.timeLeft
+        OwnersMark.sawVehicleMark = true
+        OwnersMark.confirmedMissingMark = false
+    end
 
-    local vehicleKey, hasVehicle = vehicleContextKey()
+    local vehicleKey, hasVehicle, vehicleUnitId = vehicleContextKey()
     local bound = isBoundSlave()
     if hasVehicle and OwnersMark.lastVehicleId ~= vehicleKey then
         OwnersMark.warnedVehicleKey = nil
+        OwnersMark.sawVehicleMark = false
+        OwnersMark.confirmedMissingMark = false
     end
+    if hasVehicle then
+        OwnersMark.lastVehicleUnitId = vehicleUnitId or OwnersMark.lastVehicleUnitId
+    end
+    local canWarnMissing = OwnersMark.confirmedMissingMark == true
+        and OwnersMark.sawVehicleMark ~= true
+        and (not OwnersMark.ownExpiration or OwnersMark.ownExpiration <= now)
     if OwnersMark.wasBound and not bound
         and OwnersMark.settings.showOwnOwnersMark == true
         and OwnersMark.settings.warnMissingOwnersMark == true
-        and (not OwnersMark.ownExpiration or OwnersMark.ownExpiration <= now) then
+        and canWarnMissing then
         OwnersMark.warnedVehicleKey = vehicleKey or OwnersMark.lastVehicleId or "released"
         warnMissing()
     end
@@ -218,7 +264,7 @@ local function refreshOwnMark(now)
         and OwnersMark.settings.showOwnOwnersMark == true
         and OwnersMark.settings.warnMissingOwnersMark == true
         and OwnersMark.warnedVehicleKey ~= (vehicleKey or OwnersMark.lastVehicleId or "released")
-        and (not OwnersMark.ownExpiration or OwnersMark.ownExpiration <= now) then
+        and canWarnMissing then
         OwnersMark.warnedVehicleKey = vehicleKey or OwnersMark.lastVehicleId or "released"
         warnMissing()
     end
@@ -237,6 +283,7 @@ local function refreshOwnMark(now)
         return
     end
     if not OwnersMark.window then createWindow() end
+    applyWindowOpacity()
     OwnersMark.window.time:SetText(string.format("%.0fs", math.max(0, remaining - DISPLAY_LATENCY_MS) / 1000))
     OwnersMark.window:Show(true)
 end
@@ -282,6 +329,7 @@ function OwnersMark.Refresh()
     if OwnersMark.settings and OwnersMark.settings.showOwnOwnersMark ~= true and OwnersMark.window then
         OwnersMark.window:Show(false)
     end
+    applyWindowOpacity()
     if OwnersMark.settings and OwnersMark.settings.showTargetOwnersMark ~= true then
         OwnersMark.targetMark = nil
     end
@@ -297,6 +345,9 @@ function OwnersMark.Cleanup()
     OwnersMark.ownExpiration = nil
     OwnersMark.targetMark = nil
     OwnersMark.lastVehicleId = nil
+    OwnersMark.lastVehicleUnitId = nil
+    OwnersMark.sawVehicleMark = false
+    OwnersMark.confirmedMissingMark = false
     OwnersMark.hadVehicle = false
     OwnersMark.wasBound = false
     OwnersMark.warnedVehicleKey = nil

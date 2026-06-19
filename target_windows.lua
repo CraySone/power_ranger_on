@@ -125,6 +125,22 @@ function TargetWindows.CreateModelOverlay(ctx)
     rangeLabel:Show(false)
     rangeCanvas:Show(false)
 
+    local ownersMarkCanvas = api.Interface:CreateEmptyWindow("PowerRangerModelOwnersMark", "UIParent")
+    ownersMarkCanvas:SetExtent(46, 46)
+    if ownersMarkCanvas.Clickable then ownersMarkCanvas:Clickable(false) end
+    local ownersMarkIcon = CreateItemIconButton("power_ranger_model_owners_mark_icon", ownersMarkCanvas)
+    ownersMarkIcon:SetExtent(38, 38)
+    ownersMarkIcon:AddAnchor("TOP", ownersMarkCanvas, 0, 0)
+    ownersMarkIcon:Clickable(false)
+    F_SLOT.ApplySlotSkin(ownersMarkIcon, ownersMarkIcon.back, SLOT_STYLE.DEFAULT)
+    ownersMarkIcon:Show(false)
+    local ownersMarkTime = label(ownersMarkCanvas, "power_ranger_model_owners_mark_time", "", 0, 0, 46, 46, 13, colors.white, ALIGN.CENTER)
+    ownersMarkTime:RemoveAllAnchors()
+    ownersMarkTime:AddAnchor("CENTER", ownersMarkIcon, 0, 0)
+    applyReadableTextStyle(ownersMarkTime, true)
+    ownersMarkTime:Show(false)
+    ownersMarkCanvas:Show(false)
+
     return {
         canvas = canvas,
         armorBuffIcon = armorIcon,
@@ -137,7 +153,10 @@ function TargetWindows.CreateModelOverlay(ctx)
         targetGearscoreLabel = gearscore,
         targetClassLabel = classLabel,
         targetRangeCanvas = rangeCanvas,
-        targetRangeLabel = rangeLabel
+        targetRangeLabel = rangeLabel,
+        targetOwnersMarkCanvas = ownersMarkCanvas,
+        targetOwnersMarkIcon = ownersMarkIcon,
+        targetOwnersMarkTime = ownersMarkTime
     }
 end
 
