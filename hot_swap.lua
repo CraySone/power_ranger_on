@@ -238,10 +238,6 @@ end
 local function saveSettings()
     backupHotSwapGearSets()
     SettingsSanitizer.Clean(rootSettings)
-    if api.Log and api.Log.Info then
-        local count = type(settings) == "table" and type(settings.gear_sets) == "table" and #settings.gear_sets or -1
-        pcall(function() api.Log:Info("[PowerRangerON] HotSwap save gear_sets=" .. tostring(count)) end)
-    end
     if persistSettings then
         persistSettings("saving (HotSwap change)")
     end

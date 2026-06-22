@@ -213,6 +213,23 @@ function SettingsSections.BuildHotSwapLauncher(wnd, ctx, y)
     return p
 end
 
+function SettingsSections.BuildClientOptions(wnd, ctx, y)
+    local colors = ctx.colors
+    local p = ctx.sectionPanel(wnd, "power_ranger_client_options_panel", 18, y, 584, 92, "Client Options")
+    ctx.label(p, "power_ranger_default_appearance_label", "Default appearances", 14, 34, 132, 14, 10, colors.gold, ALIGN.LEFT)
+    ctx.label(p, "power_ranger_default_appearance_hint", "Uses the exposed client option API.", 152, 34, 220, 14, 10, colors.muted, ALIGN.LEFT)
+    wnd.defaultAppearancesBtn = ctx.flatButton(p, "power_ranger_default_appearances", "", 428, 29, 118, 22, colors.active, function()
+        if ctx.toggleDefaultAppearances then ctx.toggleDefaultAppearances() end
+    end)
+    ctx.label(p, "power_ranger_float_options_label", "Movable quick button", 14, 64, 132, 14, 10, colors.gold, ALIGN.LEFT)
+    ctx.label(p, "power_ranger_float_options_hint", "Shows a tiny Def App button with a drag grip.", 152, 64, 260, 14, 10, colors.muted, ALIGN.LEFT)
+    wnd.floatOptionButtonsBtn = ctx.flatButton(p, "power_ranger_float_option_buttons", "", 428, 59, 118, 22, colors.active, function()
+        if ctx.toggleSetting then ctx.toggleSetting("showFloatOptionButtons") end
+        if ctx.refreshClientOptionButtons then ctx.refreshClientOptionButtons() end
+    end)
+    return p
+end
+
 function SettingsSections.BuildTravelTools(wnd, ctx, y)
     local colors = ctx.colors
     local p = ctx.sectionPanel(wnd, "power_ranger_travel_tools_panel", 18, y, 584, 132, "Travel & Ownership")

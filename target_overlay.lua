@@ -12,6 +12,7 @@ local SkillProbe = require("power_ranger_on/skill_probe")
 local SettingsSanitizer = require("power_ranger_on/settings_sanitizer")
 local SettingsProfile = require("power_ranger_on/settings_profile")
 local SettingsStore = require("power_ranger_on/settings_store")
+local AppearanceOptions = require("power_ranger_on/appearance_options")
 
 local TargetOverlay = {}
 TargetOverlay.uiHelpers = require("power_ranger_on/ui_helpers")
@@ -127,6 +128,10 @@ local defaults = {
     weaponProcX = 500,
     weaponProcY = 230,
     debugLogging = false,
+    defaultAppearancesEnabled = false,
+    showFloatOptionButtons = false,
+    optionFloatX = 340,
+    optionFloatY = 180,
     showInfoDefense = true,
     showInfoPdef = true,
     showInfoMdef = true,
@@ -337,6 +342,7 @@ local ownershipWnd = nil
 local guildFamilyWnd = nil
 local stumpyDockHooksRegistered = false
 local stumpyStatsDockVisible = false
+local raidOptions = { floatWindow = nil, floatButtons = {}, elapsed = 0 }
 local selfWnd = nil
 local settingsWnd = nil
 local detectedSkillsWnd = nil
@@ -864,21 +870,8 @@ end
 -- save-timing and data-shape regressions are visible in the client log. Saves are
 -- user-triggered (infrequent), so this is not a per-frame cost.
 function TargetOverlay.logSettingsSave(reason)
-    if not (settings and settings.debugLogging == true) then return end
-    if not (api.Log and api.Log.Info) then return end
-    local hs = type(settings) == "table" and settings.hotSwap
-    local gearSets = type(hs) == "table" and hs.gear_sets
-    local gearCount = type(gearSets) == "table" and #gearSets or -1
-    local buffCount = type(settings) == "table" and type(settings.trackedBuffs) == "table" and #settings.trackedBuffs or -1
-    local hasProfiles = type(settingsRoot) == "table" and type(settingsRoot.characterProfiles) == "table"
-    local key = (type(settingsRoot) == "table" and settingsRoot.activeProfileKey) or "?"
-    pcall(function()
-        api.Log:Info("[PowerRangerON] settings " .. tostring(reason)
-            .. " profile=" .. tostring(key)
-            .. " hotSwap.gear_sets=" .. tostring(gearCount)
-            .. " trackedBuffs=" .. tostring(buffCount)
-            .. " characterProfiles=" .. tostring(hasProfiles))
-    end)
+    -- Intentionally silent. This hook is kept so save call sites can still pass a
+    -- reason for future diagnostics without spamming the in-game chat.
 end
 
 local function loadSettings()
@@ -1213,6 +1206,14 @@ end
 
 function TargetOverlay.getClassName(targetInfo)
     return TargetOverlay.targetReader.GetClassName(OverlayUtils.safeCall, targetInfo)
+end
+
+function TargetOverlay.cleanClassName(className)
+    if type(className) ~= "string" then return nil end
+    local text = className:gsub("^%s+", ""):gsub("%s+$", "")
+    local lowered = text:lower()
+    if text == "" or text == "0" or lowered == "unknown" or lowered:find("pending", 1, true) then return nil end
+    return text
 end
 
 function TargetOverlay.getTokenName(token)
@@ -3639,6 +3640,8 @@ function refreshSettingsButtons()
     setToggle(settingsWnd.hotSwapEnabledBtn, hotSwap.IsEnabled(), "HotSwap")
     setToggle(settingsWnd.hotSwapFloatBtn, hotSwap.IsFloatShown(), "Float")
     setToggle(settingsWnd.debugLogBtn, settings.debugLogging == true, "Debug")
+    setToggle(settingsWnd.defaultAppearancesBtn, settings.defaultAppearancesEnabled == true, "Default App")
+    setToggle(settingsWnd.floatOptionButtonsBtn, settings.showFloatOptionButtons == true, "Float buttons")
     if settingsWnd.scaleValue then
         settingsWnd.scaleValue:SetText(tostring(settings.uiScaleLevel or 0))
     end
@@ -3750,6 +3753,17 @@ function TargetOverlay.cycleOverlayTextStyle()
     refreshSettingsButtons()
 end
 
+function TargetOverlay.toggleDefaultAppearances()
+    settings.defaultAppearancesEnabled = not settings.defaultAppearancesEnabled
+    local ok = AppearanceOptions.ApplyDefaultAppearances(settings.defaultAppearancesEnabled)
+    saveSettings()
+    refreshSettingsButtons()
+    TargetOverlay.refreshClientOptionButtons()
+    if not ok and settings.debugLogging then
+        api.Log:Info("[Power Ranger ON] Default appearance option call did not report success.")
+    end
+end
+
 local function toggleSetting(key)
     settings[key] = not settings[key]
     if settings[key] then
@@ -3776,6 +3790,9 @@ local function toggleSetting(key)
     end
     if key == "weaponProcEnabled" or key == "weaponProcReadyPopup" or key == "weaponProcZeal" then
         TargetOverlay.weaponProc.Refresh()
+    end
+    if key == "showFloatOptionButtons" then
+        TargetOverlay.refreshClientOptionButtons()
     end
     saveSettings()
     refreshSettingsButtons()
@@ -4081,7 +4098,7 @@ local function createSettingsWindow()
         id = "PowerRangerSettings",
         title = "Power Ranger ON",
         width = 620,
-        height = TARGET_API_FEATURES_DISABLED and 820 or 1120,
+        height = TARGET_API_FEATURES_DISABLED and 920 or 1220,
         x = settings.settingsX,
         y = settings.settingsY,
         xKey = "settingsX",
@@ -4112,7 +4129,8 @@ local function createSettingsWindow()
     local selfY = 232
     local travelY = 398
     local hotSwapY = 544
-    local weaponY = 640
+    local clientOptionsY = 640
+    local weaponY = 740
 
     if not TARGET_API_FEATURES_DISABLED then
         settingsSections.BuildIntelWindow(settingsWnd, {
@@ -4132,7 +4150,8 @@ local function createSettingsWindow()
         selfY = 566
         travelY = 732
         hotSwapY = 878
-        weaponY = 968
+        clientOptionsY = 968
+        weaponY = 1068
     end
 
     settingsSections.BuildSelfCooldowns(settingsWnd, {
@@ -4165,6 +4184,15 @@ local function createSettingsWindow()
         toggleSetting = toggleSetting,
         refreshSettingsButtons = refreshSettingsButtons
     }, hotSwapY)
+    settingsSections.BuildClientOptions(settingsWnd, {
+        colors = COLORS,
+        sectionPanel = TargetOverlay.uiContext.sectionPanel,
+        label = TargetOverlay.uiContext.label,
+        flatButton = TargetOverlay.uiContext.flatButton,
+        toggleSetting = toggleSetting,
+        toggleDefaultAppearances = TargetOverlay.toggleDefaultAppearances,
+        refreshClientOptionButtons = TargetOverlay.refreshClientOptionButtons
+    }, clientOptionsY)
     settingsSections.BuildTravelTools(settingsWnd, {
         colors = COLORS,
         sectionPanel = TargetOverlay.uiContext.sectionPanel,
@@ -4309,9 +4337,103 @@ function TargetOverlay.openCooldownManagerWindow(group)
     }, group)
 end
 
+local function setFlatButtonTone(btn, tone)
+    if not btn then return end
+    tone = tone or COLORS.button
+    if btn._fill and btn._fill.SetColor then
+        btn._fill:SetColor(tone[1], tone[2], tone[3], tone[4] or 0.95)
+    end
+end
+
+local function createRaidOptionButton(parent, id, text, x, onClick)
+    local btn = parent:CreateChildWidget("button", id, 0, true)
+    btn:SetText("")
+    btn:SetExtent(86, 22)
+    btn:AddAnchor("TOPLEFT", parent, x, 4)
+    local border = btn:CreateColorDrawable(0, 0, 0, 0.92, "background")
+    border:AddAnchor("TOPLEFT", btn, 0, 0)
+    border:AddAnchor("BOTTOMRIGHT", btn, 0, 0)
+    border:Show(true)
+    local fill = btn:CreateColorDrawable(COLORS.button[1], COLORS.button[2], COLORS.button[3], COLORS.button[4], "background")
+    fill:AddAnchor("TOPLEFT", btn, 1, 1)
+    fill:AddAnchor("BOTTOMRIGHT", btn, -1, -1)
+    fill:Show(true)
+    local label = btn:CreateChildWidget("label", id .. "_label", 0, true)
+    label:SetExtent(84, 20)
+    label:AddAnchor("TOPLEFT", btn, 1, 1)
+    label:SetText(text)
+    if label.style then
+        label.style:SetFontSize(10)
+        label.style:SetAlign(ALIGN.CENTER)
+        label.style:SetColor(1, 1, 1, 1)
+    end
+    if label.EnablePick then label:EnablePick(false) end
+    label:Show(true)
+    btn._fill = fill
+    btn._label = label
+    btn:SetHandler("OnClick", onClick)
+    btn:Show(true)
+    return btn
+end
+
+function TargetOverlay.refreshFloatOptionButtons()
+    if not settings then return end
+    if settings.showFloatOptionButtons ~= true then
+        if raidOptions.floatWindow then raidOptions.floatWindow:Show(false) end
+        return
+    end
+
+    if not raidOptions.floatWindow then
+        raidOptions.floatWindow = api.Interface:CreateEmptyWindow("powerRangerFloatOptionButtons", "UIParent")
+        raidOptions.floatWindow:SetExtent(116, 30)
+        local bg = raidOptions.floatWindow:CreateColorDrawable(0, 0, 0, 0.45, "background")
+        bg:AddAnchor("TOPLEFT", raidOptions.floatWindow, 0, 0)
+        bg:AddAnchor("BOTTOMRIGHT", raidOptions.floatWindow, 0, 0)
+        bg:Show(true)
+        local dragHandle = raidOptions.floatWindow:CreateChildWidget("button", "power_ranger_float_drag_handle", 0, true)
+        dragHandle:SetText("")
+        dragHandle:SetExtent(20, 22)
+        dragHandle:AddAnchor("TOPLEFT", raidOptions.floatWindow, 4, 4)
+        local handleBg = dragHandle:CreateColorDrawable(0.18, 0.18, 0.20, 0.92, "background")
+        handleBg:AddAnchor("TOPLEFT", dragHandle, 0, 0)
+        handleBg:AddAnchor("BOTTOMRIGHT", dragHandle, 0, 0)
+        handleBg:Show(true)
+        local handleText = dragHandle:CreateChildWidget("label", "power_ranger_float_drag_handle_label", 0, true)
+        handleText:SetExtent(20, 20)
+        handleText:AddAnchor("TOPLEFT", dragHandle, 0, 1)
+        handleText:SetText("::")
+        if handleText.style then
+            handleText.style:SetFontSize(11)
+            handleText.style:SetAlign(ALIGN.CENTER)
+            handleText.style:SetColor(0.85, 0.86, 0.88, 1)
+        end
+        if handleText.EnablePick then handleText:EnablePick(false) end
+        handleText:Show(true)
+        raidOptions.floatButtons.defaultAppearances = createRaidOptionButton(raidOptions.floatWindow, "power_ranger_float_default_app", "Def App", 26, function()
+            TargetOverlay.toggleDefaultAppearances()
+        end)
+        -- Anchored once so the refresh tick does not rubberband it. Drag the small
+        -- grip to reposition; clicking Def App only toggles the client option.
+        settings.optionFloatX, settings.optionFloatY = TargetOverlay.safeWindowPosition(settings.optionFloatX, settings.optionFloatY, 116, 30)
+        raidOptions.floatWindow:AddAnchor("TOPLEFT", "UIParent", settings.optionFloatX, settings.optionFloatY)
+        TargetOverlay.windowHelpers.ApplyDrag(raidOptions.floatWindow, dragHandle, settings, "optionFloatX", "optionFloatY", saveSettings, true)
+    end
+
+    if raidOptions.floatButtons.defaultAppearances and raidOptions.floatButtons.defaultAppearances._label then
+        raidOptions.floatButtons.defaultAppearances._label:SetText(settings.defaultAppearancesEnabled and "Def ON" or "Def OFF")
+        setFlatButtonTone(raidOptions.floatButtons.defaultAppearances, settings.defaultAppearancesEnabled and COLORS.active or COLORS.button)
+    end
+    raidOptions.floatWindow:Show(true)
+end
+
+function TargetOverlay.refreshClientOptionButtons()
+    TargetOverlay.refreshFloatOptionButtons()
+end
+
 function TargetOverlay.init()
     loadSettings()
     playerName = TargetOverlay.getPlayerName()
+    AppearanceOptions.ApplyDefaultAppearances(settings.defaultAppearancesEnabled == true)
 
     local widgets = require("power_ranger_on/target_windows").CreateModelOverlay({
         colors = COLORS,
@@ -4353,6 +4475,7 @@ function TargetOverlay.init()
         registerStumpyDockMember()
     end
     shiftUiScale(0)
+    TargetOverlay.refreshClientOptionButtons()
 end
 
 local function updateCanvasPosition()
@@ -4593,9 +4716,13 @@ local function updateRestrictedTargetOverhead()
     end
 
     local gearscore = TargetOverlay.getTokenGearScore("target")
-    local className = TargetOverlay.getClassName(nil) or "Unknown"
-    if not gearscore and className == "Unknown" then
-        hideModelOverlay()
+    local className = TargetOverlay.cleanClassName(TargetOverlay.getClassName(nil))
+    if not gearscore then
+        if mainCanvas then mainCanvas:Show(false) end
+        clearModelWidgets()
+        hideTargetOwnersMarkOverlay()
+        modelDataTargetId = nil
+        updateFastModelRange()
         return
     end
 
@@ -4618,7 +4745,7 @@ local function updateRestrictedTargetOverhead()
         hideModelLabel(targetGearscoreLabel)
     end
 
-    if showTargetText and settings.showModelClass then
+    if showTargetText and settings.showModelClass and className then
         setModelLabel(targetClassLabel, className)
         setTextColor(targetClassLabel, settingColor("modelClass"))
     else
@@ -4637,6 +4764,11 @@ end
 
 function TargetOverlay.update(dt)
     local elapsed = dt or 0
+    raidOptions.elapsed = (raidOptions.elapsed or 0) + elapsed
+    if raidOptions.elapsed >= 2000 then
+        raidOptions.elapsed = 0
+        TargetOverlay.refreshClientOptionButtons()
+    end
     TargetOverlay.travelSpeed.Update(elapsed)
     TargetOverlay.ownersMark.Update(elapsed)
     TargetOverlay.weaponProc.Update(elapsed)
@@ -4884,6 +5016,7 @@ function TargetOverlay.cleanup()
     if selfWnd then selfWnd:Show(false) end
     if settingsWnd then settingsWnd:Show(false) end
     if detectedSkillsWnd then detectedSkillsWnd:Show(false) end
+    if raidOptions.floatWindow then raidOptions.floatWindow:Show(false) end
     pcall(function() require("power_ranger_on/cooldown_manager_window").Cleanup() end)
     mainCanvas = nil
     targetInfoWnd = nil
@@ -4892,6 +5025,7 @@ function TargetOverlay.cleanup()
     selfWnd = nil
     settingsWnd = nil
     detectedSkillsWnd = nil
+    raidOptions = { floatWindow = nil, floatButtons = {}, elapsed = 0 }
     eventWnd = nil
     armorBuffIcon = nil
     weaponBuffIcon = nil
