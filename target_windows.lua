@@ -125,6 +125,14 @@ function TargetWindows.CreateModelOverlay(ctx)
     rangeLabel:Show(false)
     rangeCanvas:Show(false)
 
+    local hpCanvas = api.Interface:CreateEmptyWindow("PowerRangerModelHpPercent", "UIParent")
+    hpCanvas:SetExtent(110, config.fontSize + 12)
+    if hpCanvas.Clickable then hpCanvas:Clickable(false) end
+    local hpLabel = label(hpCanvas, "targetHpPercent", "", 0, 0, 110, config.fontSize + 12, config.fontSize + 8, colors.white, ALIGN.CENTER)
+    applyReadableTextStyle(hpLabel, true)
+    hpLabel:Show(false)
+    hpCanvas:Show(false)
+
     local ownersMarkCanvas = api.Interface:CreateEmptyWindow("PowerRangerModelOwnersMark", "UIParent")
     ownersMarkCanvas:SetExtent(46, 46)
     if ownersMarkCanvas.Clickable then ownersMarkCanvas:Clickable(false) end
@@ -154,6 +162,8 @@ function TargetWindows.CreateModelOverlay(ctx)
         targetClassLabel = classLabel,
         targetRangeCanvas = rangeCanvas,
         targetRangeLabel = rangeLabel,
+        targetHpPercentCanvas = hpCanvas,
+        targetHpPercentLabel = hpLabel,
         targetOwnersMarkCanvas = ownersMarkCanvas,
         targetOwnersMarkIcon = ownersMarkIcon,
         targetOwnersMarkTime = ownersMarkTime

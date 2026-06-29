@@ -22,7 +22,9 @@ function TargetReader.IsCharacter(info, gearscore)
 end
 
 function TargetReader.IsPlayer(info)
-    return info and (info.type == "character" or info.type == "player") or false
+    if not info then return false end
+    if info.isPlayerChar == true then return true end
+    return info.type == "character" or info.type == "player"
 end
 
 function TargetReader.OwnershipField(textField, info, keys)

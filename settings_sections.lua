@@ -13,7 +13,7 @@ function SettingsSections.BuildTargetOverhead(wnd, ctx)
     local shiftModelRangeOffset = ctx.shiftModelRangeOffset
     local cycleOverlayTextStyle = ctx.cycleOverlayTextStyle
 
-    local p = sectionPanel(wnd, "power_ranger_model_panel", 18, 52, 584, 168, "Target Overhead")
+    local p = sectionPanel(wnd, "power_ranger_model_panel", 18, 52, 584, 190, "Target Overhead")
     label(p, "power_ranger_model_compact_only", "Compact only", 16, 35, 86, 14, 10, colors.gold, ALIGN.LEFT)
     label(p, "power_ranger_scale_label", "Scale", 116, 35, 36, 14, 10, colors.muted, ALIGN.LEFT)
     flatButton(p, "power_ranger_scale_down", "-", 154, 32, 22, 20, colors.button, function() shiftUiScale(-1) end)
@@ -27,6 +27,7 @@ function SettingsSections.BuildTargetOverhead(wnd, ctx)
     wnd.modelGsBtn = flatButton(p, "power_ranger_toggle_model_gs", "", 292, 58, 82, 22, colors.active, function() toggleSetting("showModelGearscore") end)
     wnd.modelClassBtn = flatButton(p, "power_ranger_toggle_model_class", "", 380, 58, 82, 22, colors.active, function() toggleSetting("showModelClass") end)
     wnd.modelRangeBtn = flatButton(p, "power_ranger_toggle_model_range", "", 468, 58, 82, 22, colors.active, function() toggleSetting("showModelRange") end)
+    wnd.modelHpBtn = flatButton(p, "power_ranger_toggle_model_hp_percent", "", 468, 86, 82, 22, colors.active, function() toggleSetting("showModelHpPercent") end)
 
     label(p, "power_ranger_model_color_label", "Colors", 16, 94, 44, 14, 10, colors.muted, ALIGN.LEFT)
     label(p, "power_ranger_model_color_dist", "Dist", 72, 94, 28, 14, 10, colors.white, ALIGN.LEFT)
@@ -62,6 +63,20 @@ function SettingsSections.BuildTargetOverhead(wnd, ctx)
     return p
 end
 
+function SettingsSections.BuildGuildLabel(wnd, ctx, y)
+    local colors = ctx.colors
+    local p = ctx.sectionPanel(wnd, "power_ranger_guild_label_panel", 18, y or 254, 584, 74, "Guild Label")
+    ctx.label(p, "power_ranger_guild_label_hint", "Target guild name", 16, 34, 150, 14, 10, colors.gold, ALIGN.LEFT)
+    wnd.guildFamilyLabelBtn = ctx.flatButton(p, "power_ranger_toggle_guild_family_label", "", 176, 30, 100, 22, colors.active, function() ctx.toggleSetting("showGuildFamilyLabel") end)
+    ctx.label(p, "power_ranger_guild_family_guild_size_label", "Size", 294, 34, 34, 14, 10, colors.muted, ALIGN.LEFT)
+    ctx.flatButton(p, "power_ranger_guild_family_guild_size_down", "-", 332, 30, 22, 20, colors.button, function() ctx.shiftGuildFamilyScale(-1, "guildFamilyGuildScaleLevel") end)
+    wnd.guildFamilyGuildScaleValue = ctx.label(p, "power_ranger_guild_family_guild_size_value", "0", 356, 33, 24, 14, 10, colors.white, ALIGN.CENTER)
+    ctx.flatButton(p, "power_ranger_guild_family_guild_size_up", "+", 382, 30, 22, 20, colors.button, function() ctx.shiftGuildFamilyScale(1, "guildFamilyGuildScaleLevel") end)
+    ctx.label(p, "power_ranger_guild_family_guild_color_label", "Color", 426, 34, 34, 14, 10, colors.white, ALIGN.LEFT)
+    wnd.colorCubes.guildFamilyGuild = ctx.colorCube(p, "power_ranger_guild_family_guild_color", 466, 30, "guildFamilyGuild")
+    return p
+end
+
 function SettingsSections.BuildIntelWindow(wnd, ctx)
     local colors = ctx.colors
     local sectionPanel = ctx.sectionPanel
@@ -74,7 +89,7 @@ function SettingsSections.BuildIntelWindow(wnd, ctx)
     local shiftGuildFamilyScale = ctx.shiftGuildFamilyScale or shiftUiScale
     local fields = ctx.fields or {}
 
-    local p = sectionPanel(wnd, "power_ranger_window_panel", 18, 232, 584, 344, "Stats Window")
+    local p = sectionPanel(wnd, "power_ranger_window_panel", 18, 254, 584, 344, "Stats Window")
     local function band(id, y, h)
         local bg = p:CreateColorDrawable(0.07, 0.075, 0.085, 0.62, "background")
         bg:SetExtent(552, h)
@@ -215,7 +230,7 @@ end
 
 function SettingsSections.BuildClientOptions(wnd, ctx, y)
     local colors = ctx.colors
-    local p = ctx.sectionPanel(wnd, "power_ranger_client_options_panel", 18, y, 584, 92, "Client Options")
+    local p = ctx.sectionPanel(wnd, "power_ranger_client_options_panel", 18, y, 584, 122, "Client Options")
     ctx.label(p, "power_ranger_default_appearance_label", "Default appearances", 14, 34, 132, 14, 10, colors.gold, ALIGN.LEFT)
     ctx.label(p, "power_ranger_default_appearance_hint", "Uses the exposed client option API.", 152, 34, 220, 14, 10, colors.muted, ALIGN.LEFT)
     wnd.defaultAppearancesBtn = ctx.flatButton(p, "power_ranger_default_appearances", "", 428, 29, 118, 22, colors.active, function()
@@ -226,6 +241,11 @@ function SettingsSections.BuildClientOptions(wnd, ctx, y)
     wnd.floatOptionButtonsBtn = ctx.flatButton(p, "power_ranger_float_option_buttons", "", 428, 59, 118, 22, colors.active, function()
         if ctx.toggleSetting then ctx.toggleSetting("showFloatOptionButtons") end
         if ctx.refreshClientOptionButtons then ctx.refreshClientOptionButtons() end
+    end)
+    ctx.label(p, "power_ranger_ui_hp_percent_label", "UI HP/MP percent", 14, 94, 132, 14, 10, colors.gold, ALIGN.LEFT)
+    ctx.label(p, "power_ranger_ui_hp_percent_hint", "Shows percent text inside unit-frame bars.", 152, 94, 260, 14, 10, colors.muted, ALIGN.LEFT)
+    wnd.uiHpPercentBtn = ctx.flatButton(p, "power_ranger_ui_hp_percent", "", 428, 89, 118, 22, colors.active, function()
+        if ctx.toggleSetting then ctx.toggleSetting("showUiHpPercent") end
     end)
     return p
 end

@@ -28,6 +28,7 @@ TargetOverlay.windowHelpers = require("power_ranger_on/window_helpers")
 TargetOverlay.travelSpeed = require("power_ranger_on/travel_speed")
 TargetOverlay.ownersMark = require("power_ranger_on/owners_mark")
 TargetOverlay.weaponProc = require("power_ranger_on/weapon_proc")
+TargetOverlay.hpPercentBars = require("power_ranger_on/hp_percent_bars")
 TargetOverlay.statsCatalog = require("power_ranger_on/target_stats_catalog")
 TargetOverlay.optionalBuffHelper = OverlayUtils.safeCall(function() return require("CooldawnBuffTracker/buff_helper") end)
 TargetOverlay.simpleStatsGrid = {
@@ -80,6 +81,7 @@ local defaults = {
     showModelGearscore = true,
     showModelClass = true,
     showModelRange = true,
+    showModelHpPercent = false,
     showModelDefense = false,
     compactModelOverlay = true,
     nuziUiCompatMode = "auto",
@@ -118,6 +120,7 @@ local defaults = {
     showSpeedMeter = false,
     showOwnOwnersMark = false,
     showTargetOwnersMark = true,
+    showUiHpPercent = false,
     warnMissingOwnersMark = true,
     weaponProcEnabled = false,
     weaponProcReadyPopup = true,
@@ -1431,6 +1434,13 @@ local function hideModelRange()
         targetRange.label:Show(false)
         targetRange.label._visible = false
     end
+    if targetRange.hpCanvas then targetRange.hpCanvas:Show(false) end
+    if targetRange.hpLabel then
+        targetRange.hpLabel:SetText("")
+        targetRange.hpLabel._lastText = ""
+        targetRange.hpLabel:Show(false)
+        targetRange.hpLabel._visible = false
+    end
 end
 
 local function hideTargetOwnersMarkOverlay()
@@ -1721,7 +1731,7 @@ end
 function TargetOverlay.applyTextShadow()
     local modelLabels = {
         targetDefense.pdefTitle, targetDefense.pdefValue, targetDefense.mdefTitle, targetDefense.mdefValue,
-        targetGearscoreLabel, targetClassLabel, targetRange.label
+        targetGearscoreLabel, targetClassLabel, targetRange.label, targetRange.hpLabel
     }
     for _, widget in ipairs(modelLabels) do
         TargetOverlay.applyReadableTextStyle(widget, true)
@@ -1828,41 +1838,32 @@ local function refreshGuildFamilyWindow(info)
         return
     end
     local guild = TargetOverlay.ownershipField(info, {"expeditionName", "expedition", "guildName", "guild"})
-    local family = TargetOverlay.ownershipField(info, {"family_name", "familyName", "family"})
-    if not guild and not family then
+    if not guild then
         hideGuildFamilyWindow()
         return
     end
     local baseScale = guildFamilyScaleFactor()
     local guildScale = guildFamilyLineScaleFactor("guild")
-    local familyScale = guildFamilyLineScaleFactor("family")
     local wantedWidth = math.floor((360 * baseScale) + 0.5)
     local pad = math.floor((10 * baseScale) + 0.5)
     local textWidth = math.max(80, wantedWidth - (pad * 2))
     local guildText = tostring(guild or "")
-    local familyText = tostring(family or "")
     local guildHeight = math.floor((28 * guildScale) + 0.5)
-    local familyHeight = math.floor((16 * familyScale) + 0.5)
-    local gap = math.floor((2 * baseScale) + 0.5)
     guildFamilyWnd.guild.style:SetFontSize(math.floor((22 * guildScale) + 0.5))
-    guildFamilyWnd.family.style:SetFontSize(math.floor((12 * familyScale) + 0.5))
     guildText = TargetOverlay.fitTextToWidth(guildFamilyWnd.guild, guildText, textWidth, 8)
-    familyText = TargetOverlay.fitTextToWidth(guildFamilyWnd.family, familyText, textWidth, 6)
     guildFamilyWnd.guild:SetText(guildText)
-    guildFamilyWnd.family:SetText(familyText)
     guildFamilyWnd.guild:Show(guildText ~= "")
-    guildFamilyWnd.family:Show(familyText ~= "")
+    guildFamilyWnd.family:SetText("")
+    guildFamilyWnd.family:Show(false)
     setTextColor(guildFamilyWnd.guild, settingColor("guildFamilyGuild"))
-    setTextColor(guildFamilyWnd.family, settingColor("guildFamilyFamily"))
-    local wantedHeight = guildHeight + gap + familyHeight
+    local wantedHeight = guildHeight
     if guildFamilyWnd._lastWidth ~= wantedWidth or guildFamilyWnd._lastHeight ~= wantedHeight then
         guildFamilyWnd:SetExtent(wantedWidth, wantedHeight)
         guildFamilyWnd.guild:RemoveAllAnchors()
         guildFamilyWnd.guild:AddAnchor("TOP", guildFamilyWnd, "TOP", 0, 0)
         guildFamilyWnd.guild:SetExtent(textWidth, guildHeight)
         guildFamilyWnd.family:RemoveAllAnchors()
-        guildFamilyWnd.family:AddAnchor("TOP", guildFamilyWnd, "TOP", 0, guildHeight + gap)
-        guildFamilyWnd.family:SetExtent(textWidth, familyHeight)
+        guildFamilyWnd.family:SetExtent(textWidth, 1)
         guildFamilyWnd.dragHandle:SetExtent(wantedWidth, wantedHeight)
         guildFamilyWnd._lastWidth = wantedWidth
         guildFamilyWnd._lastHeight = wantedHeight
@@ -3590,6 +3591,7 @@ function refreshSettingsButtons()
     setToggle(settingsWnd.modelGsBtn, settings.showModelGearscore, "Gear")
     setToggle(settingsWnd.modelClassBtn, settings.showModelClass, "Class")
     setToggle(settingsWnd.modelRangeBtn, settings.showModelRange, "Range")
+    setToggle(settingsWnd.modelHpBtn, settings.showModelHpPercent == true, "HP %")
     if settingsWnd.shadowBtn then
         settingsWnd.shadowBtn:SetCleanText(settings.overlayTextStyle == "outline" and "Text Border" or "Text Shadow")
         settingsWnd.shadowBtn:SetTone(COLORS.active)
@@ -3624,7 +3626,7 @@ function refreshSettingsButtons()
     setToggle(settingsWnd.compactWindowBtn, settings.compactTargetWindow, "Compact")
     setToggle(settingsWnd.testWindowBtn, settings.testTargetWindow, "Compact/Simple")
     setToggle(settingsWnd.ownershipBtn, settings.showOwnershipLabels ~= false, "Ownership")
-    setToggle(settingsWnd.guildFamilyLabelBtn, settings.showGuildFamilyLabel == true, "Guild/Fam")
+    setToggle(settingsWnd.guildFamilyLabelBtn, settings.showGuildFamilyLabel == true, "Guild")
     setToggle(settingsWnd.speedMeterBtn, settings.showSpeedMeter == true, "Speed meter")
     setToggle(settingsWnd.ownOwnersMarkBtn, settings.showOwnOwnersMark == true, "Personal")
     setToggle(settingsWnd.targetOwnersMarkBtn, settings.showTargetOwnersMark ~= false, "Target mark")
@@ -3642,6 +3644,7 @@ function refreshSettingsButtons()
     setToggle(settingsWnd.debugLogBtn, settings.debugLogging == true, "Debug")
     setToggle(settingsWnd.defaultAppearancesBtn, settings.defaultAppearancesEnabled == true, "Default App")
     setToggle(settingsWnd.floatOptionButtonsBtn, settings.showFloatOptionButtons == true, "Float buttons")
+    setToggle(settingsWnd.uiHpPercentBtn, settings.showUiHpPercent == true, "UI HP/MP %")
     if settingsWnd.scaleValue then
         settingsWnd.scaleValue:SetText(tostring(settings.uiScaleLevel or 0))
     end
@@ -3764,6 +3767,8 @@ function TargetOverlay.toggleDefaultAppearances()
     end
 end
 
+-- Debug probe: dumps the current target's exposed unit-info fields + token reads to the log,
+-- so you can see exactly what each field (expeditionName, title, social, ...) actually holds.
 local function toggleSetting(key)
     settings[key] = not settings[key]
     if settings[key] then
@@ -3793,6 +3798,9 @@ local function toggleSetting(key)
     end
     if key == "showFloatOptionButtons" then
         TargetOverlay.refreshClientOptionButtons()
+    end
+    if key == "showUiHpPercent" then
+        TargetOverlay.hpPercentBars.Apply(settings.showUiHpPercent == true)
     end
     saveSettings()
     refreshSettingsButtons()
@@ -4098,7 +4106,7 @@ local function createSettingsWindow()
         id = "PowerRangerSettings",
         title = "Power Ranger ON",
         width = 620,
-        height = TARGET_API_FEATURES_DISABLED and 920 or 1220,
+        height = TARGET_API_FEATURES_DISABLED and 1060 or 1300,
         x = settings.settingsX,
         y = settings.settingsY,
         xKey = "settingsX",
@@ -4126,11 +4134,11 @@ local function createSettingsWindow()
         cycleOverlayTextStyle = TargetOverlay.cycleOverlayTextStyle
     })
 
-    local selfY = 232
-    local travelY = 398
-    local hotSwapY = 544
-    local clientOptionsY = 640
-    local weaponY = 740
+    local selfY = 340
+    local travelY = 506
+    local hotSwapY = 652
+    local clientOptionsY = 748
+    local weaponY = 878
 
     if not TARGET_API_FEATURES_DISABLED then
         settingsSections.BuildIntelWindow(settingsWnd, {
@@ -4147,11 +4155,21 @@ local function createSettingsWindow()
             openStatsPicker = function() TargetOverlay.openStatsPickerWindow() end
         })
 
-        selfY = 566
-        travelY = 732
-        hotSwapY = 878
-        clientOptionsY = 968
-        weaponY = 1068
+        selfY = 610
+        travelY = 776
+        hotSwapY = 922
+        clientOptionsY = 1012
+        weaponY = 1142
+    else
+        settingsSections.BuildGuildLabel(settingsWnd, {
+            colors = COLORS,
+            sectionPanel = TargetOverlay.uiContext.sectionPanel,
+            label = TargetOverlay.uiContext.label,
+            flatButton = TargetOverlay.uiContext.flatButton,
+            colorCube = TargetOverlay.uiContext.colorCube,
+            toggleSetting = toggleSetting,
+            shiftGuildFamilyScale = shiftUiScale
+        }, 254)
     end
 
     settingsSections.BuildSelfCooldowns(settingsWnd, {
@@ -4453,6 +4471,8 @@ function TargetOverlay.init()
     targetClassLabel = widgets.targetClassLabel
     targetRange.canvas = widgets.targetRangeCanvas
     targetRange.label = widgets.targetRangeLabel
+    targetRange.hpCanvas = widgets.targetHpPercentCanvas
+    targetRange.hpLabel = widgets.targetHpPercentLabel
     targetOwnersMark.canvas = widgets.targetOwnersMarkCanvas
     targetOwnersMark.icon = widgets.targetOwnersMarkIcon
     targetOwnersMark.time = widgets.targetOwnersMarkTime
@@ -4466,6 +4486,7 @@ function TargetOverlay.init()
     TargetOverlay.travelSpeed.Init(settings, saveSettings, applyHandleDrag)
     TargetOverlay.ownersMark.Init(settings, applyHandleDrag)
     TargetOverlay.weaponProc.Init(settings, applyHandleDrag)
+    TargetOverlay.hpPercentBars.Apply(settings.showUiHpPercent == true)
     if not TARGET_API_FEATURES_DISABLED then
         api.On("POWER_RANGER_SS_MODE", onStumpySenseLayout)
         if not stumpyDockHooksRegistered then
@@ -4658,6 +4679,42 @@ local function updateFastModelRange()
     targetRange.canvas:Show(true)
 end
 
+function TargetOverlay.updateModelHpPercent()
+    if not targetRange.hpCanvas or not targetRange.hpLabel then return end
+    if settings.showModelOverlay == false or settings.showModelHpPercent ~= true or Compat.ShouldHideTargetText(compatState) then
+        if targetRange.hpCanvas then targetRange.hpCanvas:Show(false) end
+        if targetRange.hpLabel then targetRange.hpLabel:Show(false) end
+        return
+    end
+    local hp = tonumber(OverlayUtils.safeCall(function() return api.Unit:UnitHealth("target") end))
+    local maxHp = tonumber(OverlayUtils.safeCall(function() return api.Unit:UnitMaxHealth("target") end))
+    if not hp or not maxHp or maxHp <= 0 then
+        targetRange.hpCanvas:Show(false)
+        targetRange.hpLabel:Show(false)
+        return
+    end
+    local sX, sY, sZ = api.Unit:GetUnitScreenPosition("target")
+    if not sX or not sY or not sZ or sZ < 0 or sZ > CONFIG.maxScreenDistance then
+        targetRange.hpCanvas:Show(false)
+        targetRange.hpLabel:Show(false)
+        return
+    end
+    local pct = math.max(0, math.min(100, (hp / maxHp) * 100))
+    local scale = uiScaleFactor()
+    local width = math.floor((120 * scale) + 0.5)
+    local height = math.floor((26 * scale) + 0.5)
+    targetRange.hpCanvas:SetExtent(width, height)
+    targetRange.hpLabel:SetExtent(width, height)
+    targetRange.hpLabel.style:SetFontSize(math.floor((18 * scale) + 0.5))
+    setModelLabel(targetRange.hpLabel, string.format("%.0f%%", pct))
+    setTextColor(targetRange.hpLabel, COLORS.white)
+    local offsetX = math.floor(((tonumber(settings.modelRangeOffsetX) or 0) * scale) + 0.5)
+    local offsetY = math.floor(((tonumber(settings.modelRangeOffsetY) or 0) * scale) + 0.5)
+    targetRange.hpCanvas:RemoveAllAnchors()
+    targetRange.hpCanvas:AddAnchor("CENTER", "UIParent", "TOPLEFT", sX + offsetX, sY - math.floor((20 * scale) + 0.5) + offsetY)
+    targetRange.hpCanvas:Show(true)
+end
+
 local function updateTargetOwnersMarkOverlay()
     if not targetOwnersMark.canvas or not targetOwnersMark.icon or not targetOwnersMark.time then return end
     if settings.showModelOverlay == false or settings.showTargetOwnersMark == false or Compat.ShouldHideTargetText(compatState) then
@@ -4696,18 +4753,24 @@ end
 
 local function updateRestrictedTargetOverhead()
     hideOwnershipWindow()
-    hideGuildFamilyWindow()
     if targetInfoWnd then targetInfoWnd:Show(false) end
     TargetOverlay.clearStumpyStatsBox()
 
     local playerId = OverlayUtils.safeCall(function() return api.Unit:GetUnitId("player") end)
     local targetId = OverlayUtils.safeCall(function() return api.Unit:GetUnitId("target") end)
     if not targetId or targetId == playerId then
+        hideGuildFamilyWindow()
         hideModelOverlay()
         previousTargetId = nil
         return
     end
     previousTargetId = targetId
+    local targetInfo = TargetOverlay.getTargetInfoById(targetId)
+    if targetInfo and TargetOverlay.ownershipField(targetInfo, {"expeditionName", "expedition", "guildName", "guild"}) then
+        refreshGuildFamilyWindow(targetInfo)
+    else
+        hideGuildFamilyWindow()
+    end
 
     if settings.showModelOverlay == false then
         if mainCanvas then mainCanvas:Show(false) end
@@ -4723,6 +4786,7 @@ local function updateRestrictedTargetOverhead()
         hideTargetOwnersMarkOverlay()
         modelDataTargetId = nil
         updateFastModelRange()
+        TargetOverlay.updateModelHpPercent()
         return
     end
 
@@ -4753,6 +4817,7 @@ local function updateRestrictedTargetOverhead()
     end
 
     updateFastModelRange()
+    TargetOverlay.updateModelHpPercent()
     updateTargetOwnersMarkOverlay()
     hideModelLabel(targetDefense.pdefTitle)
     hideModelLabel(targetDefense.pdefValue)
@@ -4860,6 +4925,7 @@ function TargetOverlay.update(dt)
     if settings.showModelOverlay ~= false and modelDataTargetId == targetId then
         updateCanvasPosition()
         updateFastModelRange()
+        TargetOverlay.updateModelHpPercent()
     else
         mainCanvas:Show(false)
         hideModelRange()
@@ -4977,6 +5043,7 @@ function TargetOverlay.update(dt)
     end
 
     updateFastModelRange()
+    TargetOverlay.updateModelHpPercent()
     updateTargetOwnersMarkOverlay()
 
     -- Defense labels are intentionally parked after the API lock and compact-only
@@ -5011,6 +5078,7 @@ function TargetOverlay.cleanup()
     TargetOverlay.travelSpeed.Cleanup()
     TargetOverlay.ownersMark.Cleanup()
     TargetOverlay.weaponProc.Cleanup()
+    TargetOverlay.hpPercentBars.Cleanup()
     require("power_ranger_on/stats_picker_window").Cleanup()
     unregisterStumpyDockMember()
     if selfWnd then selfWnd:Show(false) end
