@@ -45,8 +45,20 @@ local function deviceKey(kind, name)
     return prefix .. "_" .. key
 end
 
+-- Bump when a bug could have written bad aliases/item types into the learned store. The
+-- store is DERIVED data -- it is rebuilt as devices are added -- and every already-tracked
+-- row carries its own baked fields, so clearing it repairs the corruption without touching
+-- anything the user configured. v2: drops devices polluted by the reverse-containment match
+-- and by the live-glider re-stamp in recordDetectedSkill.
+local STORE_VERSION = 2
+
 local function ensureStore(settings)
     if type(settings.learnedCooldownDevices) ~= "table" then settings.learnedCooldownDevices = {} end
+    if tonumber(settings.learnedCooldownDevicesVersion) ~= STORE_VERSION then
+        settings.learnedCooldownDevices = {}
+        settings.learnedCooldownDevicesVersion = STORE_VERSION
+        return settings.learnedCooldownDevices
+    end
     local migrated = {}
     for key, device in pairs(settings.learnedCooldownDevices) do
         if type(device) == "table" then
@@ -71,13 +83,29 @@ local function ensureStore(settings)
     return settings.learnedCooldownDevices
 end
 
+-- Device words too generic to identify a specific glider/mount, mirroring the list in
+-- CooldownRecipes. A stored alias that is only one of these must never resolve a lookup.
+local GENERIC_DEVICE_WORDS = {
+    ["glider"] = true, ["wings"] = true, ["mount"] = true, ["pet"] = true,
+    ["flight"] = true, ["companion"] = true, ["glider companion"] = true,
+    ["detected"] = true, ["unknown"] = true, ["mount/pet"] = true, ["device"] = true
+}
+
 local function matchLearned(device, name)
     local wanted = normalize(name)
     if wanted == "" or type(device) ~= "table" then return false end
     if normalize(device.name) == wanted then return true end
     for _, alias in ipairs(device.patterns or {}) do
         local pattern = normalize(alias)
-        if pattern ~= "" and (wanted:find(pattern, 1, true) or pattern:find(wanted, 1, true)) then
+        -- Forward containment ONLY, the same rule CooldownRecipes.DeviceMatches already
+        -- adopted: the looked-up name must contain the stored alias. The old reverse
+        -- direction (pattern:find(wanted)) meant any glider whose name was a SUBSTRING of
+        -- a stored alias resolved to this device and inherited its icon/displayItemType --
+        -- e.g. a glider called "Flight Glider" matching a stored
+        -- "glider companion: flamefeather". That is why only some gliders broke: the
+        -- hardcoded ones never reach this store, and of the rest only the ones whose names
+        -- happened to substring-collide with an already-learned alias.
+        if pattern ~= "" and not GENERIC_DEVICE_WORDS[pattern] and wanted:find(pattern, 1, true) then
             return true
         end
     end

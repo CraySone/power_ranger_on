@@ -27,6 +27,8 @@ local WeaponProc = {
     wasReady = true,
     zealOn = false,
     zealTimeLeft = 0,
+    zealCooldownUntil = 0,
+    zealCooldownLeft = 0,
     popupUntil = nil,
     popupStartedAt = nil,
     popupLastY = nil
@@ -42,6 +44,12 @@ local BASE_H = 36
 -- Zeal is player buff 495 (same id the Zeal Combat Text addon + CombatLogPro use). The old
 -- 494 entry matched a different buff and made the indicator flicker/behave oddly -- removed.
 local ZEAL_BUFF_IDS = { [495] = true }
+-- Zeal cannot re-proc for 12s after the buff falls off. The client models that as the
+-- "Disables Zeal" aura (2357 in the shared buff lists), so read the real remaining time
+-- from it when it is visible and only fall back to a fixed 12s countdown when it is not.
+-- Before this the indicator jumped straight back to READY the instant Zeal expired.
+local ZEAL_ICD_BUFF_IDS = { [2357] = true }
+local ZEAL_ICD_MS = 12000
 
 local COLOR_READY = {0.38, 0.95, 0.44, 1}
 local COLOR_ARMED = {0.45, 0.72, 1, 1}
@@ -119,6 +127,26 @@ local function scanZeal()
         end
     end
     return false, 0
+end
+
+-- Remaining internal cooldown from the "Disables Zeal" aura, or nil when it is not
+-- readable. It is applied to the player, but which list it lands in depends on the
+-- build, so check buffs and debuffs.
+local function scanZealCooldown()
+    local sources = {
+        { count = "UnitBuffCount", get = "UnitBuff" },
+        { count = "UnitDeBuffCount", get = "UnitDeBuff" }
+    }
+    for _, source in ipairs(sources) do
+        local count = tonumber(safeCall(function() return api.Unit[source.count](api.Unit, "player") end)) or 0
+        for i = 1, count do
+            local aura = safeCall(function() return api.Unit[source.get](api.Unit, "player", i) end)
+            if type(aura) == "table" and ZEAL_ICD_BUFF_IDS[tonumber(aura.buff_id or aura.buffId)] then
+                return tonumber(aura.timeLeft or aura.time_left) or 0
+            end
+        end
+    end
+    return nil
 end
 
 local function procConsumed(currentTime)
@@ -297,15 +325,17 @@ local function updateZealIndicator()
         return
     end
     -- Zeal on: shrink the proc readout to the left so the Zeal status sits on the right of the
-    -- same line, with the same treatment as the proc -- green "READY" when it can proc, or its
-    -- remaining timer in the Zeal combat-text colour (magenta) while the buff is active. (Zeal
-    -- has no separate cooldown like the weapon proc, so there's no red cooldown state.)
+    -- same line, with the same treatment as the proc -- magenta timer while the buff is up,
+    -- red countdown during the 12s internal cooldown after it drops, then green "READY".
     if window.status then window.status:SetExtent(S(86), S(17)) end
     if window.zealHeader then window.zealHeader:Show(true) end
     local text, color
     if WeaponProc.zealOn then
         text = string.format("%.1fs", math.max(0, (tonumber(WeaponProc.zealTimeLeft) or 0) / 1000))
         color = COLOR_ZEAL
+    elseif WeaponProc.zealCooldownLeft > 0 then
+        text = string.format("%.1fs", WeaponProc.zealCooldownLeft / 1000)
+        color = COLOR_COOLDOWN
     else
         text = "READY"
         color = COLOR_READY
@@ -322,9 +352,36 @@ local function updateBar(currentTime)
     if zealEnabled() then
         local wasZealOn = WeaponProc.zealOn
         WeaponProc.zealOn, WeaponProc.zealTimeLeft = scanZeal()
-        -- Zeal just dropped (active -> ready): tick "Zeal Ready" over the character.
-        if wasZealOn and not WeaponProc.zealOn and WeaponProc.settings.weaponProcReadyPopup ~= false then
-            showPopup(currentTime, "Zeal Ready", COLOR_ZEAL)
+        local popupsOn = WeaponProc.settings.weaponProcReadyPopup ~= false
+        if WeaponProc.zealOn then
+            WeaponProc.zealCooldownLeft = 0
+            WeaponProc.zealCooldownUntil = 0
+            -- Zeal just came up: the "Zeal's Up!" call-out over the character.
+            if not wasZealOn and popupsOn then
+                showPopup(currentTime, "Zeal's Up!", COLOR_ZEAL)
+            end
+        else
+            local wasOnCooldown = WeaponProc.zealCooldownLeft > 0
+            -- Only touch the aura lists while the cooldown is actually live. Scanning
+            -- buffs + debuffs on every 100ms tick when nothing is happening is exactly
+            -- the kind of idle cost this window does not need.
+            if wasZealOn or wasOnCooldown then
+                local icdLeft = scanZealCooldown()
+                if icdLeft ~= nil and icdLeft > 0 then
+                    -- Resync to the real aura so the countdown stays true even if we
+                    -- missed the exact tick the buff dropped on.
+                    WeaponProc.zealCooldownUntil = currentTime + icdLeft
+                elseif wasZealOn then
+                    -- Buff just fell off and the aura is not readable: fixed fallback.
+                    WeaponProc.zealCooldownUntil = currentTime + ZEAL_ICD_MS
+                end
+            end
+            local remaining = math.max(0, (WeaponProc.zealCooldownUntil or 0) - currentTime)
+            WeaponProc.zealCooldownLeft = remaining
+            -- "Zeal Ready" now fires when the cooldown finishes, not when the buff ends.
+            if wasOnCooldown and remaining <= 0 and popupsOn then
+                showPopup(currentTime, "Zeal Ready", COLOR_ZEAL)
+            end
         end
     end
     if not WeaponProc.weaponKind then
@@ -362,6 +419,8 @@ local function resetEngine()
     WeaponProc.cooldownUntil = 0
     WeaponProc.wasReady = true
     WeaponProc.zealOn = false
+    WeaponProc.zealCooldownUntil = 0
+    WeaponProc.zealCooldownLeft = 0
 end
 
 function WeaponProc.Init(settings, applyDrag)

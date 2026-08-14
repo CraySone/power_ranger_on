@@ -93,7 +93,7 @@ function Manager.Open(ctx, group)
         return
     end
 
-    local title = group == "glider" and "Glider Cooldowns" or "Mount & Skill Cooldowns"
+    local title = group == "glider" and "Glider Cooldowns" or "Aura, Mount & Skill Cooldowns"
     local wnd = api.Interface:CreateEmptyWindow("powerRangerCooldownManager_" .. group, "UIParent")
     wnd:SetExtent(598, 356)
     local keyPrefix = "cooldownManager" .. group

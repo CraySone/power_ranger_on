@@ -265,6 +265,10 @@ function TargetWindows.CreateGuildFamily(ctx)
     dragHandle:Show(true)
     wnd.dragHandle = dragHandle
     ctx.applyHandleDrag(wnd, dragHandle, "guildFamilyLabelX", "guildFamilyLabelY")
+    -- ApplyHandleDrag leaves the handle Clickable(true), which makes this whole 360x50
+    -- rectangle eat clicks. Rest click-through; TargetOverlay.updateGuildFamilyClickThrough
+    -- re-arms it only while Shift is held for the drag.
+    if dragHandle.Clickable then dragHandle:Clickable(false) end
     wnd:Show(false)
     return wnd
 end

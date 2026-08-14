@@ -81,7 +81,8 @@ local defaults = {
     showModelGearscore = true,
     showModelClass = true,
     showModelRange = true,
-    showModelHpPercent = false,
+    -- showModelHpPercent removed: the overhead HP percent is gone.
+    overheadOnRight = false,
     showModelDefense = false,
     compactModelOverlay = true,
     nuziUiCompatMode = "auto",
@@ -1728,6 +1729,27 @@ local function hideGuildFamilyWindow()
     if guildFamilyWnd then guildFamilyWnd:Show(false) end
 end
 
+-- Click-through guild label.
+--
+-- The window and both labels are already Clickable(false), but WindowHelpers.ApplyHandleDrag
+-- forces Clickable(true) on the drag handle -- a full-size 360x50 emptywidget -- so that
+-- rectangle swallowed every click over the label (and over whatever was behind it).
+--
+-- Dragging already requires Shift, so the handle only has to be hit-testable while Shift is
+-- held. The rest of the time it is click-through. Shift is pressed before the mouse in a
+-- Shift-drag, so the handle is live by the time the click lands and the drag UX is unchanged.
+-- Attached to TargetOverlay rather than declared as module locals: this file is large and
+-- close to Lua's 200-local ceiling.
+TargetOverlay.guildFamilyHandleClickable = nil
+function TargetOverlay.updateGuildFamilyClickThrough()
+    local handle = guildFamilyWnd and guildFamilyWnd.dragHandle
+    if not handle or not handle.Clickable then return end
+    local shiftDown = OverlayUtils.safeCall(function() return api.Input:IsShiftKeyDown() end) == true
+    if TargetOverlay.guildFamilyHandleClickable == shiftDown then return end
+    TargetOverlay.guildFamilyHandleClickable = shiftDown
+    handle:Clickable(shiftDown)
+end
+
 function TargetOverlay.applyTextShadow()
     local modelLabels = {
         targetDefense.pdefTitle, targetDefense.pdefValue, targetDefense.mdefTitle, targetDefense.mdefValue,
@@ -2740,7 +2762,7 @@ function TargetOverlay.detectedRecipeRow(row, mode)
         icon = row.icon or TargetOverlay.buffIconById(row.id),
         cooldownStartsOnActive = true
     }
-    if row.kind == "buff" and (row.name or row.pattern) then
+    if (mode == "aura" or row.kind == "buff" or row.kind == "debuff") and (row.name or row.pattern) then
         recipe.buffName = row.name or row.pattern
         recipe.buffNames = {row.name or row.pattern}
         -- With a concrete buff id, never fall back to name matching: mounts like Raijin
@@ -2750,12 +2772,22 @@ function TargetOverlay.detectedRecipeRow(row, mode)
         if tonumber(row.id) then recipe.matchByIdOnly = true end
     end
     if mode == "glider" then
-        local glider = TargetOverlay.equippedGliderSnapshot()
-        local gliderName = glider.name or row.gliderName or row.source or "Glider"
+        -- One coherent glider source. The detected row records the glider that was equipped
+        -- when the ability actually fired, so it wins over the live snapshot -- reading the
+        -- live glider FIRST stamped the row with whatever you happened to be flying at the
+        -- moment you pressed Add. Name, icon and item type all come from the SAME source so
+        -- the row can never describe two different gliders.
+        local live = TargetOverlay.equippedGliderSnapshot()
+        local gliderName, gliderIcon, gliderItemType
+        if row.gliderName then
+            gliderName, gliderIcon, gliderItemType = row.gliderName, row.gliderIcon, row.gliderItemType
+        else
+            gliderName, gliderIcon, gliderItemType = live.name or row.source or "Glider", live.icon, live.itemType
+        end
         local canonical = TargetOverlay.canonicalGliderDevice(gliderName)
         recipe.name = canonical and canonical.name or gliderName
         recipe.source = canonical and canonical.name or gliderName
-        recipe.itemType = glider.itemType or row.gliderItemType or (canonical and canonical.itemTypes and canonical.itemTypes[1])
+        recipe.itemType = gliderItemType or (canonical and canonical.itemTypes and canonical.itemTypes[1])
         recipe.itemTypes = canonical and canonical.itemTypes or (recipe.itemType and {recipe.itemType} or nil)
         recipe.recipeDeviceItemType = canonical and canonical.displayItemType or recipe.itemType
         recipe.category = "glider"
@@ -2763,10 +2795,7 @@ function TargetOverlay.detectedRecipeRow(row, mode)
         recipe.recipeDeviceName = canonical and canonical.name or gliderName
         recipe.recipeDeviceKey = canonical and canonical.key or ("custom_glider_" .. lowerPattern(gliderName))
         recipe.recipeDeviceKind = "glider"
-        recipe.recipeDeviceIcon = row.gliderIcon or (canonical and canonical.icon)
-        if not canonical then
-            recipe.recipeDeviceIcon = recipe.recipeDeviceIcon or glider.icon
-        end
+        recipe.recipeDeviceIcon = gliderIcon or (canonical and canonical.icon)
         if TargetOverlay.isStarTriggerCooldown(recipe) then
             recipe.cooldownOnlyOnActive = true
             recipe.triggerMinTimeLeftMs = 5300
@@ -2937,7 +2966,11 @@ function recordDetectedSkill(skillName, skillId, sourceName, flatText, extra)
     found.source = inferSkillSource(name, sourceName, flatText)
     found.icon = extra.icon or found.icon or (found.kind == "buff" and TargetOverlay.buffIconById(found.id) or TargetOverlay.skillIconById(found.id))
     if extra.gliderName then
-        found.gliderName = extra.gliderName
+        -- Sticky, like gliderIcon/gliderItemType below it. This used to assign
+        -- unconditionally, so the detected row's glider identity was re-stamped to whatever
+        -- was equipped on EVERY re-detection -- swap gliders once and the row now described
+        -- the wrong device while keeping the first glider's icon and item type.
+        found.gliderName = found.gliderName or extra.gliderName
         found.gliderIcon = extra.gliderIcon or found.gliderIcon
         found.gliderItemType = extra.gliderItemType or found.gliderItemType
     end
@@ -3093,10 +3126,15 @@ local function cooldownEntryIsGlider(entry)
     return row and (row.gliderPattern ~= nil or row.category == "glider" or row.recipeDeviceKind == "glider")
 end
 
+local function cooldownEntryIsMount(entry)
+    local row = entry and entry.row
+    return row and (row.recipeDeviceKind == "mount" or row.category == "mount" or row.mountNames or row.mountName or row.mount_name)
+end
+
 local function cooldownDeviceKey(entry)
     local row = entry and entry.row
     if not row then return "" end
-    local kind = cooldownEntryIsGlider(entry) and "glider" or "mount"
+    local kind = cooldownEntryIsGlider(entry) and "glider" or (cooldownEntryIsMount(entry) and "mount" or "aura")
     if kind == "mount" and TargetOverlay.canonicalMountDevice then
         local canonical = TargetOverlay.canonicalMountDevice(row.recipeDeviceName or row.mountName or row.mount_name or row.source or row.mount or row.name or "")
         if canonical then return kind .. ":" .. lowerPattern(canonical.key) end
@@ -3108,11 +3146,15 @@ end
 local function cooldownDeviceTitle(entry)
     local row = entry and entry.row
     if not row then return "" end
-    if TargetOverlay.canonicalMountDevice then
+    if cooldownEntryIsMount(entry) and TargetOverlay.canonicalMountDevice then
         local canonical = TargetOverlay.canonicalMountDevice(row.recipeDeviceName or row.mountName or row.mount_name or row.source or row.mount or row.name or "")
         if canonical then return canonical.name end
     end
-    return row.recipeDeviceName or row.mountName or row.mount_name or row.source or row.mount or row.name or row.buffName or row.pattern or tostring(row.id or row.skillId or "")
+    local title = row.recipeDeviceName or row.mountName or row.mount_name or row.source or row.mount or row.name or row.buffName or row.pattern or tostring(row.id or row.skillId or "")
+    if not cooldownEntryIsGlider(entry) and not cooldownEntryIsMount(entry) then
+        return "Aura: " .. tostring(title)
+    end
+    return title
 end
 
 local function cooldownDeviceEntries(group)
@@ -3591,7 +3633,10 @@ function refreshSettingsButtons()
     setToggle(settingsWnd.modelGsBtn, settings.showModelGearscore, "Gear")
     setToggle(settingsWnd.modelClassBtn, settings.showModelClass, "Class")
     setToggle(settingsWnd.modelRangeBtn, settings.showModelRange, "Range")
-    setToggle(settingsWnd.modelHpBtn, settings.showModelHpPercent == true, "HP %")
+    if settingsWnd.modelSideBtn then
+        settingsWnd.modelSideBtn:SetCleanText(settings.overheadOnRight == true and "Side: Right" or "Side: Left")
+        settingsWnd.modelSideBtn:SetTone(COLORS.blue)
+    end
     if settingsWnd.shadowBtn then
         settingsWnd.shadowBtn:SetCleanText(settings.overlayTextStyle == "outline" and "Text Border" or "Text Shadow")
         settingsWnd.shadowBtn:SetTone(COLORS.active)
@@ -3644,7 +3689,22 @@ function refreshSettingsButtons()
     setToggle(settingsWnd.debugLogBtn, settings.debugLogging == true, "Debug")
     setToggle(settingsWnd.defaultAppearancesBtn, settings.defaultAppearancesEnabled == true, "Default App")
     setToggle(settingsWnd.floatOptionButtonsBtn, settings.showFloatOptionButtons == true, "Float buttons")
-    setToggle(settingsWnd.uiHpPercentBtn, settings.showUiHpPercent == true, "UI HP/MP %")
+    -- BetterBars owns the same labels, so ours stands down and the button turns into a
+    -- shortcut into its settings rather than a toggle that cannot win.
+    if settingsWnd.uiHpPercentBtn then
+        local barsConflict = TargetOverlay.hpPercentBars.HasConflict()
+        if barsConflict then
+            settingsWnd.uiHpPercentBtn:SetCleanText("BetterBars settings")
+            settingsWnd.uiHpPercentBtn:SetTone(COLORS.blue)
+        else
+            setToggle(settingsWnd.uiHpPercentBtn, settings.showUiHpPercent == true, "UI HP/MP %")
+        end
+        if settingsWnd.uiHpPercentHint then
+            settingsWnd.uiHpPercentHint:SetText(barsConflict
+                and "BetterBars handles the bars. Opens its settings."
+                or "Shows percent text inside unit-frame bars.")
+        end
+    end
     if settingsWnd.scaleValue then
         settingsWnd.scaleValue:SetText(tostring(settings.uiScaleLevel or 0))
     end
@@ -4598,17 +4658,20 @@ local function applyModelLayout()
     local armorEnabled = settings.showArmorIcon ~= false
     local weaponEnabled = settings.showWeaponIcon ~= false
     local compactOnly = true
+    local layoutOnRight = settings.overheadOnRight == true
     if not mainCanvas
         or (mainCanvas._compactLayout == compactOnly
             and mainCanvas._layoutScale == scale
             and mainCanvas._layoutTextStyle == textStyle
             and mainCanvas._layoutArmorEnabled == armorEnabled
-            and mainCanvas._layoutWeaponEnabled == weaponEnabled) then return end
+            and mainCanvas._layoutWeaponEnabled == weaponEnabled
+            and mainCanvas._layoutOnRight == layoutOnRight) then return end
     mainCanvas._compactLayout = compactOnly
     mainCanvas._layoutScale = scale
     mainCanvas._layoutTextStyle = textStyle
     mainCanvas._layoutArmorEnabled = armorEnabled
     mainCanvas._layoutWeaponEnabled = weaponEnabled
+    mainCanvas._layoutOnRight = layoutOnRight
     local buffSize = math.floor((CONFIG.buffIconSize * scale) + 0.5)
     armorBuffIcon:SetExtent(buffSize, buffSize)
     weaponBuffIcon:SetExtent(buffSize, buffSize)
@@ -4632,22 +4695,31 @@ local function applyModelLayout()
     targetDefense.pdefValue:RemoveAllAnchors()
     targetDefense.mdefTitle:RemoveAllAnchors()
     targetDefense.mdefValue:RemoveAllAnchors()
-    local leftOffset = -(tonumber(settings.compactModelLeftOffset) or CONFIG.compactModelLeftOffset)
-    local compactIconGap = math.floor((2 * scale) + 0.5)
+    -- Side mirror: the block normally hangs off the LEFT edge of the target's health bar.
+    -- With overheadOnRight it hangs off the RIGHT edge instead -- every anchor edge,
+    -- text alignment and gap sign flips, so the same X offset means the same visual gap
+    -- on either side.
+    local onRight = layoutOnRight
+    local canvasEdge = onRight and "RIGHT" or "LEFT"
+    local blockEdge = onRight and "LEFT" or "RIGHT"
+    local textAlign = onRight and ALIGN.LEFT or ALIGN.RIGHT
+    local sideSign = onRight and 1 or -1
+    local gapOffset = sideSign * (tonumber(settings.compactModelLeftOffset) or CONFIG.compactModelLeftOffset)
+    local compactIconGap = sideSign * math.floor((2 * scale) + 0.5)
     local outlineOffset = TargetOverlay.useOutlineText() and math.floor((4 * scale) + 0.5) or 0
-    local compactTextRight = leftOffset - outlineOffset
-    targetGearscoreLabel.style:SetAlign(ALIGN.RIGHT)
-    targetClassLabel.style:SetAlign(ALIGN.RIGHT)
-    armorBuffIcon:AddAnchor("RIGHT", mainCanvas, "LEFT", leftOffset, 0)
+    local compactTextOffset = gapOffset + (sideSign * outlineOffset)
+    targetGearscoreLabel.style:SetAlign(textAlign)
+    targetClassLabel.style:SetAlign(textAlign)
+    armorBuffIcon:AddAnchor(blockEdge, mainCanvas, canvasEdge, gapOffset, 0)
     if armorEnabled then
-        weaponBuffIcon:AddAnchor("RIGHT", armorBuffIcon, "LEFT", -compactIconGap, 0)
+        weaponBuffIcon:AddAnchor(blockEdge, armorBuffIcon, canvasEdge, compactIconGap, 0)
     else
-        weaponBuffIcon:AddAnchor("RIGHT", mainCanvas, "LEFT", leftOffset, 0)
+        weaponBuffIcon:AddAnchor(blockEdge, mainCanvas, canvasEdge, gapOffset, 0)
     end
     targetGearscoreLabel:SetHeight(math.floor(((CONFIG.fontSize + 7) * scale) + 0.5))
     targetGearscoreLabel.style:SetFontSize(math.floor(((CONFIG.fontSize + 3) * scale) + 0.5))
-    targetGearscoreLabel:AddAnchor("BOTTOMRIGHT", mainCanvas, "LEFT", compactTextRight, math.floor((-16 * scale) + 0.5))
-    targetClassLabel:AddAnchor("TOPRIGHT", mainCanvas, "LEFT", compactTextRight, math.floor((16 * scale) + 0.5))
+    targetGearscoreLabel:AddAnchor("BOTTOM" .. blockEdge, mainCanvas, canvasEdge, compactTextOffset, math.floor((-16 * scale) + 0.5))
+    targetClassLabel:AddAnchor("TOP" .. blockEdge, mainCanvas, canvasEdge, compactTextOffset, math.floor((16 * scale) + 0.5))
     -- Defense labels are intentionally parked after the API lock. The widgets still
     -- exist in the old window factory, but compact overhead no longer anchors/shows
     -- PDEF/MDEF.
@@ -4679,40 +4751,14 @@ local function updateFastModelRange()
     targetRange.canvas:Show(true)
 end
 
+-- The overhead HP percent was removed. The widgets still come out of the window factory,
+-- so this keeps them parked rather than leaving a stale canvas floating over the target.
 function TargetOverlay.updateModelHpPercent()
+    if targetRange.hpHidden then return end
     if not targetRange.hpCanvas or not targetRange.hpLabel then return end
-    if settings.showModelOverlay == false or settings.showModelHpPercent ~= true or Compat.ShouldHideTargetText(compatState) then
-        if targetRange.hpCanvas then targetRange.hpCanvas:Show(false) end
-        if targetRange.hpLabel then targetRange.hpLabel:Show(false) end
-        return
-    end
-    local hp = tonumber(OverlayUtils.safeCall(function() return api.Unit:UnitHealth("target") end))
-    local maxHp = tonumber(OverlayUtils.safeCall(function() return api.Unit:UnitMaxHealth("target") end))
-    if not hp or not maxHp or maxHp <= 0 then
-        targetRange.hpCanvas:Show(false)
-        targetRange.hpLabel:Show(false)
-        return
-    end
-    local sX, sY, sZ = api.Unit:GetUnitScreenPosition("target")
-    if not sX or not sY or not sZ or sZ < 0 or sZ > CONFIG.maxScreenDistance then
-        targetRange.hpCanvas:Show(false)
-        targetRange.hpLabel:Show(false)
-        return
-    end
-    local pct = math.max(0, math.min(100, (hp / maxHp) * 100))
-    local scale = uiScaleFactor()
-    local width = math.floor((120 * scale) + 0.5)
-    local height = math.floor((26 * scale) + 0.5)
-    targetRange.hpCanvas:SetExtent(width, height)
-    targetRange.hpLabel:SetExtent(width, height)
-    targetRange.hpLabel.style:SetFontSize(math.floor((18 * scale) + 0.5))
-    setModelLabel(targetRange.hpLabel, string.format("%.0f%%", pct))
-    setTextColor(targetRange.hpLabel, COLORS.white)
-    local offsetX = math.floor(((tonumber(settings.modelRangeOffsetX) or 0) * scale) + 0.5)
-    local offsetY = math.floor(((tonumber(settings.modelRangeOffsetY) or 0) * scale) + 0.5)
-    targetRange.hpCanvas:RemoveAllAnchors()
-    targetRange.hpCanvas:AddAnchor("CENTER", "UIParent", "TOPLEFT", sX + offsetX, sY - math.floor((20 * scale) + 0.5) + offsetY)
-    targetRange.hpCanvas:Show(true)
+    targetRange.hpCanvas:Show(false)
+    targetRange.hpLabel:Show(false)
+    targetRange.hpHidden = true
 end
 
 local function updateTargetOwnersMarkOverlay()
@@ -4837,6 +4883,12 @@ function TargetOverlay.update(dt)
     TargetOverlay.travelSpeed.Update(elapsed)
     TargetOverlay.ownersMark.Update(elapsed)
     TargetOverlay.weaponProc.Update(elapsed)
+    -- Slow self-heal: re-asserts the unit-frame percent patch if a frame was not ready at
+    -- login or another bar addon patched after us. Without it the setting had to be
+    -- toggled off/on by hand after every relaunch.
+    TargetOverlay.hpPercentBars.Tick(elapsed)
+    -- Cheap: one input poll, then an early return unless Shift actually changed state.
+    TargetOverlay.updateGuildFamilyClickThrough()
     runtimeState.updateElapsed = runtimeState.updateElapsed + elapsed
     runtimeState.selfUpdateElapsed = runtimeState.selfUpdateElapsed + elapsed
     TargetOverlay.cooldownRuntimeElapsed = (TargetOverlay.cooldownRuntimeElapsed or SELF_UPDATE_MS) + elapsed

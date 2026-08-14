@@ -27,7 +27,9 @@ function SettingsSections.BuildTargetOverhead(wnd, ctx)
     wnd.modelGsBtn = flatButton(p, "power_ranger_toggle_model_gs", "", 292, 58, 82, 22, colors.active, function() toggleSetting("showModelGearscore") end)
     wnd.modelClassBtn = flatButton(p, "power_ranger_toggle_model_class", "", 380, 58, 82, 22, colors.active, function() toggleSetting("showModelClass") end)
     wnd.modelRangeBtn = flatButton(p, "power_ranger_toggle_model_range", "", 468, 58, 82, 22, colors.active, function() toggleSetting("showModelRange") end)
-    wnd.modelHpBtn = flatButton(p, "power_ranger_toggle_model_hp_percent", "", 468, 86, 82, 22, colors.active, function() toggleSetting("showModelHpPercent") end)
+    -- Mirrors the whole compact block (GS + class text and the armor/weapon icons) to the
+    -- other side of the target's health bar.
+    wnd.modelSideBtn = flatButton(p, "power_ranger_toggle_model_side", "", 468, 86, 82, 22, colors.blue, function() toggleSetting("overheadOnRight") end)
 
     label(p, "power_ranger_model_color_label", "Colors", 16, 94, 44, 14, 10, colors.muted, ALIGN.LEFT)
     label(p, "power_ranger_model_color_dist", "Dist", 72, 94, 28, 14, 10, colors.white, ALIGN.LEFT)
@@ -198,7 +200,7 @@ function SettingsSections.BuildSelfCooldowns(wnd, ctx)
     flatButton(p, "power_ranger_self_opacity_up", "+", 478, 89, 24, 18, colors.button, function() shiftSelfOpacity(1) end)
     label(p, "power_ranger_cd_manager_title", "Cooldown managers", 16, 114, 128, 14, 11, colors.gold, ALIGN.LEFT)
     flatButton(p, "power_ranger_cd_manager_gliders", "Gliders", 150, 110, 118, 22, colors.blue, function() openCooldownManagerWindow("glider") end)
-    flatButton(p, "power_ranger_cd_manager_mounts", "Mounts", 276, 110, 118, 22, colors.blue, function() openCooldownManagerWindow("other") end)
+    flatButton(p, "power_ranger_cd_manager_mounts", "Auras/Mounts", 276, 110, 118, 22, colors.blue, function() openCooldownManagerWindow("other") end)
     flatButton(p, "power_ranger_cd_manager_equipment", "Equipment", 402, 110, 118, 22, colors.blue, function() toggleSetting("showSelfEquipment") end)
     label(p, "power_ranger_cd_manager_hint", "Sorting, show toggles, and per-device skills.", 16, 136, 520, 14, 10, colors.muted, ALIGN.LEFT)
     return p
@@ -243,8 +245,15 @@ function SettingsSections.BuildClientOptions(wnd, ctx, y)
         if ctx.refreshClientOptionButtons then ctx.refreshClientOptionButtons() end
     end)
     ctx.label(p, "power_ranger_ui_hp_percent_label", "UI HP/MP percent", 14, 94, 132, 14, 10, colors.gold, ALIGN.LEFT)
-    ctx.label(p, "power_ranger_ui_hp_percent_hint", "Shows percent text inside unit-frame bars.", 152, 94, 260, 14, 10, colors.muted, ALIGN.LEFT)
+    wnd.uiHpPercentHint = ctx.label(p, "power_ranger_ui_hp_percent_hint", "Shows percent text inside unit-frame bars.", 152, 94, 268, 14, 10, colors.muted, ALIGN.LEFT)
     wnd.uiHpPercentBtn = ctx.flatButton(p, "power_ranger_ui_hp_percent", "", 428, 89, 118, 22, colors.active, function()
+        -- BetterBars already owns these labels, so ours stands down and the button
+        -- becomes a shortcut into its settings instead. "ADDON_SETTINGS_OPENED" +
+        -- the addon name is BetterBars' own open hook (BetterBars/main.lua:2297).
+        if require("power_ranger_on/hp_percent_bars").HasConflict() then
+            pcall(function() require("api"):Emit("ADDON_SETTINGS_OPENED", "BetterBars") end)
+            return
+        end
         if ctx.toggleSetting then ctx.toggleSetting("showUiHpPercent") end
     end)
     return p

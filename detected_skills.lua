@@ -124,7 +124,7 @@ function DetectedSkills.ToggleTracking(ctx, index, mode)
     local settings = ctx.settings
     local row = settings.detectedSkills and settings.detectedSkills[index]
     if not row then return end
-    if row.kind == "buff" or ((mode == "glider" or mode == "mount") and hasManaTrigger(row)) then
+    if mode == "aura" or row.kind == "buff" or row.kind == "debuff" or ((mode == "glider" or mode == "mount") and hasManaTrigger(row)) then
         settings.trackedBuffs = settings.trackedBuffs or {}
         mode = mode or "aura"
         local trackedIndex = ctx.detectedBuffTrackedIndex(row, mode)
@@ -153,7 +153,7 @@ function DetectedSkills.ToggleTracking(ctx, index, mode)
                 ctx.buffState[ctx.trackedBuffKey(tracked)] = nil
                 table.remove(settings.trackedBuffs, trackedIndex)
             end
-        elseif mode == "aura" and ctx.trackedCooldownIsHardcoded(row.name or row.pattern, row.id) then
+        elseif mode ~= "aura" and ctx.trackedCooldownIsHardcoded(row.name or row.pattern, row.id) then
             table.remove(settings.detectedSkills, index)
         else
             local recipe = ctx.detectedRecipeRow(row, mode)
@@ -206,13 +206,13 @@ function DetectedSkills.RefreshRows(ctx)
                 ui.mountButton:Show(row.kind == "buff" or row.mountName or row.category == "mount")
             elseif row.mountName or row.gliderName or row.category == "mount" or row.category == "glider" then
                 local skillTracked = ctx.trackedSkillIndex(row.name or row.pattern, row.id) ~= nil
-                ctx.setToggleButton(ui.auraButton, skillTracked, "Skill")
+                ctx.setToggleButton(ui.auraButton, ctx.detectedBuffTrackedIndex(row, "aura") ~= nil, "Aura")
                 ctx.setToggleButton(ui.gliderButton, skillTracked and (row.gliderName or row.category == "glider"), "Glid")
                 ctx.setToggleButton(ui.mountButton, skillTracked and (row.mountName or row.category == "mount"), "Mount")
                 ui.gliderButton:Show(row.gliderName ~= nil or row.category == "glider")
                 ui.mountButton:Show(row.mountName ~= nil or row.category == "mount")
             else
-                ctx.setToggleButton(ui.auraButton, ctx.trackedSkillIndex(row.name or row.pattern, row.id) ~= nil, "Skill")
+                ctx.setToggleButton(ui.auraButton, ctx.detectedBuffTrackedIndex(row, "aura") ~= nil, "Aura")
                 ui.gliderButton:Show(false)
                 ui.mountButton:Show(false)
             end
