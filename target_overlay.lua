@@ -29,6 +29,8 @@ TargetOverlay.travelSpeed = require("power_ranger_on/travel_speed")
 TargetOverlay.ownersMark = require("power_ranger_on/owners_mark")
 TargetOverlay.weaponProc = require("power_ranger_on/weapon_proc")
 TargetOverlay.hpPercentBars = require("power_ranger_on/hp_percent_bars")
+TargetOverlay.readyPopup = require("power_ranger_on/ready_popup")
+TargetOverlay.nodeTracker = require("power_ranger_on/node_tracker")
 TargetOverlay.statsCatalog = require("power_ranger_on/target_stats_catalog")
 TargetOverlay.optionalBuffHelper = OverlayUtils.safeCall(function() return require("CooldawnBuffTracker/buff_helper") end)
 TargetOverlay.simpleStatsGrid = {
@@ -123,6 +125,22 @@ local defaults = {
     showTargetOwnersMark = true,
     showUiHpPercent = false,
     warnMissingOwnersMark = true,
+    cooldownReadyPopup = false,
+    cooldownReadyPopupScale = 0,
+    cooldownReadyPopupX = 700,
+    cooldownReadyPopupY = 420,
+    nodeTrackerEnabled = false,
+    nodeAutotrackEnabled = false,
+    nodeCaptureModifier = "none",
+    nodeKinds = {},
+    nodeTimers = {},
+    nodeFloatButton = false,
+    optionFloatVertical = false,
+    nodeTrackerScaleLevel = 0,
+    nodeTrackerOpacityLevel = 8,
+    nodeTrackerX = 400,
+    nodeTrackerY = 300,
+    nodeSpots = {},
     weaponProcEnabled = false,
     weaponProcReadyPopup = true,
     weaponProcZeal = false,
@@ -817,31 +835,66 @@ local function addMissingTrackedBuffDefaults()
     if migrateHardcodedGliders then settings.hardcodedGliderDefaultsVersion = 1 end
 end
 
-local function trackedCooldownIsHardcoded(skillName, skillId)
+-- Is this detected ability already covered by a tracked cooldown row?
+--
+-- deviceTag scopes the NAME comparisons to one device. Mounts share skill names while
+-- keeping separate cooldowns -- "Run!" is on Ser Meatball and Celestial Pegasus, "Dash" on
+-- three mounts -- so a device-blind name match made every second mount's ability look like
+-- a duplicate. The caller then dropped the detected row, which is why those skills
+-- "disappeared" instead of registering. A concrete id match still counts device-blind,
+-- because the same id IS the same ability.
+--
+-- Returns: isDuplicate, matchedRow (the row is used to explain the refusal to the player).
+local function trackedCooldownIsHardcoded(skillName, skillId, deviceTag)
     local id = tonumber(skillId)
     local lowerName = string.lower(tostring(skillName or ""))
+    deviceTag = tostring(deviceTag or "")
     local rows = (settings and settings.trackedBuffs) or defaults.trackedBuffs or {}
     for _, row in ipairs(rows) do
         local rowId = tonumber(row.id)
-        if id and rowId and id == rowId then return true end
-        if lowerName ~= "" then
-            if row.buffName and lowerName == string.lower(tostring(row.buffName)) then return true end
+        if id and rowId and id == rowId then
+            -- The SAME id on a DIFFERENT device is the same ability granted by another
+            -- mount (Ser Meatball and Snowmane Snowlion both give Run!/Dash). That deserves
+            -- its own row so the correct mount icon shows while that mount is out; the two
+            -- rows get linked afterwards through sharedCooldownKey so they still share one
+            -- cooldown. Only call it a duplicate when the devices agree, or when either
+            -- side is not device-bound.
+            if deviceTag == "" then return true, row end
+            local idRowTag = TargetOverlay.trackedRowDeviceTag(row)
+            if idRowTag == "" or idRowTag == deviceTag then return true, row end
+        end
+        -- Only compare names when the two rows are not known to belong to DIFFERENT
+        -- devices. An empty tag on either side means "not device-bound", which keeps the
+        -- old behaviour for plain auras and skills. Resolved lazily so callers that pass no
+        -- tag (the load-time cleanup passes, and detection while probe logging is on) do
+        -- not pay for a canonical-device lookup per row.
+        local sameDevice = true
+        if lowerName ~= "" and deviceTag ~= "" then
+            local rowTag = TargetOverlay.trackedRowDeviceTag(row)
+            sameDevice = rowTag == "" or rowTag == deviceTag
+        end
+        if lowerName ~= "" and sameDevice then
+            if row.buffName and lowerName == string.lower(tostring(row.buffName)) then return true, row end
             for _, name in ipairs(row.buffNames or {}) do
-                if lowerName == string.lower(tostring(name or "")) then return true end
+                if lowerName == string.lower(tostring(name or "")) then return true, row end
             end
+            -- Forward containment only, matching CooldownRecipes.DeviceMatches. The old
+            -- reverse direction (rowName:find(lowerName)) let a tracked "Power Dash" swallow
+            -- every other mount's "Dash"; the rowName ~= "dash" special case was an
+            -- incomplete patch for exactly that and is no longer needed.
             local rowName = string.lower(tostring(row.name or ""))
-            if rowName ~= "" and rowName ~= "dash" and (lowerName == rowName or lowerName:find(rowName, 1, true) or rowName:find(lowerName, 1, true)) then
-                return true
+            if rowName ~= "" and (lowerName == rowName or lowerName:find(rowName, 1, true)) then
+                return true, row
             end
             for _, pattern in ipairs(row.gliderPattern or {}) do
                 local gliderName = string.lower(tostring(pattern or ""))
-                if gliderName ~= "" and (lowerName == gliderName or lowerName:find(gliderName, 1, true) or gliderName:find(lowerName, 1, true)) then
-                    return true
+                if gliderName ~= "" and (lowerName == gliderName or lowerName:find(gliderName, 1, true)) then
+                    return true, row
                 end
             end
         end
     end
-    return false
+    return false, nil
 end
 
 local function cleanDeprecatedTrackedSkills()
@@ -2319,6 +2372,9 @@ local function updateTrackedBuffs()
         triggerState = triggerState,
         allTrackedBuffRows = allTrackedBuffRows,
         trackedBuffKey = trackedBuffKey,
+        -- Per-ROW key. trackedBuffKey collapses shared-cooldown siblings onto one string,
+        -- so the runtime needs this to tell which row owns the shared state.
+        trackedBuffSettingKey = trackedBuffSettingKey,
         trackedBuffTriggerKey = trackedBuffTriggerKey,
         buffId = TargetOverlay.buffId,
         buffName = TargetOverlay.buffName,
@@ -2330,6 +2386,7 @@ local function updateTrackedBuffs()
         equippedGliderSnapshot = TargetOverlay.equippedGliderSnapshot,
         mountedPetSnapshot = TargetOverlay.mountedPetSnapshot,
         isStarTriggerCooldown = TargetOverlay.isStarTriggerCooldown,
+        onCooldownReady = TargetOverlay.readyPopup.Show,
         serialValue = SkillProbe.serialValue,
         recordSkillProbe = recordSkillProbe,
         saveSettings = saveSettings
@@ -2738,9 +2795,111 @@ function TargetOverlay.canonicalMountDevice(name)
             icon = "Game\\ui\\icon\\icon_skill_snowman03.dds"
         }
     end
+    -- No itemType/icon on purpose: without them detectedRecipeRow falls back to the live
+    -- mount snapshot, which is correct. What this entry buys is a stable key and display
+    -- name, so the Snowlion's abilities group under one device instead of each landing on
+    -- its own learned entry (Kirin is partial in the same way).
+    if text:find("snowlion", 1, true) or text:find("snowmane", 1, true) then
+        return {
+            key = "snowmane_snowlion",
+            name = "Snowmane Snowlion",
+            names = {"Snowmane Snowlion", "Snowlion"}
+        }
+    end
     local learned = CooldownLearning.Find(settings, "mount", name)
     if learned then return learned end
     return nil
+end
+
+-- Player-visible message. api.Log:Info goes to the SYSTEM chat channel and Log:Err to
+-- NOTICE; both are in the chat window, which is the only surface this addon has for
+-- telling someone why a button did nothing.
+function TargetOverlay.notify(message, isError)
+    pcall(function()
+        local text = "[Power Ranger ON] " .. tostring(message or "")
+        if isError and api.Log and api.Log.Err then
+            api.Log:Err(text)
+        elseif api.Log and api.Log.Info then
+            api.Log:Info(text)
+        end
+    end)
+end
+
+-- Device identity strings used to keep the duplicate check from confusing two mounts that
+-- share a skill name. The canonical key is preferred so "Rajani" and "Raijin" (or a mount
+-- named before its canonical entry existed) resolve to the same tag.
+function TargetOverlay.cooldownDeviceTag(kind, name)
+    local text = lowerPattern(name)
+    if text == "" then return "" end
+    local canonical = nil
+    if kind == "mount" then
+        canonical = TargetOverlay.canonicalMountDevice(text)
+    elseif kind == "glider" then
+        canonical = TargetOverlay.canonicalGliderDevice(text)
+    end
+    return kind .. ":" .. lowerPattern(canonical and canonical.key or text)
+end
+
+-- Tag for a row in the Detected panel that the player is registering right now.
+function TargetOverlay.detectedDeviceTag(row, mode)
+    if not row then return "" end
+    if mode == "mount" or row.mountName or row.category == "mount" then
+        return TargetOverlay.cooldownDeviceTag("mount", row.mountName or row.source or "")
+    end
+    if mode == "glider" or row.gliderName or row.category == "glider" then
+        return TargetOverlay.cooldownDeviceTag("glider", row.gliderName or row.source or "")
+    end
+    return ""
+end
+
+-- Tag for an already-tracked row. "" means the row is not device-bound (a plain aura).
+function TargetOverlay.trackedRowDeviceTag(row)
+    if not row then return "" end
+    if row.recipeDeviceKind == "mount" or row.category == "mount" or row.mountNames or row.mountName then
+        return TargetOverlay.cooldownDeviceTag("mount", row.recipeDeviceName or row.mountName or row.source or "")
+    end
+    if row.gliderPattern or row.recipeDeviceKind == "glider" or row.category == "glider" then
+        return TargetOverlay.cooldownDeviceTag("glider", row.recipeDeviceName or row.gliderName or row.source or "")
+    end
+    return ""
+end
+
+-- Link rows that are the same ability on different devices.
+--
+-- Several mounts grant literally the same skill (Ser Meatball and Snowmane Snowlion both
+-- give Run! and Dash, Celestial Pegasus shares Run!) and the game runs ONE cooldown across
+-- them. We still want a row per mount, because each row only displays while its own mount is
+-- out and must show that mount's icon. sharedCooldownKey is what reconciles the two:
+-- trackedBuffKey() collapses every row carrying the same key onto a single buffState entry,
+-- so whichever mount is summoned reads and writes the same cooldown.
+--
+-- Keyed on the ability id, the only reliable signal that two rows really are one ability.
+-- Mounts that merely share a skill NAME while having separate ids keep separate cooldowns,
+-- which is also correct.
+function TargetOverlay.linkSharedCooldowns(recipe)
+    local id = tonumber(recipe and recipe.id)
+    if not id then return end
+    local tag = TargetOverlay.trackedRowDeviceTag(recipe)
+    if tag == "" then return end
+    local partners = {}
+    local shared = recipe.sharedCooldownKey
+    for _, row in ipairs(settings.trackedBuffs or {}) do
+        if row ~= recipe and tonumber(row.id) == id then
+            local rowTag = TargetOverlay.trackedRowDeviceTag(row)
+            if rowTag ~= "" and rowTag ~= tag then
+                partners[#partners + 1] = row
+                shared = shared or row.sharedCooldownKey
+            end
+        end
+    end
+    if #partners == 0 then return end
+    -- formatBuffId, not tostring: this client's tostring is %.6g and would collapse
+    -- distinct 7-digit ids onto one key.
+    shared = shared or ("buff:" .. OverlayUtils.formatBuffId(id))
+    recipe.sharedCooldownKey = shared
+    for _, row in ipairs(partners) do row.sharedCooldownKey = shared end
+    TargetOverlay.notify(string.format("'%s' shares its cooldown with %d other mount%s.",
+        tostring(recipe.name or recipe.buffName or id), #partners, #partners == 1 and "" or "s"))
 end
 
 function TargetOverlay.learnCooldownDevice(recipe)
@@ -2804,7 +2963,9 @@ function TargetOverlay.detectedRecipeRow(row, mode)
         local mount = TargetOverlay.mountedPetSnapshot()
         local mountName = TargetOverlay.firstRealMountName(mount.name, row.mountName, row.source)
         if not mountName then
-            if api.Log and api.Log.Info then api.Log:Info("[Power Ranger ON] Mount name unavailable. Summon/target the mount until its real name is exposed, then add again.") end
+            -- Err (NOTICE channel) rather than Info: this path adds nothing, so without a
+            -- visible message the button just looks dead.
+            TargetOverlay.notify("Mount name unavailable. Summon the mount until its real name shows, then add again.", true)
             return nil
         end
         local canonical = TargetOverlay.canonicalMountDevice(mountName)
@@ -2966,11 +3127,12 @@ function recordDetectedSkill(skillName, skillId, sourceName, flatText, extra)
     found.source = inferSkillSource(name, sourceName, flatText)
     found.icon = extra.icon or found.icon or (found.kind == "buff" and TargetOverlay.buffIconById(found.id) or TargetOverlay.skillIconById(found.id))
     if extra.gliderName then
-        -- Sticky, like gliderIcon/gliderItemType below it. This used to assign
-        -- unconditionally, so the detected row's glider identity was re-stamped to whatever
-        -- was equipped on EVERY re-detection -- swap gliders once and the row now described
-        -- the wrong device while keeping the first glider's icon and item type.
-        found.gliderName = found.gliderName or extra.gliderName
+        -- All three stay LIVE (extra.* is filled from the equipped glider above, so it wins
+        -- over the stored value). They must move together: the same ability can come from
+        -- several devices, so the detected row has to describe the one you are on right now
+        -- for per-device registration to work -- and name, icon and item type must never
+        -- end up describing two different gliders.
+        found.gliderName = extra.gliderName
         found.gliderIcon = extra.gliderIcon or found.gliderIcon
         found.gliderItemType = extra.gliderItemType or found.gliderItemType
     end
@@ -3565,8 +3727,12 @@ local function toggleDetectedSkillTracking(index, mode)
         detectedBuffTrackedIndex = TargetOverlay.detectedBuffTrackedIndex,
         trackedBuffIsDefault = isDefaultTrackedBuff,
         trackedCooldownIsHardcoded = trackedCooldownIsHardcoded,
+        detectedDeviceTag = TargetOverlay.detectedDeviceTag,
+        trackedRowDeviceTag = TargetOverlay.trackedRowDeviceTag,
+        notify = TargetOverlay.notify,
         detectedRecipeRow = TargetOverlay.detectedRecipeRow,
         learnCooldownDevice = TargetOverlay.learnCooldownDevice,
+        linkSharedCooldowns = TargetOverlay.linkSharedCooldowns,
         canonicalMountDevice = TargetOverlay.canonicalMountDevice,
         canonicalGliderDevice = TargetOverlay.canonicalGliderDevice,
         trackedSkillIndex = trackedSkillIndex,
@@ -3686,9 +3852,29 @@ function refreshSettingsButtons()
     local hotSwap = require("power_ranger_on/hot_swap")
     setToggle(settingsWnd.hotSwapEnabledBtn, hotSwap.IsEnabled(), "HotSwap")
     setToggle(settingsWnd.hotSwapFloatBtn, hotSwap.IsFloatShown(), "Float")
+    setToggle(settingsWnd.cooldownReadyPopupBtn, settings.cooldownReadyPopup == true, "CD Popup")
+    if settingsWnd.cooldownReadyMoveBtn then
+        local moving = TargetOverlay.readyPopup.IsMoveMode()
+        settingsWnd.cooldownReadyMoveBtn:SetCleanText(moving and "Done" or "Move")
+        settingsWnd.cooldownReadyMoveBtn:SetTone(moving and COLORS.active or COLORS.button)
+    end
     setToggle(settingsWnd.debugLogBtn, settings.debugLogging == true, "Debug")
     setToggle(settingsWnd.defaultAppearancesBtn, settings.defaultAppearancesEnabled == true, "Default App")
-    setToggle(settingsWnd.floatOptionButtonsBtn, settings.showFloatOptionButtons == true, "Float buttons")
+    setToggle(settingsWnd.floatOptionButtonsBtn, settings.showFloatOptionButtons == true, "Float")
+    if settingsWnd.nodeTrackerBtn then
+        local landBarons = TargetOverlay.nodeTracker.HasConflict()
+        settingsWnd.nodeTrackerBtn:SetCleanText(landBarons and "Land Barons" or "Node Tracker")
+        settingsWnd.nodeTrackerBtn:SetTone(landBarons and COLORS.button or COLORS.blue)
+        if settingsWnd.nodeTrackerHint then
+            settingsWnd.nodeTrackerHint:SetText(landBarons
+                and "Land Barons is installed and owns node tracking."
+                or "Water, logs, fish, gamekeeper spots and timers.")
+        end
+    end
+    if settingsWnd.floatAxisBtn then
+        settingsWnd.floatAxisBtn:SetCleanText(settings.optionFloatVertical == true and "Vert" or "Horiz")
+        settingsWnd.floatAxisBtn:SetTone(COLORS.blue)
+    end
     -- BetterBars owns the same labels, so ours stands down and the button turns into a
     -- shortcut into its settings rather than a toggle that cannot win.
     if settingsWnd.uiHpPercentBtn then
@@ -3855,6 +4041,10 @@ local function toggleSetting(key)
     end
     if key == "weaponProcEnabled" or key == "weaponProcReadyPopup" or key == "weaponProcZeal" then
         TargetOverlay.weaponProc.Refresh()
+    end
+    if key == "nodeTrackerEnabled" or key == "nodeAutotrackEnabled" then
+        TargetOverlay.nodeTracker.Refresh()
+        TargetOverlay.refreshClientOptionButtons()
     end
     if key == "showFloatOptionButtons" then
         TargetOverlay.refreshClientOptionButtons()
@@ -4166,7 +4356,7 @@ local function createSettingsWindow()
         id = "PowerRangerSettings",
         title = "Power Ranger ON",
         width = 620,
-        height = TARGET_API_FEATURES_DISABLED and 1060 or 1300,
+        height = TARGET_API_FEATURES_DISABLED and 1090 or 1330,
         x = settings.settingsX,
         y = settings.settingsY,
         xKey = "settingsX",
@@ -4195,10 +4385,10 @@ local function createSettingsWindow()
     })
 
     local selfY = 340
-    local travelY = 506
-    local hotSwapY = 652
-    local clientOptionsY = 748
-    local weaponY = 878
+    local travelY = 536
+    local hotSwapY = 682
+    local clientOptionsY = 778
+    local weaponY = 908
 
     if not TARGET_API_FEATURES_DISABLED then
         settingsSections.BuildIntelWindow(settingsWnd, {
@@ -4216,10 +4406,10 @@ local function createSettingsWindow()
         })
 
         selfY = 610
-        travelY = 776
-        hotSwapY = 922
-        clientOptionsY = 1012
-        weaponY = 1142
+        travelY = 806
+        hotSwapY = 952
+        clientOptionsY = 1042
+        weaponY = 1172
     else
         settingsSections.BuildGuildLabel(settingsWnd, {
             colors = COLORS,
@@ -4252,6 +4442,8 @@ local function createSettingsWindow()
         toggleCooldownSetting = toggleCooldownSetting,
         toggleCooldownGroup = function(group) TargetOverlay.toggleCooldownGroup(group) end,
         removeCooldownSetting = removeCooldownSetting,
+        notify = TargetOverlay.notify,
+        refreshSettingsButtons = refreshSettingsButtons,
         y = selfY
     })
     settingsSections.BuildHotSwapLauncher(settingsWnd, {
@@ -4269,6 +4461,8 @@ local function createSettingsWindow()
         flatButton = TargetOverlay.uiContext.flatButton,
         toggleSetting = toggleSetting,
         toggleDefaultAppearances = TargetOverlay.toggleDefaultAppearances,
+        notify = TargetOverlay.notify,
+        openNodeWindow = function() TargetOverlay.openNodeWindow() end,
         refreshClientOptionButtons = TargetOverlay.refreshClientOptionButtons
     }, clientOptionsY)
     settingsSections.BuildTravelTools(settingsWnd, {
@@ -4456,14 +4650,21 @@ end
 
 function TargetOverlay.refreshFloatOptionButtons()
     if not settings then return end
-    if settings.showFloatOptionButtons ~= true then
+    -- Each float button has its own toggle and the bar appears whenever ANY of them is on,
+    -- like the Land Barons bar. Previously the whole float was gated on the Def App toggle,
+    -- so the node button was invisible unless an unrelated option happened to be enabled.
+    local showDefApp = settings.showFloatOptionButtons == true
+    local showNode = settings.nodeFloatButton == true
+    if not showDefApp and not showNode then
         if raidOptions.floatWindow then raidOptions.floatWindow:Show(false) end
         return
     end
 
     if not raidOptions.floatWindow then
         raidOptions.floatWindow = api.Interface:CreateEmptyWindow("powerRangerFloatOptionButtons", "UIParent")
-        raidOptions.floatWindow:SetExtent(116, 30)
+        -- 208 wide: grip + Def App + the node autotracker toggle. One float window for all
+        -- the quick client-option buttons rather than a second draggable box.
+        raidOptions.floatWindow:SetExtent(208, 30)
         local bg = raidOptions.floatWindow:CreateColorDrawable(0, 0, 0, 0.45, "background")
         bg:AddAnchor("TOPLEFT", raidOptions.floatWindow, 0, 0)
         bg:AddAnchor("BOTTOMRIGHT", raidOptions.floatWindow, 0, 0)
@@ -4490,9 +4691,15 @@ function TargetOverlay.refreshFloatOptionButtons()
         raidOptions.floatButtons.defaultAppearances = createRaidOptionButton(raidOptions.floatWindow, "power_ranger_float_default_app", "Def App", 26, function()
             TargetOverlay.toggleDefaultAppearances()
         end)
+        -- Autotracker toggle: press it, then hover a node to create it. Same button the
+        -- Land Barons bar has, living in the existing float rather than its own window.
+        raidOptions.floatButtons.nodeAutotrack = createRaidOptionButton(raidOptions.floatWindow, "power_ranger_float_node_track", "Track", 116, function()
+            if TargetOverlay.nodeTracker.HasConflict() then return end
+            toggleSetting("nodeAutotrackEnabled")
+        end)
         -- Anchored once so the refresh tick does not rubberband it. Drag the small
-        -- grip to reposition; clicking Def App only toggles the client option.
-        settings.optionFloatX, settings.optionFloatY = TargetOverlay.safeWindowPosition(settings.optionFloatX, settings.optionFloatY, 116, 30)
+        -- grip to reposition; clicking a button only toggles its client option.
+        settings.optionFloatX, settings.optionFloatY = TargetOverlay.safeWindowPosition(settings.optionFloatX, settings.optionFloatY, 208, 30)
         raidOptions.floatWindow:AddAnchor("TOPLEFT", "UIParent", settings.optionFloatX, settings.optionFloatY)
         TargetOverlay.windowHelpers.ApplyDrag(raidOptions.floatWindow, dragHandle, settings, "optionFloatX", "optionFloatY", saveSettings, true)
     end
@@ -4501,7 +4708,63 @@ function TargetOverlay.refreshFloatOptionButtons()
         raidOptions.floatButtons.defaultAppearances._label:SetText(settings.defaultAppearancesEnabled and "Def ON" or "Def OFF")
         setFlatButtonTone(raidOptions.floatButtons.defaultAppearances, settings.defaultAppearancesEnabled and COLORS.active or COLORS.button)
     end
+    if raidOptions.floatButtons.nodeAutotrack and raidOptions.floatButtons.nodeAutotrack._label then
+        local conflicted = TargetOverlay.nodeTracker.HasConflict()
+        local tracking = settings.nodeAutotrackEnabled == true
+        raidOptions.floatButtons.nodeAutotrack._label:SetText(conflicted and "L.Barons" or (tracking and "Track ON" or "Track OFF"))
+        setFlatButtonTone(raidOptions.floatButtons.nodeAutotrack, (tracking and not conflicted) and COLORS.active or COLORS.button)
+    end
+    -- Re-flow: only the enabled buttons take a slot, so hiding one closes the gap instead of
+    -- leaving a hole, and the bar shrinks to fit. Vertical stacks them under the grip.
+    local vertical = settings.optionFloatVertical == true
+    local shown = {}
+    if showDefApp then shown[#shown + 1] = raidOptions.floatButtons.defaultAppearances end
+    if showNode then shown[#shown + 1] = raidOptions.floatButtons.nodeAutotrack end
+    for index, btn in ipairs(shown) do
+        btn:RemoveAllAnchors()
+        if vertical then
+            btn:AddAnchor("TOPLEFT", raidOptions.floatWindow, 26, 4 + ((index - 1) * 26))
+        else
+            btn:AddAnchor("TOPLEFT", raidOptions.floatWindow, 26 + ((index - 1) * 90), 4)
+        end
+        btn:Show(true)
+    end
+    if raidOptions.floatButtons.defaultAppearances then
+        raidOptions.floatButtons.defaultAppearances:Show(showDefApp)
+    end
+    if raidOptions.floatButtons.nodeAutotrack then
+        raidOptions.floatButtons.nodeAutotrack:Show(showNode)
+    end
+    if vertical then
+        raidOptions.floatWindow:SetExtent(118, 8 + (math.max(1, #shown) * 26))
+    else
+        raidOptions.floatWindow:SetExtent(26 + (math.max(1, #shown) * 90), 30)
+    end
     raidOptions.floatWindow:Show(true)
+end
+
+function TargetOverlay.openNodeWindow()
+    -- Land Barons owns node tracking outright when installed, so there is nothing here to
+    -- configure. Its settings are not reachable from another addon's sandbox (it exposes no
+    -- ADDON_SETTINGS_OPENED hook the way BetterBars does, and its FarmSystem table lives in
+    -- its own environment), so point the player at where it actually opens.
+    if TargetOverlay.nodeTracker.HasConflict() then
+        TargetOverlay.notify("Land Barons handles node tracking. Open its settings from ESC > Addon Options > Arise.", true)
+        return
+    end
+    require("power_ranger_on/node_window").Open({
+        settings = settings,
+        colors = COLORS,
+        sectionPanel = TargetOverlay.uiContext.sectionPanel,
+        label = TargetOverlay.uiContext.label,
+        flatButton = TargetOverlay.uiContext.flatButton,
+        setToggleButton = TargetOverlay.uiContext.setToggleButton,
+        safePosition = TargetOverlay.safeWindowPosition,
+        applyDrag = applyDrag,
+        saveSettings = saveSettings,
+        notify = TargetOverlay.notify,
+        refreshClientOptionButtons = TargetOverlay.refreshClientOptionButtons
+    })
 end
 
 function TargetOverlay.refreshClientOptionButtons()
@@ -4546,6 +4809,10 @@ function TargetOverlay.init()
     TargetOverlay.travelSpeed.Init(settings, saveSettings, applyHandleDrag)
     TargetOverlay.ownersMark.Init(settings, applyHandleDrag)
     TargetOverlay.weaponProc.Init(settings, applyHandleDrag)
+    TargetOverlay.readyPopup.Init(settings, applyHandleDrag)
+    TargetOverlay.nodeTracker.onChanged = saveSettings
+    TargetOverlay.nodeTracker.onMessage = function(text) TargetOverlay.notify(text, true) end
+    TargetOverlay.nodeTracker.Init(settings, applyHandleDrag)
     TargetOverlay.hpPercentBars.Apply(settings.showUiHpPercent == true)
     if not TARGET_API_FEATURES_DISABLED then
         api.On("POWER_RANGER_SS_MODE", onStumpySenseLayout)
@@ -4883,6 +5150,8 @@ function TargetOverlay.update(dt)
     TargetOverlay.travelSpeed.Update(elapsed)
     TargetOverlay.ownersMark.Update(elapsed)
     TargetOverlay.weaponProc.Update(elapsed)
+    TargetOverlay.readyPopup.Update(elapsed)
+    TargetOverlay.nodeTracker.Update(elapsed)
     -- Slow self-heal: re-asserts the unit-frame percent patch if a frame was not ready at
     -- login or another bar addon patched after us. Without it the setting had to be
     -- toggled off/on by hand after every relaunch.
@@ -5130,6 +5399,9 @@ function TargetOverlay.cleanup()
     TargetOverlay.travelSpeed.Cleanup()
     TargetOverlay.ownersMark.Cleanup()
     TargetOverlay.weaponProc.Cleanup()
+    TargetOverlay.readyPopup.Cleanup()
+    TargetOverlay.nodeTracker.Cleanup()
+    pcall(function() require("power_ranger_on/node_window").Cleanup() end)
     TargetOverlay.hpPercentBars.Cleanup()
     require("power_ranger_on/stats_picker_window").Cleanup()
     unregisterStumpyDockMember()

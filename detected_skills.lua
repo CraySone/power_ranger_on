@@ -120,10 +120,46 @@ local function buildTrackedSkill(ctx, row, mode)
     return tracked
 end
 
+local function notify(ctx, message, isError)
+    if ctx and ctx.notify then ctx.notify(message, isError) end
+end
+
+local function deviceTagFor(ctx, row, mode)
+    if ctx and ctx.detectedDeviceTag then return ctx.detectedDeviceTag(row, mode) end
+    return ""
+end
+
+-- Explain a duplicate rather than letting the detected row vanish without a word.
+local function reportDuplicate(ctx, row, matched)
+    local label = tostring(row and (row.name or row.pattern) or "This ability")
+    local owner = matched and (matched.recipeDeviceName or matched.mountName or matched.source)
+    if owner and tostring(owner) ~= "" then
+        notify(ctx, string.format("'%s' is already tracked under %s.", label, tostring(owner)))
+    else
+        notify(ctx, string.format("'%s' is already tracked.", label))
+    end
+end
+
 function DetectedSkills.ToggleTracking(ctx, index, mode)
     local settings = ctx.settings
     local row = settings.detectedSkills and settings.detectedSkills[index]
     if not row then return end
+    -- Aura tracking watches for a PLAYER buff. A device skill is not one, so an aura row for
+    -- it matches nothing and renders blank -- the "empty aura entry". Send the player to the
+    -- button that actually works instead of creating a dead row.
+    --
+    -- Gated on category/unit, NOT on row.mountName: recordDetectedSkill stamps mountName onto
+    -- anything detected while a mount is out, so a plain player skill would be refused too.
+    -- kind buff/debuff is always allowed through -- a mount CAN grant a real player aura.
+    if mode == "aura" and row.kind ~= "buff" and row.kind ~= "debuff"
+        and (row.category == "mount" or row.category == "glider" or row.unit == "playerpet") then
+        local isGlider = row.category == "glider"
+        notify(ctx, string.format("'%s' is a %s ability - use the %s button, not Aura.",
+            tostring(row.name or row.pattern or "This"),
+            isGlider and "glider" or "mount",
+            isGlider and "Glid" or "Mount"), true)
+        return
+    end
     if mode == "aura" or row.kind == "buff" or row.kind == "debuff" or ((mode == "glider" or mode == "mount") and hasManaTrigger(row)) then
         settings.trackedBuffs = settings.trackedBuffs or {}
         mode = mode or "aura"
@@ -153,13 +189,23 @@ function DetectedSkills.ToggleTracking(ctx, index, mode)
                 ctx.buffState[ctx.trackedBuffKey(tracked)] = nil
                 table.remove(settings.trackedBuffs, trackedIndex)
             end
-        elseif mode ~= "aura" and ctx.trackedCooldownIsHardcoded(row.name or row.pattern, row.id) then
-            table.remove(settings.detectedSkills, index)
         else
-            local recipe = ctx.detectedRecipeRow(row, mode)
-            if recipe then
-                table.insert(settings.trackedBuffs, recipe)
-                if ctx.learnCooldownDevice then ctx.learnCooldownDevice(recipe) end
+            local duplicate, matched = false, nil
+            if mode ~= "aura" then
+                duplicate, matched = ctx.trackedCooldownIsHardcoded(row.name or row.pattern, row.id, deviceTagFor(ctx, row, mode))
+            end
+            if duplicate then
+                reportDuplicate(ctx, row, matched)
+                table.remove(settings.detectedSkills, index)
+            else
+                local recipe = ctx.detectedRecipeRow(row, mode)
+                if recipe then
+                    table.insert(settings.trackedBuffs, recipe)
+                    if ctx.learnCooldownDevice then ctx.learnCooldownDevice(recipe) end
+                    -- Same ability on another mount: one cooldown, one row each.
+                    if ctx.linkSharedCooldowns then ctx.linkSharedCooldowns(recipe) end
+                end
+                -- recipe == nil means detectedRecipeRow bailed (it already said why).
             end
         end
         ctx.refreshEventSubscriptions()
@@ -175,10 +221,14 @@ function DetectedSkills.ToggleTracking(ctx, index, mode)
         local tracked = settings.trackedSkills[trackedIndex]
         ctx.clearSkillCooldownForRow(tracked)
         table.remove(settings.trackedSkills, trackedIndex)
-    elseif ctx.trackedCooldownIsHardcoded(row.name or row.pattern, row.id) then
-        table.remove(settings.detectedSkills, index)
     else
-        table.insert(settings.trackedSkills, buildTrackedSkill(ctx, row, mode))
+        local duplicate, matched = ctx.trackedCooldownIsHardcoded(row.name or row.pattern, row.id, deviceTagFor(ctx, row, mode))
+        if duplicate then
+            reportDuplicate(ctx, row, matched)
+            table.remove(settings.detectedSkills, index)
+        else
+            table.insert(settings.trackedSkills, buildTrackedSkill(ctx, row, mode))
+        end
     end
     ctx.refreshEventSubscriptions()
     ctx.saveSettings()

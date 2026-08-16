@@ -238,7 +238,11 @@ function Import.UpdateMountManaCooldowns(rows, stateByKey, now, keyFn, mountIcon
             local key = keyFn(row)
             local state = stateByKey[key] or {}
             local wanted = tonumber(row.mountManaSpent)
-            if wanted and spent and math.abs(spent - wanted) <= MOUNT_MANA_MATCH_TOLERANCE then
+            -- Same re-trigger guard as buff_runtime's mana branch: a sustained drain keeps
+            -- matching the tolerance window, and restarting readyAt each time froze the
+            -- displayed cooldown at its full value until the ability ended.
+            local onCooldown = state.readyAt and now < state.readyAt
+            if wanted and spent and not onCooldown and math.abs(spent - wanted) <= MOUNT_MANA_MATCH_TOLERANCE then
                 state.active = false
                 state.activatedAt = now
                 state.readyAt = now + ((tonumber(row.cooldown) or 0) * 1000)

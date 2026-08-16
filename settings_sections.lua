@@ -176,7 +176,7 @@ function SettingsSections.BuildSelfCooldowns(wnd, ctx)
     local openDetectedSkillsWindow = ctx.openDetectedSkillsWindow
     local openCooldownManagerWindow = ctx.openCooldownManagerWindow or function() end
 
-    local p = sectionPanel(wnd, "power_ranger_self_panel", 18, ctx.y or 566, 584, 152, "Self Cooldowns & Gear")
+    local p = sectionPanel(wnd, "power_ranger_self_panel", 18, ctx.y or 566, 584, 182, "Self Cooldowns & Gear")
     label(p, "power_ranger_self_hint", "Known cooldown auras stay ID-based.", 14, 32, 260, 14, 10, colors.muted, ALIGN.LEFT)
     wnd.nuziImportBtn = flatButton(p, "power_ranger_toggle_nuzi_cd_import", "", 286, 29, 104, 20, colors.blue, function() toggleSetting("importNuziCooldowns") end)
     label(p, "power_ranger_self_scale_label", "Scale", 410, 32, 40, 14, 10, colors.muted, ALIGN.LEFT)
@@ -203,6 +203,26 @@ function SettingsSections.BuildSelfCooldowns(wnd, ctx)
     flatButton(p, "power_ranger_cd_manager_mounts", "Auras/Mounts", 276, 110, 118, 22, colors.blue, function() openCooldownManagerWindow("other") end)
     flatButton(p, "power_ranger_cd_manager_equipment", "Equipment", 402, 110, 118, 22, colors.blue, function() toggleSetting("showSelfEquipment") end)
     label(p, "power_ranger_cd_manager_hint", "Sorting, show toggles, and per-device skills.", 16, 136, 520, 14, 10, colors.muted, ALIGN.LEFT)
+
+    -- Cooldown ready popup. Test fires it directly (bypassing the cooldown runtime) so a
+    -- silent alert can be pinned on the popup or on what feeds it; Move pins it on screen
+    -- so it can be dragged, which its 1.5s lifetime otherwise makes impossible.
+    label(p, "power_ranger_cd_ready_label", "CD Popup", 16, 161, 132, 14, 10, colors.gold, ALIGN.LEFT)
+    flatButton(p, "power_ranger_cd_ready_test", "Test", 154, 158, 60, 20, colors.blue, function()
+        local popup = require("power_ranger_on/ready_popup")
+        if not popup.Test() and ctx.notify then
+            ctx.notify("CD Popup is off - turn it on first.", true)
+        end
+    end)
+    wnd.cooldownReadyMoveBtn = flatButton(p, "power_ranger_cd_ready_move", "Move", 220, 158, 60, 20, colors.button, function()
+        local popup = require("power_ranger_on/ready_popup")
+        popup.SetMoveMode(not popup.IsMoveMode())
+        if ctx.refreshSettingsButtons then ctx.refreshSettingsButtons() end
+    end)
+    wnd.cooldownReadyPopupBtn = flatButton(p, "power_ranger_cd_ready_popup", "", 286, 158, 118, 20, colors.active, function()
+        toggleSetting("cooldownReadyPopup")
+    end)
+    label(p, "power_ranger_cd_ready_hint", "Shift-drag in Move mode.", 412, 161, 130, 14, 10, colors.muted, ALIGN.LEFT)
     return p
 end
 
@@ -232,21 +252,25 @@ end
 
 function SettingsSections.BuildClientOptions(wnd, ctx, y)
     local colors = ctx.colors
+    -- 122 tall: rows at 34 / 64 / 94. Default appearances and the float bar share one row --
+    -- layout axis, then the float toggle, then Default App itself.
     local p = ctx.sectionPanel(wnd, "power_ranger_client_options_panel", 18, y, 584, 122, "Client Options")
-    ctx.label(p, "power_ranger_default_appearance_label", "Default appearances", 14, 34, 132, 14, 10, colors.gold, ALIGN.LEFT)
-    ctx.label(p, "power_ranger_default_appearance_hint", "Uses the exposed client option API.", 152, 34, 220, 14, 10, colors.muted, ALIGN.LEFT)
-    wnd.defaultAppearancesBtn = ctx.flatButton(p, "power_ranger_default_appearances", "", 428, 29, 118, 22, colors.active, function()
-        if ctx.toggleDefaultAppearances then ctx.toggleDefaultAppearances() end
+    ctx.label(p, "power_ranger_default_appearance_label", "Default appearances", 14, 34, 120, 14, 10, colors.gold, ALIGN.LEFT)
+    ctx.label(p, "power_ranger_default_appearance_hint", "Float bar shows while any button is on.", 140, 34, 132, 14, 10, colors.muted, ALIGN.LEFT)
+    wnd.floatAxisBtn = ctx.flatButton(p, "power_ranger_float_axis", "", 276, 29, 60, 22, colors.blue, function()
+        if ctx.toggleSetting then ctx.toggleSetting("optionFloatVertical") end
+        if ctx.refreshClientOptionButtons then ctx.refreshClientOptionButtons() end
     end)
-    ctx.label(p, "power_ranger_float_options_label", "Movable quick button", 14, 64, 132, 14, 10, colors.gold, ALIGN.LEFT)
-    ctx.label(p, "power_ranger_float_options_hint", "Shows a tiny Def App button with a drag grip.", 152, 64, 260, 14, 10, colors.muted, ALIGN.LEFT)
-    wnd.floatOptionButtonsBtn = ctx.flatButton(p, "power_ranger_float_option_buttons", "", 428, 59, 118, 22, colors.active, function()
+    wnd.floatOptionButtonsBtn = ctx.flatButton(p, "power_ranger_float_option_buttons", "", 342, 29, 100, 22, colors.active, function()
         if ctx.toggleSetting then ctx.toggleSetting("showFloatOptionButtons") end
         if ctx.refreshClientOptionButtons then ctx.refreshClientOptionButtons() end
     end)
-    ctx.label(p, "power_ranger_ui_hp_percent_label", "UI HP/MP percent", 14, 94, 132, 14, 10, colors.gold, ALIGN.LEFT)
-    wnd.uiHpPercentHint = ctx.label(p, "power_ranger_ui_hp_percent_hint", "Shows percent text inside unit-frame bars.", 152, 94, 268, 14, 10, colors.muted, ALIGN.LEFT)
-    wnd.uiHpPercentBtn = ctx.flatButton(p, "power_ranger_ui_hp_percent", "", 428, 89, 118, 22, colors.active, function()
+    wnd.defaultAppearancesBtn = ctx.flatButton(p, "power_ranger_default_appearances", "", 448, 29, 100, 22, colors.active, function()
+        if ctx.toggleDefaultAppearances then ctx.toggleDefaultAppearances() end
+    end)
+    ctx.label(p, "power_ranger_ui_hp_percent_label", "UI HP/MP percent", 14, 64, 132, 14, 10, colors.gold, ALIGN.LEFT)
+    wnd.uiHpPercentHint = ctx.label(p, "power_ranger_ui_hp_percent_hint", "Shows percent text inside unit-frame bars.", 152, 64, 268, 14, 10, colors.muted, ALIGN.LEFT)
+    wnd.uiHpPercentBtn = ctx.flatButton(p, "power_ranger_ui_hp_percent", "", 428, 59, 118, 22, colors.active, function()
         -- BetterBars already owns these labels, so ours stands down and the button
         -- becomes a shortcut into its settings instead. "ADDON_SETTINGS_OPENED" +
         -- the addon name is BetterBars' own open hook (BetterBars/main.lua:2297).
@@ -255,6 +279,14 @@ function SettingsSections.BuildClientOptions(wnd, ctx, y)
             return
         end
         if ctx.toggleSetting then ctx.toggleSetting("showUiHpPercent") end
+    end)
+
+    -- Node tracker gets its own window: the main shell is already ~1360px tall and another
+    -- full section would push it past a 1080p screen.
+    ctx.label(p, "power_ranger_node_label", "Node tracker", 14, 94, 132, 14, 10, colors.gold, ALIGN.LEFT)
+    wnd.nodeTrackerHint = ctx.label(p, "power_ranger_node_hint", "Water, logs, fish, gamekeeper spots and timers.", 152, 94, 260, 14, 10, colors.muted, ALIGN.LEFT)
+    wnd.nodeTrackerBtn = ctx.flatButton(p, "power_ranger_node_open", "Node Tracker", 428, 89, 118, 22, colors.blue, function()
+        if ctx.openNodeWindow then ctx.openNodeWindow() end
     end)
     return p
 end

@@ -12,11 +12,51 @@ local MOUNT_SYMBOLS = {
 local MOUNT_UNITS = {"playerpet", "playerpet1", "playerpet2", "slave"}
 local bagDeviceCache = { name = nil, time = 0, result = nil }
 
+-- Combat pets share the playerpet slots with mounts, so "first non-zero pet unit" is not
+-- necessarily the mount. With a Powerstone pet out, mount rows were matching against the
+-- PET's name and icon. Anything matching here is never treated as a mount.
+--
+-- Substring match, lowercased. Add new names here if another pet type sneaks through.
+local EXCLUDED_PET_PATTERNS = {
+    "powerstone",
+    "bloomfang",
+    "kindled spirit"
+}
+
+local NAME_FIELDS = {
+    "mate_npc_name", "mateNpcName", "mateName", "mate_name",
+    "npc_name", "npcName", "slave_name", "slaveName",
+    "name", "unitName", "unit_name", "unitNameText"
+}
+
+local function isExcludedPetName(name)
+    local text = string.lower(tostring(name or ""))
+    if text == "" then return false end
+    for _, pattern in ipairs(EXCLUDED_PET_PATTERNS) do
+        if text:find(pattern, 1, true) then return true end
+    end
+    return false
+end
+
+-- Cheap name probe used only to decide whether a unit is an excluded pet. The full
+-- resolution (including the bag lookup) still happens in MountedPetSnapshot.
+local function quickUnitName(unit, uid)
+    local info = OverlayUtils.safeCall(function() return api.Unit:UnitInfo(unit) end)
+    local name = OverlayUtils.textField(info or {}, NAME_FIELDS)
+    if (not name or name == "") and uid then
+        name = OverlayUtils.safeCall(function() return api.Unit:GetUnitNameById(uid) end)
+    end
+    return name
+end
+
 local function activePetUnit()
     for _, unit in ipairs(MOUNT_UNITS) do
         local uid = OverlayUtils.safeCall(function() return api.Unit:GetUnitId(unit) end)
-        if uid and uid ~= 0 then return unit, uid end
+        if uid and uid ~= 0 and not isExcludedPetName(quickUnitName(unit, uid)) then
+            return unit, uid
+        end
     end
+    -- Only excluded pets are out: report NO mount rather than falling back to one of them.
     return nil, nil
 end
 
@@ -90,21 +130,15 @@ function EquipmentReader.MountedPetSnapshot()
     local unit, uid = activePetUnit()
     local info = unit and (OverlayUtils.safeCall(function() return api.Unit:UnitInfo(unit) end) or {}) or {}
     local idInfo = uid and (OverlayUtils.safeCall(function() return api.Unit:GetUnitInfoById(uid) end) or {}) or {}
-    local name = OverlayUtils.textField(info, {
-        "mate_npc_name", "mateNpcName", "mateName", "mate_name",
-        "npc_name", "npcName", "slave_name", "slaveName",
-        "name", "unitName", "unit_name", "unitNameText"
-    })
+    local name = OverlayUtils.textField(info, NAME_FIELDS)
     if not name or name == "" then
-        name = OverlayUtils.textField(idInfo, {
-            "mate_npc_name", "mateNpcName", "mateName", "mate_name",
-            "npc_name", "npcName", "slave_name", "slaveName",
-            "name", "unitName", "unit_name", "unitNameText"
-        })
+        name = OverlayUtils.textField(idInfo, NAME_FIELDS)
     end
     if (not name or name == "") and uid then
         name = OverlayUtils.safeCall(function() return api.Unit:GetUnitNameById(uid) end)
     end
+    -- Second gate: the full resolution can surface a name the quick probe missed.
+    if isExcludedPetName(name) then return {} end
     local key = string.lower(tostring(name or ""))
     local icon = OverlayUtils.iconPath(info) or OverlayUtils.iconPath(idInfo) or MOUNT_SYMBOLS[key]
     local itemType = CooldownRecipes.ExtractItemType(info, idInfo)

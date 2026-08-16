@@ -377,18 +377,33 @@ local function startManualCooldown(ctx, row, state, now, mount, glider)
     return state
 end
 
+-- Fired the moment a tracked cooldown finishes. Only the two "cooldown elapsed while the
+-- ability is NOT running" sites call it -- a cooldown that expires mid-buff is not something
+-- the player needs shouting about, since the ability is already up.
+local function announceReady(ctx, row, state)
+    if not ctx.onCooldownReady then return end
+    local name = row.customName or row.name or state.name or row.buffName
+    -- The popup is the ICON, so resolve one or there is nothing worth showing.
+    local icon = state.icon
+        or (ctx.cooldownRowIcon and ctx.cooldownRowIcon(row))
+        or (ctx.buffIconById and ctx.buffIconById(row.id))
+    ctx.onCooldownReady(name, icon)
+end
+
 local function setActiveFromBuff(ctx, row, state, now, buff, mount, glider)
     if state.active ~= true then
         state.activatedAt = now
-        if row.cooldownStartsOnActive then
-            local cooldownMs = (tonumber(row.cooldown) or 0) * 1000
-            state.readyAt = now + cooldownMs
-        end
+        -- The cooldown clock starts at activation for EVERY row, not just the
+        -- cooldownStartsOnActive ones. The buff-end path below already anchored to
+        -- activatedAt (readyAt = activatedAt + cooldown), so setting it here changes only
+        -- WHEN the countdown becomes visible, never when it finishes. Without it the row
+        -- showed nothing until the buff dropped, which read as the cooldown starting fresh.
+        local cooldownMs = (tonumber(row.cooldown) or 0) * 1000
+        state.readyAt = cooldownMs > 0 and (now + cooldownMs) or nil
     end
     state.active = true
     state.lastSeen = now
-    if row.cooldownStartsOnActive and state.readyAt and now >= state.readyAt then state.readyAt = nil end
-    if not row.cooldownStartsOnActive then state.readyAt = nil end
+    if state.readyAt and now >= state.readyAt then state.readyAt = nil end
     state.name = row.name or ctx.buffName(buff) or tostring(row.id)
     state.icon = ctx.cooldownRowIcon(row) or OverlayUtils.iconPath(buff) or ctx.buffIconById(row.id) or (row.gliderPattern and glider and glider.icon)
     state.timeLeft = buff.timeLeft
@@ -447,9 +462,40 @@ function BuffRuntime.Update(ctx)
                 buff = findTrackedBuff(ctx, row)
             end
 
-            if buff and triggerBuffFreshEnough(ctx, row, buff) then
+            -- A sharedCooldownKey points SEVERAL rows at one state table (the same ability
+            -- granted by several mounts). Only the row whose device is actually out may drive
+            -- that state. Without this the idle sibling found no buff, fell through to
+            -- "elseif state.active then state.active = false", and cleared the flag every
+            -- tick -- so the owning row kept seeing an inactive state, re-stamped activatedAt
+            -- and readyAt on every pass, and the cooldown never advanced while the ability
+            -- was up, then started fresh from full when it ended.
+            -- Per-row identity (the shared key is identical across siblings, so it cannot
+            -- say WHICH row put the state into its current phase).
+            local ownerKey = (ctx.trackedBuffSettingKey and ctx.trackedBuffSettingKey(row)) or key
+            local sharedIdle = false
+            if row.sharedCooldownKey then
+                local devicePresent = true
+                if rowIsMount(row) then
+                    devicePresent = mountMatches
+                elseif rowIsGlider(row) then
+                    devicePresent = gliderMatches
+                end
+                -- Stand aside only for a sibling's state. The row that ACTIVATED the shared
+                -- state must keep running even once its device is gone, or nothing ever sets
+                -- active=false -- which left an unsummoned mount's skill frozen on its buff
+                -- duration forever (Ser Meatball's Run!).
+                if not devicePresent then
+                    sharedIdle = state.ownerKey ~= nil and state.ownerKey ~= ownerKey
+                end
+            end
+
+            if sharedIdle then
+                -- Another row owns this cooldown right now; read it, never write it.
+            elseif buff and triggerBuffFreshEnough(ctx, row, buff) then
                 local wasActive = state.active == true
                 state = setActiveFromBuff(ctx, row, state, now, buff, mount, glider)
+                -- Claim the shared state so siblings stand aside while this device is out.
+                state.ownerKey = ownerKey
                 if not wasActive and ctx.settings.skillProbeLogging == true and ctx.recordSkillProbe then
                     ctx.recordSkillProbe({
                         event = "TRACKED_BUFF_ACTIVE",
@@ -470,7 +516,14 @@ function BuffRuntime.Update(ctx)
                     state._deathTriggered = true
                 end
             elseif row.mountManaSpent or row.petManaSpent or row.mana_trigger or row.playerManaSpent or row.player_mana then
-                if mountMatches and hasRequiredAura(ctx, ctx.auraScan, row) and triggerByMana(row) then
+                -- Never restart a cooldown that is already running. A sustained ability drains
+                -- mount mana repeatedly, and with MANA_TOLERANCE = 10 around a small
+                -- petManaSpent those later drains keep re-matching the trigger. Each match
+                -- pushed readyAt to now + cooldown, so the number sat frozen at the full
+                -- cooldown for as long as the ability ran and only began counting down once
+                -- the drain stopped -- i.e. duration + cooldown instead of cooldown.
+                if mountMatches and hasRequiredAura(ctx, ctx.auraScan, row) and triggerByMana(row)
+                    and not (state.readyAt and now < state.readyAt) then
                     state = startManualCooldown(ctx, row, state, now, mount, glider)
                 elseif state.active then
                     state.active = false
@@ -478,13 +531,18 @@ function BuffRuntime.Update(ctx)
                 elseif state.readyAt and now >= state.readyAt then
                     state.readyAt = nil
                     state.activatedAt = nil
+                    state.ownerKey = nil
+                    announceReady(ctx, row, state)
                 end
             elseif state.active then
                 state.active = false
                 if not row.cooldownStartsOnActive then
+                    -- Safety net: readyAt is normally already set at activation. Recomputing
+                    -- from activatedAt gives the same instant. A cooldown shorter than the
+                    -- buff has simply finished, so clear it rather than showing a stale 0.
                     local cooldownMs = (tonumber(row.cooldown) or 0) * 1000
-                    state.readyAt = (state.activatedAt or now) + cooldownMs
-                    if state.readyAt < now then state.readyAt = now end
+                    local readyAt = (state.activatedAt or now) + cooldownMs
+                    state.readyAt = readyAt > now and readyAt or nil
                 end
                 state.name = row.name or state.name or tostring(row.id)
                 state.icon = row.gliderPattern and (ctx.cooldownRowIcon(row) or state.icon) or (state.icon or ctx.buffIconById(row.id) or ctx.cooldownRowIcon(row))
@@ -505,6 +563,8 @@ function BuffRuntime.Update(ctx)
                 state.readyAt = nil
                 state.timeLeft = nil
                 state.activatedAt = nil
+                state.ownerKey = nil
+                announceReady(ctx, row, state)
             else
                 state.icon = row.gliderPattern and (ctx.cooldownRowIcon(row) or state.icon) or (state.icon or ctx.buffIconById(row.id) or ctx.cooldownRowIcon(row))
                 state.timeLeft = nil

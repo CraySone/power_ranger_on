@@ -217,13 +217,13 @@ local function trackedBuffEntry(ctx, row, st, glider, mount)
     local iconState = "ready"
     local remain = nil
     if st.active then
-        if (row.cooldownOnlyOnActive or ctx.isStarTriggerCooldown(row)) and st.readyAt then
-            remain = math.max(0, math.ceil((st.readyAt - api.Time:GetUiMsec()) / 1000))
-            iconState = "cooldown"
-        else
-            remain = ctx.buffRemainText(st.timeLeft)
-            iconState = row.cooldownAura and "cooldown" or "active"
-        end
+        -- While the buff is up: its own remaining seconds, green. When it drops we hand over
+        -- to what is LEFT of the cooldown, not a fresh one -- readyAt is anchored at
+        -- activation in buff_runtime, so a 30s cooldown on a 5s buff shows 25 at handover.
+        -- Applies to every row type; the old cooldownOnlyOnActive / star-trigger carve-out
+        -- showed a red cooldown during the buff instead and hid the active seconds.
+        remain = ctx.buffRemainText(st.timeLeft)
+        iconState = row.cooldownAura and "cooldown" or "active"
     elseif st.readyAt then
         remain = math.max(0, math.ceil((st.readyAt - api.Time:GetUiMsec()) / 1000))
         iconState = "cooldown"
