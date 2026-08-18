@@ -1,5 +1,22 @@
 local SettingsSections = {}
 
+-- Every section panel sits at this x inside the settings window.
+local PANEL_X = 18
+
+-- Record a click-to-set track's geometry ON THE WIDGET, so the click handler and the fill
+-- bar both derive from the same numbers the layout actually used.
+--
+-- These used to be hardcoded again inside target_overlay's handlers. The layout moved and
+-- the copies did not: the weapon proc track was declared at x=208 w=218 but its handler
+-- still said x=348 w=110, so clicks only registered past the bar's midpoint and the fill
+-- only ever reached halfway. Deriving from the widget removes the chance of drift.
+local function registerSlider(track, trackX, width)
+    if not track then return track end
+    track._sliderLeft = PANEL_X + trackX
+    track._sliderWidth = width
+    return track
+end
+
 function SettingsSections.BuildTargetOverhead(wnd, ctx)
     local colors = ctx.colors
     local sectionPanel = ctx.sectionPanel
@@ -190,7 +207,7 @@ function SettingsSections.BuildSelfCooldowns(wnd, ctx)
     wnd.probeLogBtn = flatButton(p, "power_ranger_probe_log", "", 398, 58, 58, 24, colors.blue, toggleProbeLogging)
     flatButton(p, "power_ranger_detected_open", "Detected", 462, 58, 88, 24, colors.blue, openDetectedSkillsWindow)
     label(p, "power_ranger_self_opacity_label", "Opacity", 16, 92, 54, 14, 10, colors.muted, ALIGN.LEFT)
-    wnd.selfOpacityTrack = flatButton(p, "power_ranger_self_opacity_track", "", 78, 91, 312, 16, {0.10, 0.10, 0.11, 0.96}, setSelfOpacityFromMouse)
+    wnd.selfOpacityTrack = registerSlider(flatButton(p, "power_ranger_self_opacity_track", "", 78, 91, 312, 16, {0.10, 0.10, 0.11, 0.96}, setSelfOpacityFromMouse), 78, 312)
     wnd.selfOpacityFill = wnd.selfOpacityTrack:CreateColorDrawable(1, 0.84, 0, 0.55, "background")
     wnd.selfOpacityFill:AddAnchor("TOPLEFT", wnd.selfOpacityTrack, 1, 1)
     wnd.selfOpacityFill:SetExtent(1, 14)
@@ -314,7 +331,7 @@ function SettingsSections.BuildTravelTools(wnd, ctx, y)
         ctx.toggleSetting("showSpeedMeter")
     end)
     ctx.label(p, "power_ranger_speed_opacity_label", "Opacity", controlX, row2 + 5, 52, 14, 10, colors.muted, ALIGN.LEFT)
-    wnd.speedOpacityTrack = ctx.flatButton(p, "power_ranger_speed_opacity_track", "", controlX + 58, row2 + 4, 132, 16, {0.10, 0.10, 0.11, 0.96}, ctx.setSpeedOpacityFromMouse)
+    wnd.speedOpacityTrack = registerSlider(ctx.flatButton(p, "power_ranger_speed_opacity_track", "", controlX + 58, row2 + 4, 132, 16, {0.10, 0.10, 0.11, 0.96}, ctx.setSpeedOpacityFromMouse), controlX + 58, 132)
     wnd.speedOpacityFill = wnd.speedOpacityTrack:CreateColorDrawable(1, 0.84, 0, 0.55, "background")
     wnd.speedOpacityFill:AddAnchor("TOPLEFT", wnd.speedOpacityTrack, 1, 1)
     wnd.speedOpacityFill:SetExtent(1, 14)
@@ -336,7 +353,7 @@ function SettingsSections.BuildTravelTools(wnd, ctx, y)
     local warnX = controlX + 126
     ctx.label(p, "power_ranger_mark_parked", "Missing warning parked (API lock)", warnX, row3 + 5, 200, 14, 10, colors.muted, ALIGN.LEFT)
     ctx.label(p, "power_ranger_mark_opacity_label", "Mark opacity", labelX, 116, 86, 14, 10, colors.muted, ALIGN.LEFT)
-    wnd.ownersMarkOpacityTrack = ctx.flatButton(p, "power_ranger_mark_opacity_track", "", toggleX, 115, 132, 16, {0.10, 0.10, 0.11, 0.96}, ctx.setOwnersMarkOpacityFromMouse)
+    wnd.ownersMarkOpacityTrack = registerSlider(ctx.flatButton(p, "power_ranger_mark_opacity_track", "", toggleX, 115, 132, 16, {0.10, 0.10, 0.11, 0.96}, ctx.setOwnersMarkOpacityFromMouse), toggleX, 132)
     wnd.ownersMarkOpacityFill = wnd.ownersMarkOpacityTrack:CreateColorDrawable(1, 0.84, 0, 0.55, "background")
     wnd.ownersMarkOpacityFill:AddAnchor("TOPLEFT", wnd.ownersMarkOpacityTrack, 1, 1)
     wnd.ownersMarkOpacityFill:SetExtent(1, 14)
@@ -367,7 +384,7 @@ function SettingsSections.BuildWeaponProc(wnd, ctx, y)
     wnd.weaponProcScaleValue = ctx.label(p, "power_ranger_weapon_proc_scale_value", "0", 84, 83, 24, 14, 10, colors.white, ALIGN.CENTER)
     ctx.flatButton(p, "power_ranger_weapon_proc_scale_up", "+", 112, 80, 24, 20, colors.button, function() ctx.shiftWeaponProcScale(1) end)
     ctx.label(p, "power_ranger_weapon_proc_opacity_label", "Opacity", 152, 84, 50, 14, 10, colors.muted, ALIGN.LEFT)
-    wnd.weaponProcOpacityTrack = ctx.flatButton(p, "power_ranger_weapon_proc_opacity_track", "", 208, 82, 218, 16, {0.10, 0.10, 0.11, 0.96}, ctx.setWeaponProcOpacityFromMouse)
+    wnd.weaponProcOpacityTrack = registerSlider(ctx.flatButton(p, "power_ranger_weapon_proc_opacity_track", "", 208, 82, 218, 16, {0.10, 0.10, 0.11, 0.96}, ctx.setWeaponProcOpacityFromMouse), 208, 218)
     wnd.weaponProcOpacityFill = wnd.weaponProcOpacityTrack:CreateColorDrawable(1, 0.84, 0, 0.55, "background")
     wnd.weaponProcOpacityFill:AddAnchor("TOPLEFT", wnd.weaponProcOpacityTrack, 1, 1)
     wnd.weaponProcOpacityFill:SetExtent(1, 14)

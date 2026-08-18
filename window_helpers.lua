@@ -1,8 +1,23 @@
+-- Power Ranger window helper adapter for AddonUILib.
+--
+-- No implementation. Maps the old WindowHelpers.* names onto AddonUILib.Window.*, same as
+-- ui_helpers.lua does for the widget primitives. See AddonUILib/ADAPTERS.md.
+
 local api = require("api")
 
 local WindowHelpers = {}
 
+local ok, AddonUILib = pcall(require, "AddonUILib/init")
+if not ok or type(AddonUILib) ~= "table" then
+    AddonUILib = nil
+    pcall(function()
+        api.Log:Err("[Power Ranger ON] AddonUILib is missing or failed to load. Windows will not position or drag correctly.")
+    end)
+end
+
+-- Clamp lives in Core, not Window -- it is a plain numeric helper.
 function WindowHelpers.Clamp(value, minValue, maxValue)
+    if AddonUILib then return AddonUILib.Core.Clamp(value, minValue, maxValue) end
     value = tonumber(value) or minValue
     if maxValue < minValue then return minValue end
     if value < minValue then return minValue end
@@ -11,87 +26,43 @@ function WindowHelpers.Clamp(value, minValue, maxValue)
 end
 
 function WindowHelpers.SafePosition(x, y, width, height)
-    local screenWidth = tonumber(api.Interface:GetScreenWidth()) or 1920
-    local screenHeight = tonumber(api.Interface:GetScreenHeight()) or 1080
-    if screenWidth <= 0 then screenWidth = 1920 end
-    if screenHeight <= 0 then screenHeight = 1080 end
-    local pad = 12
-    local maxX = screenWidth - (tonumber(width) or 1) - pad
-    local maxY = screenHeight - (tonumber(height) or 1) - pad
-    return WindowHelpers.Clamp(x, pad, maxX), WindowHelpers.Clamp(y, pad, maxY)
+    if AddonUILib then return AddonUILib.Window.SafePosition(x, y, width, height) end
+    return x, y
+end
+
+-- Mouse position in UI units. api.Input:GetMousePos() returns SCREEN pixels, and every
+-- widget offset is in UI units -- they only agree at UI scale 1.0. Use this for any
+-- click-to-set control.
+function WindowHelpers.MouseUI()
+    if AddonUILib then return AddonUILib.Window.MouseUI() end
+    local ok, mx, my = pcall(function() return api.Input:GetMousePos() end)
+    if not ok then return nil, nil end
+    return mx, my
+end
+
+function WindowHelpers.UIScale()
+    if AddonUILib then return AddonUILib.Window.UIScale() end
+    return 1
 end
 
 function WindowHelpers.Position(window)
-    if not window then return nil, nil end
-    if window.GetEffectiveOffset then
-        local x, y = window:GetEffectiveOffset()
-        if tonumber(x) and tonumber(y) then return x, y end
-    end
-    if window.GetOffset then
-        local x, y = window:GetOffset()
-        if tonumber(x) and tonumber(y) then return x, y end
-    end
+    if AddonUILib then return AddonUILib.Window.Position(window) end
     return nil, nil
 end
 
 function WindowHelpers.SavePosition(window, settings, keyX, keyY, saveSettings)
-    local x, y = WindowHelpers.Position(window)
-    if not tonumber(x) or not tonumber(y) then return end
-    settings[keyX] = math.floor(tonumber(x) + 0.5)
-    settings[keyY] = math.floor(tonumber(y) + 0.5)
-    if saveSettings then saveSettings() end
+    if not AddonUILib then return end
+    return AddonUILib.Window.SavePosition(window, settings, keyX, keyY, saveSettings)
 end
 
 function WindowHelpers.ApplyDrag(window, handle, settings, keyX, keyY, saveSettings, allowPlainDrag)
-    local function startDrag()
-        if not allowPlainDrag and not (api.Input and api.Input:IsShiftKeyDown()) then return end
-        if window.StartMoving then window:StartMoving() end
-        if api.Cursor and api.Cursor.ClearCursor then api.Cursor:ClearCursor() end
-    end
-    local function stopDrag()
-        if window.StopMovingOrSizing then window:StopMovingOrSizing() end
-        if api.Cursor and api.Cursor.ClearCursor then api.Cursor:ClearCursor() end
-        WindowHelpers.SavePosition(window, settings, keyX, keyY, saveSettings)
-    end
-    if window.EnableDrag then window:EnableDrag(true) end
-    if window.RegisterForDrag then window:RegisterForDrag("LeftButton") end
-    if window.SetHandler then
-        window:SetHandler("OnDragStart", startDrag)
-        window:SetHandler("OnDragStop", stopDrag)
-        window:SetHandler("OnDragEnd", stopDrag)
-    end
-    if handle then
-        if handle.EnableDrag then handle:EnableDrag(true) end
-        if handle.RegisterForDrag then handle:RegisterForDrag("LeftButton") end
-        if handle.SetHandler then
-            handle:SetHandler("OnDragStart", startDrag)
-            handle:SetHandler("OnDragStop", stopDrag)
-            handle:SetHandler("OnDragEnd", stopDrag)
-        end
-    end
+    if not AddonUILib then return end
+    return AddonUILib.Window.ApplyDrag(window, handle, settings, keyX, keyY, saveSettings, allowPlainDrag)
 end
 
 function WindowHelpers.ApplyHandleDrag(window, handle, settings, keyX, keyY, saveSettings)
-    local function startDrag()
-        if not (api.Input and api.Input:IsShiftKeyDown()) then return end
-        if window.StartMoving then window:StartMoving() end
-        if api.Cursor and api.Cursor.ClearCursor then api.Cursor:ClearCursor() end
-    end
-    local function stopDrag()
-        if window.StopMovingOrSizing then window:StopMovingOrSizing() end
-        if api.Cursor and api.Cursor.ClearCursor then api.Cursor:ClearCursor() end
-        WindowHelpers.SavePosition(window, settings, keyX, keyY, saveSettings)
-    end
-    if handle then
-        if handle.Clickable then handle:Clickable(true) end
-        if handle.EnableDrag then handle:EnableDrag(true) end
-        if handle.RegisterForDrag then handle:RegisterForDrag("LeftButton") end
-        if handle.SetHandler then
-            handle:SetHandler("OnDragStart", startDrag)
-            handle:SetHandler("OnDragStop", stopDrag)
-            handle:SetHandler("OnDragEnd", stopDrag)
-        end
-    end
+    if not AddonUILib then return end
+    return AddonUILib.Window.ApplyHandleDrag(window, handle, settings, keyX, keyY, saveSettings)
 end
 
 return WindowHelpers

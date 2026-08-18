@@ -105,8 +105,10 @@ local function setOpacityFromMouse()
     local wnd = StatsPicker.wnd
     local ctx = StatsPicker.ctx
     if not wnd or not ctx or not ctx.setStatsOpacity then return end
-    local okPos, mx = pcall(function() return api.Input:GetMousePos() end)
-    if not okPos or not tonumber(mx) then return end
+    -- MouseUI, not the raw GetMousePos: that returns SCREEN pixels while trackLeft below is
+    -- in UI units. They only agree at UI scale 1.0.
+    local mx = require("power_ranger_on/window_helpers").MouseUI()
+    if not tonumber(mx) then return end
     local winX = ctx.windowX and ctx.windowX(wnd) or nil
     if not tonumber(winX) then winX = ctx.settings.statsPickerX or 420 end
     local trackLeft = tonumber(winX) + OPACITY_TRACK_X

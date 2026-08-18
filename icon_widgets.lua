@@ -1,174 +1,58 @@
-local OverlayUtils = require("power_ranger_on/overlay_utils")
+-- Power Ranger icon adapter for AddonUILib.
+--
+-- No implementation. Maps the old IconWidgets.* names onto AddonUILib.Icon.*.
+--
+-- Note the internal cache fields changed name (_lastPath -> _addonUiLibLastPath). Nothing in
+-- this addon reads them directly, and the only effect is that the first repaint after
+-- updating re-uploads each texture once.
+
+local api = require("api")
 
 local IconWidgets = {}
 
-local function setOverlayTone(icon, state)
-    local overlay = icon and icon.cooldownOverlay
-    if not overlay then return end
-    local color = nil
-    if state == "active" then
-        color = {0.08, 0.48, 0.14, 0.50}
-    elseif state == "cooldown" then
-        color = {0.62, 0.05, 0.05, 0.58}
-    end
-    if color and overlay.SetColor then
-        pcall(function() overlay:SetColor(color[1], color[2], color[3], color[4]) end)
-    end
-end
-
-local function decorateCooldownIcon(icon, parent, id, size)
-    if not icon then return end
-    local overlay = icon:CreateColorDrawable(0, 0, 0, 0.62, "overlay")
-    overlay:AddAnchor("TOPLEFT", icon, 0, 0)
-    overlay:AddAnchor("BOTTOMRIGHT", icon, 0, 0)
-    overlay:Show(false)
-    icon.cooldownOverlay = overlay
-
-    local timer = parent:CreateChildWidget("label", id .. "_timer", 0, true)
-    timer:SetExtent(size, size)
-    timer:AddAnchor("CENTER", icon, 0, 0)
-    timer.style:SetFontSize(10)
-    timer.style:SetAlign(ALIGN.CENTER)
-    if timer.style.SetShadow then timer.style:SetShadow(false) end
-    if timer.style.SetOutline then timer.style:SetOutline(false) end
-    timer.style:SetColor(1, 1, 1, 1)
-    timer:SetText("")
-    timer:Show(false)
-    timer:Clickable(false)
-    icon.timerLabel = timer
+local ok, AddonUILib = pcall(require, "AddonUILib/init")
+if not ok or type(AddonUILib) ~= "table" then
+    AddonUILib = nil
+    pcall(function()
+        api.Log:Err("[Power Ranger ON] AddonUILib is missing or failed to load. Cooldown and equipment icons will not render.")
+    end)
 end
 
 function IconWidgets.Create(parent, id, x, y, size, addBg)
-    local icon = nil
-    if CreateItemIconButton then
-        local ok, created = pcall(function() return CreateItemIconButton(id, parent) end)
-        if ok then icon = created end
-    end
-    if icon then
-        icon:SetExtent(size, size)
-        icon:AddAnchor("TOPLEFT", parent, x, y)
-        if icon.Clickable then icon:Clickable(false) end
-        if F_SLOT and F_SLOT.ApplySlotSkin and SLOT_STYLE then
-            pcall(function() F_SLOT.ApplySlotSkin(icon, icon.back, SLOT_STYLE.DEFAULT) end)
-        end
-        icon:Show(false)
-        decorateCooldownIcon(icon, parent, id, size)
-        return icon
-    end
-
-    local holder = parent:CreateChildWidget("emptywidget", id, 0, true)
-    holder:SetExtent(size, size)
-    holder:AddAnchor("TOPLEFT", parent, x, y)
-    if addBg then addBg(holder, 0, 0, 0, 0.48) end
-    holder:Show(false)
-    decorateCooldownIcon(holder, parent, id, size)
-    return holder
+    if not AddonUILib then return nil end
+    return AddonUILib.Icon.Create(parent, id, x, y, size, addBg)
 end
 
 function IconWidgets.Set(icon, path)
-    if not icon then return end
-    if not path or tostring(path) == "" then
-        icon:Show(false)
-        return
-    end
-    local ok = false
-    if F_SLOT and F_SLOT.SetIconBackGround then
-        ok = pcall(function() F_SLOT.SetIconBackGround(icon, tostring(path)) end)
-    end
-    if not ok and icon.SetTgaTexture then
-        ok = pcall(function() icon:SetTgaTexture(tostring(path)) end)
-    end
-    icon:Show(ok == true)
+    if not AddonUILib then return end
+    return AddonUILib.Icon.Set(icon, path)
 end
 
 function IconWidgets.SetCached(icon, path)
-    if not icon then return end
-    path = path and tostring(path) or nil
-    if icon._lastPath == path and icon._lastVisible ~= nil then
-        icon:Show(icon._lastVisible)
-        return
-    end
-    icon._lastPath = path
-    if path and path ~= "" then
-        IconWidgets.Set(icon, path)
-        icon._lastVisible = true
-    else
-        icon:Show(false)
-        icon._lastVisible = false
-    end
+    if not AddonUILib then return end
+    return AddonUILib.Icon.SetCached(icon, path)
 end
 
+-- Keeps an empty slot frame visible instead of hiding it.
 function IconWidgets.SetEquip(icon, path)
-    if not icon then return end
-    path = path and tostring(path) or nil
-    if path and path ~= "" then
-        IconWidgets.SetCached(icon, path)
-        return
-    end
-    if icon._lastPath ~= "__empty" then
-        if F_SLOT and F_SLOT.SetIconBackGround then
-            pcall(function() F_SLOT.SetIconBackGround(icon, nil) end)
-        end
-        if F_SLOT and F_SLOT.ApplySlotSkin and SLOT_STYLE and icon.back then
-            pcall(function() F_SLOT.ApplySlotSkin(icon, icon.back, SLOT_STYLE.DEFAULT) end)
-        end
-        icon._lastPath = "__empty"
-    end
-    icon._lastVisible = true
-    icon:Show(true)
+    if not AddonUILib then return end
+    return AddonUILib.Icon.SetEquip(icon, path)
 end
 
 function IconWidgets.SetCooldown(icon, path, state, seconds)
-    IconWidgets.SetCached(icon, path)
-    if not icon then return end
-    local active = state == "active" or state == "cooldown"
-    setOverlayTone(icon, state)
-    if icon.cooldownOverlay then icon.cooldownOverlay:Show(active) end
-    if icon.timerLabel then
-        if state == "active" then
-            icon.timerLabel:SetText(OverlayUtils.cooldownTimerText(seconds) or "ON")
-            icon.timerLabel:Show(true)
-        elseif state == "cooldown" and seconds then
-            icon.timerLabel:SetText(OverlayUtils.cooldownTimerText(seconds) or "")
-            icon.timerLabel:Show(true)
-        else
-            icon.timerLabel:SetText("")
-            icon.timerLabel:Show(false)
-        end
-    end
+    if not AddonUILib then return end
+    return AddonUILib.Icon.SetCooldown(icon, path, state, seconds)
 end
 
+-- Same as SetCooldown but a nil path leaves the empty slot frame in the layout.
 function IconWidgets.SetCooldownSkill(icon, path, state, seconds)
-    if path then
-        IconWidgets.SetCooldown(icon, path, state, seconds)
-        return
-    end
-    IconWidgets.SetEquip(icon, nil)
-    local active = state == "active" or state == "cooldown"
-    setOverlayTone(icon, state)
-    if icon.cooldownOverlay then icon.cooldownOverlay:Show(active) end
-    if icon.timerLabel then
-        if state == "cooldown" and seconds then
-            icon.timerLabel:SetText(OverlayUtils.cooldownTimerText(seconds) or "")
-            icon.timerLabel:Show(true)
-        elseif state == "active" then
-            icon.timerLabel:SetText(OverlayUtils.cooldownTimerText(seconds) or "ON")
-            icon.timerLabel:Show(true)
-        else
-            icon.timerLabel:SetText("")
-            icon.timerLabel:Show(false)
-        end
-    end
+    if not AddonUILib then return end
+    return AddonUILib.Icon.SetCooldownSkill(icon, path, state, seconds)
 end
 
 function IconWidgets.ClearCooldown(icon)
-    if not icon then return end
-    icon:Show(false)
-    if icon.cooldownOverlay then icon.cooldownOverlay:Show(false) end
-    if icon.timerLabel then
-        icon.timerLabel:SetText("")
-        icon.timerLabel:Show(false)
-    end
+    if not AddonUILib then return end
+    return AddonUILib.Icon.Clear(icon)
 end
 
 return IconWidgets

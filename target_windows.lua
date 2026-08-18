@@ -40,11 +40,17 @@ function TargetWindows.CreateModelOverlay(ctx)
     local applyReadableTextStyle = ctx.applyReadableTextStyle
     local canvas = api.Interface:CreateEmptyWindow("TargetOverlayMain")
     canvas:SetExtent(1, 1)
+    -- Whole overhead block is click-through: it floats over the world and must never eat a
+    -- click meant for the target behind it. Clickable(false) stops hit-testing;
+    -- EnablePick(false) stops the widget being picked as a drag/mouse target.
+    if canvas.Clickable then canvas:Clickable(false) end
+    if canvas.EnablePick then canvas:EnablePick(false) end
     canvas:Show(true)
 
     local armorIcon = CreateItemIconButton("armorBuffIcon", canvas)
     F_SLOT.ApplySlotSkin(armorIcon, armorIcon.back, SLOT_STYLE.DEFAULT)
     armorIcon:Clickable(false)
+    if armorIcon.EnablePick then armorIcon:EnablePick(false) end
     armorIcon:SetExtent(config.buffIconSize, config.buffIconSize)
     armorIcon:AddAnchor("LEFT", canvas, "RIGHT", config.armorBuffOffset, 0)
     armorIcon:Show(false)
@@ -52,6 +58,7 @@ function TargetWindows.CreateModelOverlay(ctx)
     local weaponIcon = CreateItemIconButton("weaponBuffIcon", canvas)
     F_SLOT.ApplySlotSkin(weaponIcon, weaponIcon.back, SLOT_STYLE.DEFAULT)
     weaponIcon:Clickable(false)
+    if weaponIcon.EnablePick then weaponIcon:EnablePick(false) end
     weaponIcon:SetExtent(config.buffIconSize, config.buffIconSize)
     weaponIcon:AddAnchor("RIGHT", canvas, "LEFT", config.weaponBuffOffset, 0)
     weaponIcon:Show(false)
@@ -106,6 +113,8 @@ function TargetWindows.CreateModelOverlay(ctx)
     applyReadableTextStyle(gearscore, true)
     gearscore.style:SetAlign(ALIGN.CENTER)
     gearscore:AddAnchor("TOP", canvas, "BOTTOM", 0, config.gearscoreOffset)
+    if gearscore.Clickable then gearscore:Clickable(false) end
+    if gearscore.EnablePick then gearscore:EnablePick(false) end
     gearscore:Show(false)
 
     local classLabel = canvas:CreateChildWidget("label", "targetClass", 0, true)
@@ -115,6 +124,8 @@ function TargetWindows.CreateModelOverlay(ctx)
     classLabel.style:SetAlign(ALIGN.CENTER)
     classLabel.style:SetColor(1, 1, 1, 1)
     classLabel:AddAnchor("TOP", gearscore, "BOTTOM", -10, -1)
+    if classLabel.Clickable then classLabel:Clickable(false) end
+    if classLabel.EnablePick then classLabel:EnablePick(false) end
     classLabel:Show(false)
 
     local rangeCanvas = api.Interface:CreateEmptyWindow("PowerRangerModelRange", "UIParent")

@@ -58,12 +58,20 @@ local function createWindow()
     -- Anchored to a saved screen position rather than to the character, so it can be put
     -- wherever it is actually visible mid-fight. Drag it in Move mode.
     window:AddAnchor("TOPLEFT", "UIParent", settings.cooldownReadyPopupX or 700, settings.cooldownReadyPopupY or 420)
+    -- Click-through: this sits over the world during a fight and must not swallow clicks.
+    if window.Clickable then window:Clickable(false) end
+    if window.EnablePick then window:EnablePick(false) end
     -- No addBg: a plate behind the icon would just be a grey box over the world.
     ReadyPopup.icon = IconWidgets.Create(window, "power_ranger_cooldown_ready_icon", 0, 0, size, nil)
+    if ReadyPopup.icon.Clickable then ReadyPopup.icon:Clickable(false) end
+    if ReadyPopup.icon.EnablePick then ReadyPopup.icon:EnablePick(false) end
+    -- applyDrag forces Clickable(true) on the handle, so it is only shown in Move mode --
+    -- otherwise this rectangle would eat every click over the icon (same trap as the guild
+    -- label's full-size drag handle).
     window.dragHandle = window:CreateChildWidget("emptywidget", "power_ranger_cd_popup_drag", 0, true)
     window.dragHandle:SetExtent(size, size)
     window.dragHandle:AddAnchor("TOPLEFT", window, 0, 0)
-    window.dragHandle:Show(true)
+    window.dragHandle:Show(false)
     if ReadyPopup.applyDrag then
         ReadyPopup.applyDrag(window, window.dragHandle, "cooldownReadyPopupX", "cooldownReadyPopupY")
     end
@@ -165,7 +173,10 @@ function ReadyPopup.Update(dt)
         if ReadyPopup.window.SetAlpha then pcall(function() ReadyPopup.window:SetAlpha(1) end) end
         if ReadyPopup.icon then ReadyPopup.icon:SetExtent(size, size) end
         ReadyPopup.window:SetExtent(size, size)
-        if ReadyPopup.window.dragHandle then ReadyPopup.window.dragHandle:SetExtent(size, size) end
+        if ReadyPopup.window.dragHandle then
+            ReadyPopup.window.dragHandle:SetExtent(size, size)
+            ReadyPopup.window.dragHandle:Show(true)
+        end
         ReadyPopup.window:Show(true)
         return
     end
@@ -193,7 +204,7 @@ function ReadyPopup.Update(dt)
     if window.SetAlpha then pcall(function() window:SetAlpha(alpha) end) end
     if ReadyPopup.icon then ReadyPopup.icon:SetExtent(size, size) end
     window:SetExtent(size, size)
-    if window.dragHandle then window.dragHandle:SetExtent(size, size) end
+    if window.dragHandle then window.dragHandle:Show(false) end
     window:Show(true)
 end
 
