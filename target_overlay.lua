@@ -3824,7 +3824,7 @@ function refreshSettingsButtons()
         settingsWnd.weaponProcOpacityValue:SetText(string.format("%.2f", opacity / 10))
         if settingsWnd.weaponProcOpacityFill then
             if opacity > 0 then
-                settingsWnd.weaponProcOpacityFill:SetExtent(math.max(1, math.floor((opacity / 10) * 108)), 14)
+                settingsWnd.weaponProcOpacityFill:SetExtent(math.max(1, math.floor((opacity / 10) * ((tonumber(settingsWnd.weaponProcOpacityTrack and settingsWnd.weaponProcOpacityTrack._sliderWidth) or 108) - 2))), 14)
                 settingsWnd.weaponProcOpacityFill:Show(true)
             else
                 settingsWnd.weaponProcOpacityFill:Show(false)
@@ -3926,7 +3926,7 @@ function refreshSettingsButtons()
         settingsWnd.selfOpacityValue:SetText(string.format("%.2f", opacity / 10))
         if settingsWnd.selfOpacityFill then
             if opacity > 0 then
-                settingsWnd.selfOpacityFill:SetExtent(math.max(1, math.floor((opacity / 10) * 310)), 14)
+                settingsWnd.selfOpacityFill:SetExtent(math.max(1, math.floor((opacity / 10) * ((tonumber(settingsWnd.selfOpacityTrack and settingsWnd.selfOpacityTrack._sliderWidth) or 310) - 2))), 14)
                 settingsWnd.selfOpacityFill:Show(true)
             else
                 settingsWnd.selfOpacityFill:Show(false)
@@ -3938,7 +3938,7 @@ function refreshSettingsButtons()
         settingsWnd.speedOpacityValue:SetText(string.format("%.2f", opacity / 10))
         if settingsWnd.speedOpacityFill then
             if opacity > 0 then
-                settingsWnd.speedOpacityFill:SetExtent(math.max(1, math.floor((opacity / 10) * 148)), 14)
+                settingsWnd.speedOpacityFill:SetExtent(math.max(1, math.floor((opacity / 10) * ((tonumber(settingsWnd.speedOpacityTrack and settingsWnd.speedOpacityTrack._sliderWidth) or 148) - 2))), 14)
                 settingsWnd.speedOpacityFill:Show(true)
             else
                 settingsWnd.speedOpacityFill:Show(false)
@@ -3950,7 +3950,7 @@ function refreshSettingsButtons()
         settingsWnd.ownersMarkOpacityValue:SetText(string.format("%.2f", opacity / 10))
         if settingsWnd.ownersMarkOpacityFill then
             if opacity > 0 then
-                settingsWnd.ownersMarkOpacityFill:SetExtent(math.max(1, math.floor((opacity / 10) * 130)), 14)
+                settingsWnd.ownersMarkOpacityFill:SetExtent(math.max(1, math.floor((opacity / 10) * ((tonumber(settingsWnd.ownersMarkOpacityTrack and settingsWnd.ownersMarkOpacityTrack._sliderWidth) or 130) - 2))), 14)
                 settingsWnd.ownersMarkOpacityFill:Show(true)
             else
                 settingsWnd.ownersMarkOpacityFill:Show(false)
@@ -4087,16 +4087,32 @@ function TargetOverlay.shiftOwnersMarkOpacity(delta)
     TargetOverlay.ownersMark.Refresh()
 end
 
-function TargetOverlay.setSpeedOpacityFromMouse()
-    if not settingsWnd then return end
-    local okPos, mx = pcall(function() return api.Input:GetMousePos() end)
-    if not okPos or not mx then return end
+-- Cursor position as a 0..1 fraction along a click-to-set track.
+--
+-- Geometry comes off the widget (_sliderLeft/_sliderWidth, stamped by registerSlider in
+-- settings_sections) rather than being hardcoded here a second time. The old copies drifted
+-- from the layout -- the weapon proc handler still described a track at x=348 w=110 long
+-- after it had moved to x=208 w=218, so clicks only registered past the bar's midpoint.
+local function trackFraction(track)
+    if not settingsWnd or not track then return nil end
+    -- MouseUI, not the raw GetMousePos: that returns SCREEN pixels while widget offsets are
+    -- in UI units, and they only agree at UI scale 1.0.
+    local mx = TargetOverlay.windowHelpers.MouseUI()
+    if not tonumber(mx) then return nil end
+    local left = tonumber(track._sliderLeft)
+    local width = tonumber(track._sliderWidth)
+    if not left or not width or width <= 0 then return nil end
     local windowX = tonumber(settings.settingsX) or 650
     local currentX = TargetOverlay.windowHelpers.Position(settingsWnd)
     if tonumber(currentX) then windowX = tonumber(currentX) end
-    local trackLeft = windowX + 18 + 296
-    local frac = (tonumber(mx) - trackLeft) / 150
+    local frac = (tonumber(mx) - (windowX + left)) / width
     if frac < 0 then frac = 0 elseif frac > 1 then frac = 1 end
+    return frac
+end
+
+function TargetOverlay.setSpeedOpacityFromMouse()
+    local frac = trackFraction(settingsWnd and settingsWnd.speedOpacityTrack)
+    if not frac then return end
     settings.speedMeterOpacityLevel = math.floor((frac * 10) + 0.5)
     saveSettings()
     refreshSettingsButtons()
@@ -4104,15 +4120,8 @@ function TargetOverlay.setSpeedOpacityFromMouse()
 end
 
 function TargetOverlay.setOwnersMarkOpacityFromMouse()
-    if not settingsWnd then return end
-    local okPos, mx = pcall(function() return api.Input:GetMousePos() end)
-    if not okPos or not mx then return end
-    local windowX = tonumber(settings.settingsX) or 650
-    local currentX = TargetOverlay.windowHelpers.Position(settingsWnd)
-    if tonumber(currentX) then windowX = tonumber(currentX) end
-    local trackLeft = windowX + 18 + 112
-    local frac = (tonumber(mx) - trackLeft) / 132
-    if frac < 0 then frac = 0 elseif frac > 1 then frac = 1 end
+    local frac = trackFraction(settingsWnd and settingsWnd.ownersMarkOpacityTrack)
+    if not frac then return end
     settings.ownersMarkOpacityLevel = math.floor((frac * 10) + 0.5)
     saveSettings()
     refreshSettingsButtons()
@@ -4150,15 +4159,8 @@ function TargetOverlay.shiftWeaponProcPopupScale(delta)
 end
 
 function TargetOverlay.setWeaponProcOpacityFromMouse()
-    if not settingsWnd then return end
-    local okPos, mx = pcall(function() return api.Input:GetMousePos() end)
-    if not okPos or not mx then return end
-    local windowX = tonumber(settings.settingsX) or 650
-    local currentX = TargetOverlay.windowHelpers.Position(settingsWnd)
-    if tonumber(currentX) then windowX = tonumber(currentX) end
-    local trackLeft = windowX + 18 + 348
-    local frac = (tonumber(mx) - trackLeft) / 110
-    if frac < 0 then frac = 0 elseif frac > 1 then frac = 1 end
+    local frac = trackFraction(settingsWnd and settingsWnd.weaponProcOpacityTrack)
+    if not frac then return end
     settings.weaponProcOpacityLevel = math.floor((frac * 10) + 0.5)
     saveSettings()
     refreshSettingsButtons()
@@ -4197,13 +4199,8 @@ function TargetOverlay.toggleCooldownGroup(group)
 end
 
 function TargetOverlay.setSelfOpacityFromMouse()
-    if not settingsWnd then return end
-    local okPos, mx = pcall(function() return api.Input:GetMousePos() end)
-    if not okPos or not mx then return end
-    local windowX = tonumber(settings.settingsX) or 650
-    local trackLeft = windowX + 18 + 78
-    local frac = (tonumber(mx) - trackLeft) / 312
-    if frac < 0 then frac = 0 elseif frac > 1 then frac = 1 end
+    local frac = trackFraction(settingsWnd and settingsWnd.selfOpacityTrack)
+    if not frac then return end
     settings.selfOpacityLevel = math.floor((frac * 10) + 0.5)
     saveSettings()
     refreshSettingsButtons()
@@ -4490,6 +4487,41 @@ local function createSettingsWindow()
         shiftWeaponProcPopupScale = TargetOverlay.shiftWeaponProcPopupScale
     }, weaponY)
 
+    -- ADDON_VERSION is duplicated from main.lua on purpose. BetterBars hit an every-login
+    -- settings reset from require'ing its manifest at parse time, so this is kept in sync by
+    -- hand instead.
+    local ADDON_VERSION = "1.6.0"
+    local uiLib = require("power_ranger_on/ui_helpers")
+
+    -- Info lives in a panel attached to the right edge, opened by an arrow tab.
+    --
+    -- Deliberately NOT persisted: it opens every time the settings window does. Collapsing is
+    -- for getting it out of the way right now, not a permanent dismissal. That is still far
+    -- less intrusive than a popup, since it only ever appears inside a window someone chose to
+    -- open, and one click puts it away.
+    if uiLib.ui and uiLib.ui.SidePanel then
+        settingsWnd.infoPanel = uiLib.ui.SidePanel(settingsWnd, {
+            id = "PowerRangerInfoPanel",
+            title = "About  &  Support",
+            width = 272,
+            expanded = true,
+            lines = {
+                { text = "Power Ranger ON  v" .. ADDON_VERSION, color = COLORS.white },
+                { text = "by CraySone", color = COLORS.muted },
+                "",
+                { text = "Everything here is free, and stays that way.", color = COLORS.white },
+                "I build these because I love this game, not",
+                "for the income. Play first; the rest is optional.",
+                "",
+                "If it ever earns you a laugh or a win, a tip is",
+                "welcome -- but genuinely never expected.",
+                "",
+                { text = "In-game:  CraySone", color = COLORS.gold },
+                { text = "Ko-fi:    ko-fi.com/craysone", color = COLORS.gold }
+            }
+        })
+    end
+
     refreshSettingsButtons()
     settingsWnd:Show(false)
 end
@@ -4775,6 +4807,13 @@ function TargetOverlay.init()
     loadSettings()
     playerName = TargetOverlay.getPlayerName()
     AppearanceOptions.ApplyDefaultAppearances(settings.defaultAppearancesEnabled == true)
+    -- Which UI backend is live. AddonUILib is loaded with pcall, so a missing folder OR a
+    -- syntax error inside it both fall back to the local implementation silently -- this is
+    -- the only way to tell the two apart from in-game.
+    local uiHelpers = require("power_ranger_on/ui_helpers")
+    TargetOverlay.notify(uiHelpers.libraryVersion
+        and ("UI backend: AddonUILib v" .. tostring(uiHelpers.libraryVersion))
+        or "UI backend: built-in (AddonUILib not loaded)")
 
     local widgets = require("power_ranger_on/target_windows").CreateModelOverlay({
         colors = COLORS,
