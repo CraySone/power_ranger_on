@@ -91,6 +91,16 @@ function UiHelpers.SetToggleButton(btn, enabled, text, colors)
     return AddonUILib.Button.SetToggle(btn, enabled, text, palette(colors))
 end
 
+-- Slider.Create builds the track, fill, steppers and value label as one control, so it
+-- replaces five hand-placed widgets per row. It also owns the click-to-set geometry, which
+-- is what the local registerSlider stamping existed to work around.
+function UiHelpers.Slider(parent, id, x, y, w, opts)
+    if not AddonUILib then return unavailable() end
+    opts = type(opts) == "table" and opts or {}
+    if opts.colors == nil then opts.colors = ui and ui.colors or {} end
+    return AddonUILib.Slider.Create(parent, id, x, y, w, opts)
+end
+
 function UiHelpers.ColorCube(parent, id, x, y, key, onClick)
     if not AddonUILib then return unavailable() end
     return AddonUILib.Button.ColorCube(parent, id, x, y, key, onClick)

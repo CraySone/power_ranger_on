@@ -3921,18 +3921,8 @@ function refreshSettingsButtons()
     if settingsWnd.selfScaleValue then
         settingsWnd.selfScaleValue:SetText(tostring(settings.selfScaleLevel or 0))
     end
-    if settingsWnd.selfOpacityValue then
-        local opacity = math.max(0, math.min(10, tonumber(settings.selfOpacityLevel) or 8))
-        settingsWnd.selfOpacityValue:SetText(string.format("%.2f", opacity / 10))
-        if settingsWnd.selfOpacityFill then
-            if opacity > 0 then
-                settingsWnd.selfOpacityFill:SetExtent(math.max(1, math.floor((opacity / 10) * ((tonumber(settingsWnd.selfOpacityTrack and settingsWnd.selfOpacityTrack._sliderWidth) or 310) - 2))), 14)
-                settingsWnd.selfOpacityFill:Show(true)
-            else
-                settingsWnd.selfOpacityFill:Show(false)
-            end
-        end
-    end
+    -- The slider control owns its fill width and value text; Update() reads get() again.
+    if settingsWnd.selfOpacitySlider then settingsWnd.selfOpacitySlider.Update() end
     if settingsWnd.speedOpacityValue then
         local opacity = math.max(0, math.min(10, tonumber(settings.speedMeterOpacityLevel) or 8))
         settingsWnd.speedOpacityValue:SetText(string.format("%.2f", opacity / 10))
@@ -4055,6 +4045,18 @@ local function toggleSetting(key)
     saveSettings()
     refreshSettingsButtons()
     if key == "showSelfEquipment" or key == "showSelfCooldowns" or key == "showSelfPanel" or key == "showSelfBorder" then updateSelfPanel() end
+end
+
+-- Absolute setter for the AddonUILib slider, which reports a value rather than a delta.
+function TargetOverlay.setSelfOpacityLevel(value)
+    local level = math.floor((tonumber(value) or 8) + 0.5)
+    if level < 0 then level = 0 end
+    if level > 10 then level = 10 end
+    if level == settings.selfOpacityLevel then return end
+    settings.selfOpacityLevel = level
+    saveSettings()
+    refreshSettingsButtons()
+    updateSelfPanel()
 end
 
 function TargetOverlay.shiftSelfOpacity(delta)
@@ -4198,6 +4200,9 @@ function TargetOverlay.toggleCooldownGroup(group)
     updateSelfPanel()
 end
 
+-- DEAD for the self slider since it moved to AddonUILib, which owns its own click mapping.
+-- Kept because ctx still hands it out and it is nil-safe: trackFraction returns nil for a
+-- missing track and this returns early.
 function TargetOverlay.setSelfOpacityFromMouse()
     local frac = trackFraction(settingsWnd and settingsWnd.selfOpacityTrack)
     if not frac then return end
@@ -4307,9 +4312,8 @@ local function shiftUiScale(delta, key)
     if settingsWnd and settingsWnd.selfScaleValue then
         settingsWnd.selfScaleValue:SetText(tostring(settings.selfScaleLevel or 0))
     end
-    if settingsWnd and settingsWnd.selfOpacityValue then
-        local opacity = math.max(0, math.min(10, tonumber(settings.selfOpacityLevel) or 8))
-        settingsWnd.selfOpacityValue:SetText(string.format("%.2f", opacity / 10))
+    if settingsWnd and settingsWnd.selfOpacitySlider then
+        settingsWnd.selfOpacitySlider.Update()
     end
     if settingsWnd and settingsWnd.ownershipScaleValue then
         settingsWnd.ownershipScaleValue:SetText(tostring(settings.ownershipScaleLevel or 0))
@@ -4430,6 +4434,9 @@ local function createSettingsWindow()
         shiftUiScale = shiftUiScale,
         shiftSelfOpacity = function(delta) TargetOverlay.shiftSelfOpacity(delta) end,
         setSelfOpacityFromMouse = function() TargetOverlay.setSelfOpacityFromMouse() end,
+        slider = TargetOverlay.uiContext.slider,
+        settings = settings,
+        setSelfOpacityLevel = function(v) TargetOverlay.setSelfOpacityLevel(v) end,
         toggleProbeLogging = toggleProbeLogging,
         openDetectedSkillsWindow = openDetectedSkillsWindow,
         openCooldownSkillsWindow = function(rowIndex, group, mode) TargetOverlay.openCooldownSkillsWindow(rowIndex, group, mode) end,

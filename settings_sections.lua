@@ -187,8 +187,9 @@ function SettingsSections.BuildSelfCooldowns(wnd, ctx)
     local flatButton = ctx.flatButton
     local toggleSetting = ctx.toggleSetting
     local shiftUiScale = ctx.shiftUiScale
-    local shiftSelfOpacity = ctx.shiftSelfOpacity
-    local setSelfOpacityFromMouse = ctx.setSelfOpacityFromMouse
+    -- shiftSelfOpacity / setSelfOpacityFromMouse are no longer read here: the AddonUILib
+    -- slider owns the steppers and the click mapping for this row. ctx still carries them
+    -- for the three sliders that have not migrated.
     local toggleProbeLogging = ctx.toggleProbeLogging
     local openDetectedSkillsWindow = ctx.openDetectedSkillsWindow
     local openCooldownManagerWindow = ctx.openCooldownManagerWindow or function() end
@@ -207,14 +208,23 @@ function SettingsSections.BuildSelfCooldowns(wnd, ctx)
     wnd.probeLogBtn = flatButton(p, "power_ranger_probe_log", "", 398, 58, 58, 24, colors.blue, toggleProbeLogging)
     flatButton(p, "power_ranger_detected_open", "Detected", 462, 58, 88, 24, colors.blue, openDetectedSkillsWindow)
     label(p, "power_ranger_self_opacity_label", "Opacity", 16, 92, 54, 14, 10, colors.muted, ALIGN.LEFT)
-    wnd.selfOpacityTrack = registerSlider(flatButton(p, "power_ranger_self_opacity_track", "", 78, 91, 312, 16, {0.10, 0.10, 0.11, 0.96}, setSelfOpacityFromMouse), 78, 312)
-    wnd.selfOpacityFill = wnd.selfOpacityTrack:CreateColorDrawable(1, 0.84, 0, 0.55, "background")
-    wnd.selfOpacityFill:AddAnchor("TOPLEFT", wnd.selfOpacityTrack, 1, 1)
-    wnd.selfOpacityFill:SetExtent(1, 14)
-    wnd.selfOpacityFill:Show(false)
-    flatButton(p, "power_ranger_self_opacity_down", "-", 404, 89, 24, 18, colors.button, function() shiftSelfOpacity(-1) end)
-    wnd.selfOpacityValue = label(p, "power_ranger_self_opacity_value", "0.80", 432, 91, 42, 14, 10, colors.white, ALIGN.CENTER)
-    flatButton(p, "power_ranger_self_opacity_up", "+", 478, 89, 24, 18, colors.button, function() shiftSelfOpacity(1) end)
+    -- FIRST slider migrated to AddonUILib. One call replaces the track, the fill, the two
+    -- steppers and the value label -- and the click-to-set geometry comes from the same x/w
+    -- the track is drawn with, so registerSlider's stamping is not needed here.
+    --
+    -- The other three opacity sliders are deliberately left hand-rolled for now: they are the
+    -- control group. If this one misbehaves and they do not, the library is the difference.
+    wnd.selfOpacitySlider = ctx.slider(p, "power_ranger_self_opacity", 78, 91, 312, {
+        window = wnd,
+        parentOffsetX = PANEL_X,
+        fallbackX = ctx.settings and ctx.settings.settingsX or nil,
+        min = 0,
+        max = 10,
+        step = 1,
+        get = function() return ctx.settings and ctx.settings.selfOpacityLevel or 8 end,
+        set = function(v) ctx.setSelfOpacityLevel(v) end,
+        format = function(v) return string.format("%.2f", v / 10) end
+    })
     label(p, "power_ranger_cd_manager_title", "Cooldown managers", 16, 114, 128, 14, 11, colors.gold, ALIGN.LEFT)
     flatButton(p, "power_ranger_cd_manager_gliders", "Gliders", 150, 110, 118, 22, colors.blue, function() openCooldownManagerWindow("glider") end)
     flatButton(p, "power_ranger_cd_manager_mounts", "Auras/Mounts", 276, 110, 118, 22, colors.blue, function() openCooldownManagerWindow("other") end)

@@ -15,6 +15,11 @@ function TargetUi.Context(colors, cycleColor)
     ctx.sectionPanel = function(parent, id, x, y, w, h, titleText)
         return UiHelpers.SectionPanel(parent, id, x, y, w, h, titleText, colors)
     end
+    ctx.slider = function(parent, id, x, y, w, opts)
+        opts = type(opts) == "table" and opts or {}
+        if opts.colors == nil then opts.colors = colors end
+        return UiHelpers.Slider(parent, id, x, y, w, opts)
+    end
     ctx.colorCube = function(parent, id, x, y, key)
         return UiHelpers.ColorCube(parent, id, x, y, key, function(self)
             if cycleColor then cycleColor(self._colorKey) end
