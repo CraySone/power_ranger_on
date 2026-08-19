@@ -3835,18 +3835,7 @@ function refreshSettingsButtons()
     if settingsWnd.weaponProcPopupScaleValue then
         settingsWnd.weaponProcPopupScaleValue:SetText(tostring(settings.weaponProcPopupScale or 0))
     end
-    if settingsWnd.weaponProcOpacityValue then
-        local opacity = math.max(0, math.min(10, tonumber(settings.weaponProcOpacityLevel) or 8))
-        settingsWnd.weaponProcOpacityValue:SetText(string.format("%.2f", opacity / 10))
-        if settingsWnd.weaponProcOpacityFill then
-            if opacity > 0 then
-                settingsWnd.weaponProcOpacityFill:SetExtent(math.max(1, math.floor((opacity / 10) * ((tonumber(settingsWnd.weaponProcOpacityTrack and settingsWnd.weaponProcOpacityTrack._sliderWidth) or 108) - 2))), 14)
-                settingsWnd.weaponProcOpacityFill:Show(true)
-            else
-                settingsWnd.weaponProcOpacityFill:Show(false)
-            end
-        end
-    end
+    if settingsWnd.weaponProcOpacitySlider then settingsWnd.weaponProcOpacitySlider.Update() end
     if not TARGET_API_FEATURES_DISABLED then
         require("power_ranger_on/stats_picker_window").Refresh()
     end
@@ -3944,30 +3933,8 @@ function refreshSettingsButtons()
     end
     -- The slider control owns its fill width and value text; Update() reads get() again.
     if settingsWnd.selfOpacitySlider then settingsWnd.selfOpacitySlider.Update() end
-    if settingsWnd.speedOpacityValue then
-        local opacity = math.max(0, math.min(10, tonumber(settings.speedMeterOpacityLevel) or 8))
-        settingsWnd.speedOpacityValue:SetText(string.format("%.2f", opacity / 10))
-        if settingsWnd.speedOpacityFill then
-            if opacity > 0 then
-                settingsWnd.speedOpacityFill:SetExtent(math.max(1, math.floor((opacity / 10) * ((tonumber(settingsWnd.speedOpacityTrack and settingsWnd.speedOpacityTrack._sliderWidth) or 148) - 2))), 14)
-                settingsWnd.speedOpacityFill:Show(true)
-            else
-                settingsWnd.speedOpacityFill:Show(false)
-            end
-        end
-    end
-    if settingsWnd.ownersMarkOpacityValue then
-        local opacity = math.max(0, math.min(10, tonumber(settings.ownersMarkOpacityLevel) or 8))
-        settingsWnd.ownersMarkOpacityValue:SetText(string.format("%.2f", opacity / 10))
-        if settingsWnd.ownersMarkOpacityFill then
-            if opacity > 0 then
-                settingsWnd.ownersMarkOpacityFill:SetExtent(math.max(1, math.floor((opacity / 10) * ((tonumber(settingsWnd.ownersMarkOpacityTrack and settingsWnd.ownersMarkOpacityTrack._sliderWidth) or 130) - 2))), 14)
-                settingsWnd.ownersMarkOpacityFill:Show(true)
-            else
-                settingsWnd.ownersMarkOpacityFill:Show(false)
-            end
-        end
-    end
+    if settingsWnd.speedOpacitySlider then settingsWnd.speedOpacitySlider.Update() end
+    if settingsWnd.ownersMarkOpacitySlider then settingsWnd.ownersMarkOpacitySlider.Update() end
     if settingsWnd.ownershipScaleValue then
         settingsWnd.ownershipScaleValue:SetText(tostring(settings.ownershipScaleLevel or 0))
     end
@@ -4090,6 +4057,18 @@ function TargetOverlay.shiftSelfOpacity(delta)
     updateSelfPanel()
 end
 
+-- Absolute setter for the AddonUILib slider, which reports a value rather than a delta.
+function TargetOverlay.setSpeedOpacityLevel(value)
+    local level = math.floor((tonumber(value) or 8) + 0.5)
+    if level < 0 then level = 0 end
+    if level > 10 then level = 10 end
+    if level == settings.speedMeterOpacityLevel then return end
+    settings.speedMeterOpacityLevel = level
+    saveSettings()
+    refreshSettingsButtons()
+    TargetOverlay.travelSpeed.Refresh()
+end
+
 function TargetOverlay.shiftSpeedOpacity(delta)
     local level = (tonumber(settings.speedMeterOpacityLevel) or 8) + (tonumber(delta) or 0)
     if level < 0 then level = 0 end
@@ -4098,6 +4077,18 @@ function TargetOverlay.shiftSpeedOpacity(delta)
     saveSettings()
     refreshSettingsButtons()
     TargetOverlay.travelSpeed.Refresh()
+end
+
+-- Absolute setter for the AddonUILib slider, which reports a value rather than a delta.
+function TargetOverlay.setOwnersMarkOpacityLevel(value)
+    local level = math.floor((tonumber(value) or 8) + 0.5)
+    if level < 0 then level = 0 end
+    if level > 10 then level = 10 end
+    if level == settings.ownersMarkOpacityLevel then return end
+    settings.ownersMarkOpacityLevel = level
+    saveSettings()
+    refreshSettingsButtons()
+    TargetOverlay.ownersMark.Refresh()
 end
 
 function TargetOverlay.shiftOwnersMarkOpacity(delta)
@@ -4110,45 +4101,22 @@ function TargetOverlay.shiftOwnersMarkOpacity(delta)
     TargetOverlay.ownersMark.Refresh()
 end
 
--- Cursor position as a 0..1 fraction along a click-to-set track.
---
--- Geometry comes off the widget (_sliderLeft/_sliderWidth, stamped by registerSlider in
--- settings_sections) rather than being hardcoded here a second time. The old copies drifted
--- from the layout -- the weapon proc handler still described a track at x=348 w=110 long
--- after it had moved to x=208 w=218, so clicks only registered past the bar's midpoint.
-local function trackFraction(track)
-    if not settingsWnd or not track then return nil end
-    -- MouseUI, not the raw GetMousePos: that returns SCREEN pixels while widget offsets are
-    -- in UI units, and they only agree at UI scale 1.0.
-    local mx = TargetOverlay.windowHelpers.MouseUI()
-    if not tonumber(mx) then return nil end
-    local left = tonumber(track._sliderLeft)
-    local width = tonumber(track._sliderWidth)
-    if not left or not width or width <= 0 then return nil end
-    local windowX = tonumber(settings.settingsX) or 650
-    local currentX = TargetOverlay.windowHelpers.Position(settingsWnd)
-    if tonumber(currentX) then windowX = tonumber(currentX) end
-    local frac = (tonumber(mx) - (windowX + left)) / width
-    if frac < 0 then frac = 0 elseif frac > 1 then frac = 1 end
-    return frac
-end
+-- trackFraction and the four setXOpacityFromMouse handlers lived here. They mapped a click
+-- onto a track using geometry stamped on the widget, because the layout and the handler each
+-- stated it separately and could drift -- which they did. Every slider is an AddonUILib
+-- control now and that control derives the mapping from the arguments it was built with, so
+-- there is no second statement left to disagree.
 
-function TargetOverlay.setSpeedOpacityFromMouse()
-    local frac = trackFraction(settingsWnd and settingsWnd.speedOpacityTrack)
-    if not frac then return end
-    settings.speedMeterOpacityLevel = math.floor((frac * 10) + 0.5)
+-- Absolute setter for the AddonUILib slider, which reports a value rather than a delta.
+function TargetOverlay.setWeaponProcOpacityLevel(value)
+    local level = math.floor((tonumber(value) or 8) + 0.5)
+    if level < 0 then level = 0 end
+    if level > 10 then level = 10 end
+    if level == settings.weaponProcOpacityLevel then return end
+    settings.weaponProcOpacityLevel = level
     saveSettings()
     refreshSettingsButtons()
-    TargetOverlay.travelSpeed.Refresh()
-end
-
-function TargetOverlay.setOwnersMarkOpacityFromMouse()
-    local frac = trackFraction(settingsWnd and settingsWnd.ownersMarkOpacityTrack)
-    if not frac then return end
-    settings.ownersMarkOpacityLevel = math.floor((frac * 10) + 0.5)
-    saveSettings()
-    refreshSettingsButtons()
-    TargetOverlay.ownersMark.Refresh()
+    TargetOverlay.weaponProc.Refresh()
 end
 
 function TargetOverlay.shiftWeaponProcOpacity(delta)
@@ -4179,15 +4147,6 @@ function TargetOverlay.shiftWeaponProcPopupScale(delta)
     settings.weaponProcPopupScale = level
     saveSettings()
     refreshSettingsButtons()
-end
-
-function TargetOverlay.setWeaponProcOpacityFromMouse()
-    local frac = trackFraction(settingsWnd and settingsWnd.weaponProcOpacityTrack)
-    if not frac then return end
-    settings.weaponProcOpacityLevel = math.floor((frac * 10) + 0.5)
-    saveSettings()
-    refreshSettingsButtons()
-    TargetOverlay.weaponProc.Refresh()
 end
 
 function TargetOverlay.toggleCooldownGroup(group)
@@ -4221,18 +4180,6 @@ function TargetOverlay.toggleCooldownGroup(group)
     updateSelfPanel()
 end
 
--- DEAD for the self slider since it moved to AddonUILib, which owns its own click mapping.
--- Kept because ctx still hands it out and it is nil-safe: trackFraction returns nil for a
--- missing track and this returns early.
-function TargetOverlay.setSelfOpacityFromMouse()
-    local frac = trackFraction(settingsWnd and settingsWnd.selfOpacityTrack)
-    if not frac then return end
-    settings.selfOpacityLevel = math.floor((frac * 10) + 0.5)
-    saveSettings()
-    refreshSettingsButtons()
-    updateSelfPanel()
-end
-
 -- Stats / intel window background opacity. Multiplies the per-mode base bg + header
 -- alphas (stored on the window at render time) so the slider works in either docked
 -- or expanded layout, and re-applies live for immediate feedback while idle.
@@ -4251,6 +4198,17 @@ function TargetOverlay.shiftStatsOpacity(delta)
     local level = (tonumber(settings.statsOpacityLevel) or 10) + (tonumber(delta) or 0)
     if level < 0 then level = 0 end
     if level > 20 then level = 20 end
+    settings.statsOpacityLevel = level
+    saveSettings()
+    TargetOverlay.applyStatsOpacity()
+end
+
+-- Absolute setter for the AddonUILib slider, which reports a level rather than a fraction.
+function TargetOverlay.setStatsOpacityLevel(value)
+    local level = math.floor((tonumber(value) or 10) + 0.5)
+    if level < 0 then level = 0 end
+    if level > 20 then level = 20 end
+    if level == settings.statsOpacityLevel then return end
     settings.statsOpacityLevel = level
     saveSettings()
     TargetOverlay.applyStatsOpacity()
@@ -4454,7 +4412,6 @@ local function createSettingsWindow()
         toggleSetting = toggleSetting,
         shiftUiScale = shiftUiScale,
         shiftSelfOpacity = function(delta) TargetOverlay.shiftSelfOpacity(delta) end,
-        setSelfOpacityFromMouse = function() TargetOverlay.setSelfOpacityFromMouse() end,
         slider = TargetOverlay.uiContext.slider,
         settings = settings,
         setSelfOpacityLevel = function(v) TargetOverlay.setSelfOpacityLevel(v) end,
@@ -4499,9 +4456,11 @@ local function createSettingsWindow()
         toggleSetting = toggleSetting,
         shiftUiScale = shiftUiScale,
         shiftSpeedOpacity = TargetOverlay.shiftSpeedOpacity,
-        setSpeedOpacityFromMouse = TargetOverlay.setSpeedOpacityFromMouse,
+        slider = TargetOverlay.uiContext.slider,
+        settings = settings,
+        setSpeedOpacityLevel = function(v) TargetOverlay.setSpeedOpacityLevel(v) end,
+        setOwnersMarkOpacityLevel = function(v) TargetOverlay.setOwnersMarkOpacityLevel(v) end,
         shiftOwnersMarkOpacity = TargetOverlay.shiftOwnersMarkOpacity,
-        setOwnersMarkOpacityFromMouse = TargetOverlay.setOwnersMarkOpacityFromMouse,
         targetApiDisabled = TARGET_API_FEATURES_DISABLED
     }, travelY)
     settingsSections.BuildWeaponProc(settingsWnd, {
@@ -4511,7 +4470,9 @@ local function createSettingsWindow()
         flatButton = TargetOverlay.uiContext.flatButton,
         toggleSetting = toggleSetting,
         shiftWeaponProcOpacity = TargetOverlay.shiftWeaponProcOpacity,
-        setWeaponProcOpacityFromMouse = TargetOverlay.setWeaponProcOpacityFromMouse,
+        slider = TargetOverlay.uiContext.slider,
+        settings = settings,
+        setWeaponProcOpacityLevel = function(v) TargetOverlay.setWeaponProcOpacityLevel(v) end,
         shiftWeaponProcScale = TargetOverlay.shiftWeaponProcScale,
         shiftWeaponProcPopupScale = TargetOverlay.shiftWeaponProcPopupScale
     }, weaponY)
@@ -4645,6 +4606,8 @@ function TargetOverlay.openStatsPickerWindow()
         end,
         shiftStatsOpacity = function(delta) TargetOverlay.shiftStatsOpacity(delta) end,
         setStatsOpacity = function(frac) TargetOverlay.setStatsOpacity(frac) end,
+        setStatsOpacityLevel = function(v) TargetOverlay.setStatsOpacityLevel(v) end,
+        slider = TargetOverlay.uiContext.slider,
         windowX = function(w) return TargetOverlay.windowPosition(w) end
     })
 end
@@ -4796,10 +4759,18 @@ function TargetOverlay.refreshFloatOptionButtons()
         setFlatButtonTone(raidOptions.floatButtons.nodeAutotrack, (tracking and not conflicted) and COLORS.active or COLORS.button)
     end
     if raidOptions.floatButtons.memory and raidOptions.floatButtons.memory._label then
-        raidOptions.floatButtons.memory._label:SetText(MemoryTracker.LabelText())
-        -- Tone carries the state, so the number is readable at a glance without reading it.
-        setFlatButtonTone(raidOptions.floatButtons.memory,
-            MemoryTracker.currentMB and MemoryTracker.ToneFor(MemoryTracker.currentMB, COLORS) or COLORS.button)
+        local memLabel = raidOptions.floatButtons.memory._label
+        memLabel:SetText(MemoryTracker.LabelText())
+        -- Colour the TEXT, not the fill. ToneFor returns readable text colours, and one of
+        -- its bands is white -- run through setFlatButtonTone that painted the whole button
+        -- white and made the readout look broken. The fill stays the standard button tone so
+        -- the memory button still reads as one of the float bar's buttons.
+        if memLabel.style then
+            local tone = MemoryTracker.currentMB
+                and MemoryTracker.ToneFor(MemoryTracker.currentMB, COLORS)
+                or COLORS.muted
+            memLabel.style:SetColor(tone[1], tone[2], tone[3], tone[4] or 1)
+        end
     end
     -- Re-flow: only the enabled buttons take a slot, so hiding one closes the gap instead of
     -- leaving a hole, and the bar shrinks to fit. Vertical stacks them under the grip.

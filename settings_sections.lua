@@ -3,19 +3,10 @@ local SettingsSections = {}
 -- Every section panel sits at this x inside the settings window.
 local PANEL_X = 18
 
--- Record a click-to-set track's geometry ON THE WIDGET, so the click handler and the fill
--- bar both derive from the same numbers the layout actually used.
---
--- These used to be hardcoded again inside target_overlay's handlers. The layout moved and
--- the copies did not: the weapon proc track was declared at x=208 w=218 but its handler
--- still said x=348 w=110, so clicks only registered past the bar's midpoint and the fill
--- only ever reached halfway. Deriving from the widget removes the chance of drift.
-local function registerSlider(track, trackX, width)
-    if not track then return track end
-    track._sliderLeft = PANEL_X + trackX
-    track._sliderWidth = width
-    return track
-end
+-- registerSlider lived here: it stamped a click-to-set track's geometry onto the widget so
+-- the handler and the fill could not drift from the layout. Every slider now comes from
+-- AddonUILib, which derives both from the same arguments by construction, so there is
+-- nothing left to stamp.
 
 function SettingsSections.BuildTargetOverhead(wnd, ctx)
     local colors = ctx.colors
@@ -187,9 +178,8 @@ function SettingsSections.BuildSelfCooldowns(wnd, ctx)
     local flatButton = ctx.flatButton
     local toggleSetting = ctx.toggleSetting
     local shiftUiScale = ctx.shiftUiScale
-    -- shiftSelfOpacity / setSelfOpacityFromMouse are no longer read here: the AddonUILib
-    -- slider owns the steppers and the click mapping for this row. ctx still carries them
-    -- for the three sliders that have not migrated.
+    -- No shiftSelfOpacity / setSelfOpacityFromMouse locals: the AddonUILib slider owns the
+    -- steppers and the click mapping for this row.
     local toggleProbeLogging = ctx.toggleProbeLogging
     local openDetectedSkillsWindow = ctx.openDetectedSkillsWindow
     local openCooldownManagerWindow = ctx.openCooldownManagerWindow or function() end
@@ -371,14 +361,14 @@ function SettingsSections.BuildTravelTools(wnd, ctx, y)
         ctx.toggleSetting("showSpeedMeter")
     end)
     ctx.label(p, "power_ranger_speed_opacity_label", "Opacity", controlX, row2 + 5, 52, 14, 10, colors.muted, ALIGN.LEFT)
-    wnd.speedOpacityTrack = registerSlider(ctx.flatButton(p, "power_ranger_speed_opacity_track", "", controlX + 58, row2 + 4, 132, 16, {0.10, 0.10, 0.11, 0.96}, ctx.setSpeedOpacityFromMouse), controlX + 58, 132)
-    wnd.speedOpacityFill = wnd.speedOpacityTrack:CreateColorDrawable(1, 0.84, 0, 0.55, "background")
-    wnd.speedOpacityFill:AddAnchor("TOPLEFT", wnd.speedOpacityTrack, 1, 1)
-    wnd.speedOpacityFill:SetExtent(1, 14)
-    wnd.speedOpacityFill:Show(false)
-    ctx.flatButton(p, "power_ranger_speed_opacity_down", "-", controlX + 198, row2 + 3, 22, 18, colors.button, function() ctx.shiftSpeedOpacity(-1) end)
-    wnd.speedOpacityValue = ctx.label(p, "power_ranger_speed_opacity_value", "0.80", controlX + 222, row2 + 5, 38, 14, 10, colors.white, ALIGN.CENTER)
-    ctx.flatButton(p, "power_ranger_speed_opacity_up", "+", controlX + 264, row2 + 3, 22, 18, colors.button, function() ctx.shiftSpeedOpacity(1) end)
+    wnd.speedOpacitySlider = ctx.slider(p, "power_ranger_speed_opacity", controlX + 58, row2 + 4, 132, {
+        window = wnd,
+        parentOffsetX = PANEL_X,
+        min = 0, max = 10, step = 1,
+        get = function() return ctx.settings and ctx.settings.speedMeterOpacityLevel or 8 end,
+        set = function(v) ctx.setSpeedOpacityLevel(v) end,
+        format = function(v) return string.format("%.2f", v / 10) end
+    })
 
     ctx.label(p, "power_ranger_mark_hint", "Owner's Mark", labelX, row3 + 5, 86, 14, 10, colors.muted, ALIGN.LEFT)
     wnd.ownOwnersMarkBtn = ctx.flatButton(p, "power_ranger_own_mark_toggle", "", toggleX, row3, 118, 22, colors.active, function()
@@ -393,14 +383,14 @@ function SettingsSections.BuildTravelTools(wnd, ctx, y)
     local warnX = controlX + 126
     ctx.label(p, "power_ranger_mark_parked", "Missing warning parked (API lock)", warnX, row3 + 5, 200, 14, 10, colors.muted, ALIGN.LEFT)
     ctx.label(p, "power_ranger_mark_opacity_label", "Mark opacity", labelX, 116, 86, 14, 10, colors.muted, ALIGN.LEFT)
-    wnd.ownersMarkOpacityTrack = registerSlider(ctx.flatButton(p, "power_ranger_mark_opacity_track", "", toggleX, 115, 132, 16, {0.10, 0.10, 0.11, 0.96}, ctx.setOwnersMarkOpacityFromMouse), toggleX, 132)
-    wnd.ownersMarkOpacityFill = wnd.ownersMarkOpacityTrack:CreateColorDrawable(1, 0.84, 0, 0.55, "background")
-    wnd.ownersMarkOpacityFill:AddAnchor("TOPLEFT", wnd.ownersMarkOpacityTrack, 1, 1)
-    wnd.ownersMarkOpacityFill:SetExtent(1, 14)
-    wnd.ownersMarkOpacityFill:Show(false)
-    ctx.flatButton(p, "power_ranger_mark_opacity_down", "-", toggleX + 140, 114, 22, 18, colors.button, function() ctx.shiftOwnersMarkOpacity(-1) end)
-    wnd.ownersMarkOpacityValue = ctx.label(p, "power_ranger_mark_opacity_value", "0.80", toggleX + 164, 116, 38, 14, 10, colors.white, ALIGN.CENTER)
-    ctx.flatButton(p, "power_ranger_mark_opacity_up", "+", toggleX + 206, 114, 22, 18, colors.button, function() ctx.shiftOwnersMarkOpacity(1) end)
+    wnd.ownersMarkOpacitySlider = ctx.slider(p, "power_ranger_mark_opacity", toggleX, 115, 132, {
+        window = wnd,
+        parentOffsetX = PANEL_X,
+        min = 0, max = 10, step = 1,
+        get = function() return ctx.settings and ctx.settings.ownersMarkOpacityLevel or 8 end,
+        set = function(v) ctx.setOwnersMarkOpacityLevel(v) end,
+        format = function(v) return string.format("%.2f", v / 10) end
+    })
     return p
 end
 
@@ -424,14 +414,16 @@ function SettingsSections.BuildWeaponProc(wnd, ctx, y)
     wnd.weaponProcScaleValue = ctx.label(p, "power_ranger_weapon_proc_scale_value", "0", 84, 83, 24, 14, 10, colors.white, ALIGN.CENTER)
     ctx.flatButton(p, "power_ranger_weapon_proc_scale_up", "+", 112, 80, 24, 20, colors.button, function() ctx.shiftWeaponProcScale(1) end)
     ctx.label(p, "power_ranger_weapon_proc_opacity_label", "Opacity", 152, 84, 50, 14, 10, colors.muted, ALIGN.LEFT)
-    wnd.weaponProcOpacityTrack = registerSlider(ctx.flatButton(p, "power_ranger_weapon_proc_opacity_track", "", 208, 82, 218, 16, {0.10, 0.10, 0.11, 0.96}, ctx.setWeaponProcOpacityFromMouse), 208, 218)
-    wnd.weaponProcOpacityFill = wnd.weaponProcOpacityTrack:CreateColorDrawable(1, 0.84, 0, 0.55, "background")
-    wnd.weaponProcOpacityFill:AddAnchor("TOPLEFT", wnd.weaponProcOpacityTrack, 1, 1)
-    wnd.weaponProcOpacityFill:SetExtent(1, 14)
-    wnd.weaponProcOpacityFill:Show(false)
-    ctx.flatButton(p, "power_ranger_weapon_proc_opacity_down", "-", 432, 81, 22, 18, colors.button, function() ctx.shiftWeaponProcOpacity(-1) end)
-    wnd.weaponProcOpacityValue = ctx.label(p, "power_ranger_weapon_proc_opacity_value", "0.80", 456, 83, 34, 14, 10, colors.white, ALIGN.CENTER)
-    ctx.flatButton(p, "power_ranger_weapon_proc_opacity_up", "+", 492, 81, 22, 18, colors.button, function() ctx.shiftWeaponProcOpacity(1) end)
+    -- The row whose hardcoded handler geometry (x=348 w=110) disagreed with its layout
+    -- (x=208 w=218) and made clicks land at half scale. Both now come from these arguments.
+    wnd.weaponProcOpacitySlider = ctx.slider(p, "power_ranger_weapon_proc_opacity", 208, 82, 218, {
+        window = wnd,
+        parentOffsetX = PANEL_X,
+        min = 0, max = 10, step = 1,
+        get = function() return ctx.settings and ctx.settings.weaponProcOpacityLevel or 8 end,
+        set = function(v) ctx.setWeaponProcOpacityLevel(v) end,
+        format = function(v) return string.format("%.2f", v / 10) end
+    })
     -- Row 3: size of the "Proc Ready" / "Zeal Ready" popup that floats over the character.
     ctx.label(p, "power_ranger_weapon_proc_popup_scale_label", "Popup size (over character)", 16, 114, 180, 14, 10, colors.muted, ALIGN.LEFT)
     ctx.flatButton(p, "power_ranger_weapon_proc_popup_scale_down", "-", 200, 112, 24, 20, colors.button, function() ctx.shiftWeaponProcPopupScale(-1) end)

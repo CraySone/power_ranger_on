@@ -45,18 +45,7 @@ local function refreshRows()
     end
     if wnd.hGapValue then wnd.hGapValue:SetText(tostring(settings.statsColGap or 0)) end
     if wnd.vGapValue then wnd.vGapValue:SetText(tostring(settings.statsRowGap or 0)) end
-    if wnd.opacityValue then
-        local level = math.max(0, math.min(OPACITY_MAX, tonumber(settings.statsOpacityLevel) or 10))
-        wnd.opacityValue:SetText(string.format("%.2f", level / 10))
-        if wnd.opacityFill then
-            if level > 0 then
-                wnd.opacityFill:SetExtent(math.max(1, math.floor((level / OPACITY_MAX) * (OPACITY_TRACK_W - 2))), 14)
-                wnd.opacityFill:Show(true)
-            else
-                wnd.opacityFill:Show(false)
-            end
-        end
-    end
+    if wnd.opacitySlider then wnd.opacitySlider.Update() end
 
     local stats = TargetStatsCatalog.ByCategory(StatsPicker.category)
     for i = 1, MAX_ROWS do
@@ -99,22 +88,8 @@ local function clearStats(stats)
     refreshRows()
 end
 
--- Click-to-set on the opacity track: convert mouse X (screen) to a 0..1 fraction
--- relative to the track's left edge, using the picker window's current X.
-local function setOpacityFromMouse()
-    local wnd = StatsPicker.wnd
-    local ctx = StatsPicker.ctx
-    if not wnd or not ctx or not ctx.setStatsOpacity then return end
-    -- MouseUI, not the raw GetMousePos: that returns SCREEN pixels while trackLeft below is
-    -- in UI units. They only agree at UI scale 1.0.
-    local mx = require("power_ranger_on/window_helpers").MouseUI()
-    if not tonumber(mx) then return end
-    local winX = ctx.windowX and ctx.windowX(wnd) or nil
-    if not tonumber(winX) then winX = ctx.settings.statsPickerX or 420 end
-    local trackLeft = tonumber(winX) + OPACITY_TRACK_X
-    ctx.setStatsOpacity((tonumber(mx) - trackLeft) / OPACITY_TRACK_W)
-    refreshRows()
-end
+-- setOpacityFromMouse lived here, mapping mouse X onto the track by hand. The AddonUILib
+-- slider does that from the arguments it was built with, and adds wheel support.
 
 local function createWindow()
     local ctx = StatsPicker.ctx
@@ -223,18 +198,19 @@ local function createWindow()
     -- sliders (track click + -/+). 1.00 = current look; lower = more see-through.
     if ctx.setStatsOpacity then
         ctx.label(wnd, "power_ranger_stats_picker_opacity_label", "Window opacity", 16, HEIGHT - 114, 120, 14, 10, colors.muted, ALIGN.LEFT)
-        wnd.opacityTrack = ctx.flatButton(wnd, "power_ranger_stats_picker_opacity_track", "", OPACITY_TRACK_X, HEIGHT - 115, OPACITY_TRACK_W, 16, {0.10, 0.10, 0.11, 0.96}, setOpacityFromMouse)
-        wnd.opacityFill = wnd.opacityTrack:CreateColorDrawable(1, 0.84, 0, 0.55, "background")
-        wnd.opacityFill:AddAnchor("TOPLEFT", wnd.opacityTrack, 1, 1)
-        wnd.opacityFill:SetExtent(1, 14)
-        wnd.opacityFill:Show(false)
-        ctx.flatButton(wnd, "power_ranger_stats_picker_opacity_down", "-", 446, HEIGHT - 116, 22, 20, colors.button, function()
-            ctx.shiftStatsOpacity(-1); refreshRows()
-        end)
-        wnd.opacityValue = ctx.label(wnd, "power_ranger_stats_picker_opacity_value", "1.00", 470, HEIGHT - 113, 40, 14, 10, colors.white, ALIGN.CENTER)
-        ctx.flatButton(wnd, "power_ranger_stats_picker_opacity_up", "+", 512, HEIGHT - 116, 22, 20, colors.button, function()
-            ctx.shiftStatsOpacity(1); refreshRows()
-        end)
+        -- parentOffsetX is 0: this track sits directly on its own window, not inside a panel.
+        wnd.opacitySlider = ctx.slider(wnd, "power_ranger_stats_picker_opacity", OPACITY_TRACK_X, HEIGHT - 115, OPACITY_TRACK_W, {
+            window = wnd,
+            parentOffsetX = 0,
+            fallbackX = ctx.settings and ctx.settings.statsPickerX or nil,
+            min = 0, max = OPACITY_MAX, step = 1,
+            get = function() return ctx.settings and ctx.settings.statsOpacityLevel or 10 end,
+            set = function(v)
+                ctx.setStatsOpacityLevel(v)
+                refreshRows()
+            end,
+            format = function(v) return string.format("%.2f", v / 10) end
+        })
     end
 
     ctx.label(wnd, "power_ranger_stats_picker_clear_label", "Reset (selected profile)", 16, HEIGHT - 82, 200, 14, 10, colors.muted, ALIGN.LEFT)
