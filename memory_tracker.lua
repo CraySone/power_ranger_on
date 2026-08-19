@@ -163,14 +163,28 @@ function MemoryTracker.SetMoveMode(on)
     MemoryTracker.moveMode = on == true
     local window = createWindow()
     if not window then return end
+
+    -- The banner is click-through in normal use, which also stops its own drag handle from
+    -- ever receiving a press. Move mode has to lift that on the WINDOW, not just arm the
+    -- handle -- with EnablePick(false) still set the handle is visible and inert, which is
+    -- exactly "it shows the move box but will not move".
+    if window.Clickable then pcall(function() window:Clickable(MemoryTracker.moveMode) end) end
+    if window.EnablePick then pcall(function() window:EnablePick(MemoryTracker.moveMode) end) end
+
     if window.dragHandle then
         if window.dragHandle.Clickable then
             pcall(function() window.dragHandle:Clickable(MemoryTracker.moveMode) end)
         end
         window.dragHandle:Show(MemoryTracker.moveMode)
     end
+
     if MemoryTracker.moveMode then
         MemoryTracker.ShowWarning("Memory warning position", nil, true)
+    else
+        -- Leaving move mode must clear the sample banner. It was shown sticky (hideAt = 0),
+        -- so nothing else will ever take it down and it sits on screen for the rest of the
+        -- session.
+        MemoryTracker.HideWarning()
     end
 end
 

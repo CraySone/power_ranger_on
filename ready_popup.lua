@@ -50,6 +50,18 @@ local function iconSize()
     return math.floor((BASE_SIZE * (1 + (scaleLevel() * 0.3))) + 0.5)
 end
 
+-- Click-through in normal use, pickable in Move mode.
+--
+-- These two calls are what make the popup ignore clicks over the world -- but they apply to
+-- the WHOLE window, so while they are set its own drag handle can never receive a press
+-- either. Setting them once at creation is what stopped this popup being draggable: the
+-- handle appeared in Move mode and did nothing. Move mode has to lift them and restore them.
+local function applyPickState(window, moveMode)
+    if not window then return end
+    if window.Clickable then pcall(function() window:Clickable(moveMode == true) end) end
+    if window.EnablePick then pcall(function() window:EnablePick(moveMode == true) end) end
+end
+
 local function createWindow()
     local settings = ReadyPopup.settings or {}
     local size = iconSize()
@@ -58,9 +70,8 @@ local function createWindow()
     -- Anchored to a saved screen position rather than to the character, so it can be put
     -- wherever it is actually visible mid-fight. Drag it in Move mode.
     window:AddAnchor("TOPLEFT", "UIParent", settings.cooldownReadyPopupX or 700, settings.cooldownReadyPopupY or 420)
-    -- Click-through: this sits over the world during a fight and must not swallow clicks.
-    if window.Clickable then window:Clickable(false) end
-    if window.EnablePick then window:EnablePick(false) end
+    -- Sits over the world during a fight and must not swallow clicks -- except in Move mode.
+    applyPickState(window, ReadyPopup.moveMode)
     -- No addBg: a plate behind the icon would just be a grey box over the world.
     ReadyPopup.icon = IconWidgets.Create(window, "power_ranger_cooldown_ready_icon", 0, 0, size, nil)
     if ReadyPopup.icon.Clickable then ReadyPopup.icon:Clickable(false) end
@@ -92,6 +103,7 @@ end
 -- lifetime of a real alert is far too short to grab. Toggling it off saves the position.
 function ReadyPopup.SetMoveMode(on)
     ReadyPopup.moveMode = on == true
+    applyPickState(ReadyPopup.window, ReadyPopup.moveMode)
     if not ReadyPopup.moveMode then
         ReadyPopup.current = nil
         ReadyPopup.queue = {}

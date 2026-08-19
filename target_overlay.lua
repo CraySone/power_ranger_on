@@ -1220,6 +1220,13 @@ local function applyHandleDrag(window, handle, keyX, keyY)
     TargetOverlay.windowHelpers.ApplyHandleDrag(window, handle, settings, keyX, keyY, saveSettings)
 end
 
+-- Same, but WITHOUT the Shift requirement. For handles that only exist inside an explicit
+-- Move mode: the mode is already the gate, so demanding Shift as well is redundant friction
+-- and reads as "the popup cannot be moved" to anyone who does not know the chord.
+local function applyMoveModeDrag(window, handle, keyX, keyY)
+    TargetOverlay.windowHelpers.ApplyDrag(window, handle, settings, keyX, keyY, saveSettings, true)
+end
+
 function TargetOverlay.getDistance(token)
     return TargetOverlay.targetReader.GetDistance(OverlayUtils.safeCall, token)
 end
@@ -4900,8 +4907,8 @@ function TargetOverlay.init()
     TargetOverlay.travelSpeed.Init(settings, saveSettings, applyHandleDrag)
     TargetOverlay.ownersMark.Init(settings, applyHandleDrag)
     TargetOverlay.weaponProc.Init(settings, applyHandleDrag)
-    TargetOverlay.readyPopup.Init(settings, applyHandleDrag)
-    MemoryTracker.Init(settings, applyHandleDrag, TargetOverlay.notify)
+    TargetOverlay.readyPopup.Init(settings, applyMoveModeDrag)
+    MemoryTracker.Init(settings, applyMoveModeDrag, TargetOverlay.notify)
     TargetOverlay.nodeTracker.onChanged = saveSettings
     TargetOverlay.nodeTracker.onMessage = function(text) TargetOverlay.notify(text, true) end
     TargetOverlay.nodeTracker.Init(settings, applyHandleDrag)

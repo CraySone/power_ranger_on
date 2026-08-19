@@ -254,7 +254,7 @@ function SettingsSections.BuildSelfCooldowns(wnd, ctx)
     wnd.cooldownReadyPopupBtn = flatButton(p, "power_ranger_cd_ready_popup", "", 286, 158, 118, 20, colors.active, function()
         toggleSetting("cooldownReadyPopup")
     end)
-    label(p, "power_ranger_cd_ready_hint", "Move arms this + memory banner.", 412, 161, 130, 14, 10, colors.muted, ALIGN.LEFT)
+    label(p, "power_ranger_cd_ready_hint", "Move: drag both popups.", 412, 161, 130, 14, 10, colors.muted, ALIGN.LEFT)
     return p
 end
 
