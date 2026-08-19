@@ -83,16 +83,27 @@ function MemoryTracker.Sample()
     return math.floor(raw + 0.5)
 end
 
--- Green well below the ceiling, amber approaching it, red at it. Ratios rather than absolute
--- numbers so the ramp follows a player's own critical setting instead of hardcoded limits.
-function MemoryTracker.ToneFor(mb, colors)
-    colors = colors or {}
+-- Green well below the ceiling, white approaching it, amber near it, red at it. Ratios rather
+-- than absolute numbers, so the ramp follows the player's own critical setting.
+--
+-- These are TEXT colours and are deliberately NOT taken from the caller's palette. Doing that
+-- was a bug: this addon's COLORS.active is {0.12, 0.28, 0.15} -- a dark green FILL tone for
+-- painting a button background -- and as 10px text on an already-dark button it reads as
+-- grey. A palette's fill tones and its text tones are not interchangeable.
+local RAMP = {
+    safe     = {0.38, 0.95, 0.44, 1},
+    watch    = {1.00, 1.00, 1.00, 1},
+    warn     = {1.00, 0.84, 0.00, 1},
+    critical = {1.00, 0.42, 0.40, 1}
+}
+
+function MemoryTracker.ToneFor(mb)
     local critical = MemoryTracker.CriticalMB()
     local ratio = (tonumber(mb) or 0) / math.max(1, critical)
-    if ratio >= 0.95 then return colors.danger or {0.85, 0.20, 0.20, 1} end
-    if ratio >= 0.85 then return colors.gold or {1, 0.84, 0, 1} end
-    if ratio >= 0.70 then return colors.white or {1, 1, 1, 1} end
-    return colors.active or {0.38, 0.95, 0.44, 1}
+    if ratio >= 0.95 then return RAMP.critical end
+    if ratio >= 0.85 then return RAMP.warn end
+    if ratio >= 0.70 then return RAMP.watch end
+    return RAMP.safe
 end
 
 function MemoryTracker.LabelText()
@@ -220,7 +231,7 @@ end
 
 -- Called on every sample. Split out so the threshold logic can be reasoned about without
 -- the widget code around it.
-function MemoryTracker.Evaluate(mb, colors)
+function MemoryTracker.Evaluate(mb)
     local critical = MemoryTracker.CriticalMB()
 
     if mb >= critical then
@@ -228,7 +239,7 @@ function MemoryTracker.Evaluate(mb, colors)
             MemoryTracker.criticalLatched = true
             MemoryTracker.ShowWarning(
                 "MEMORY " .. mb .. " MB\nRelog now to avoid a crash",
-                MemoryTracker.ToneFor(mb, colors), true)
+                MemoryTracker.ToneFor(mb), true)
             if MemoryTracker.notify then
                 MemoryTracker.notify("Memory at " .. mb .. " MB -- relog soon to avoid a client crash.")
             end
@@ -247,7 +258,7 @@ function MemoryTracker.Evaluate(mb, colors)
         if mb >= threshold and not MemoryTracker.announced[threshold] then
             MemoryTracker.announced[threshold] = true
             MemoryTracker.ShowWarning("Memory " .. mb .. " MB",
-                MemoryTracker.ToneFor(mb, colors), false)
+                MemoryTracker.ToneFor(mb), false)
         elseif mb < (threshold - RECOVER_MARGIN) and MemoryTracker.announced[threshold] then
             -- Rearm, so a session that recovers and climbs again still warns.
             MemoryTracker.announced[threshold] = nil
@@ -256,7 +267,7 @@ function MemoryTracker.Evaluate(mb, colors)
 end
 
 -- dt in milliseconds, from the addon's existing update tick.
-function MemoryTracker.Update(dt, colors)
+function MemoryTracker.Update(dt)
     local settings = MemoryTracker.settings
     if not settings then return end
 
@@ -284,7 +295,7 @@ function MemoryTracker.Update(dt, colors)
     MemoryTracker.unavailable = false
     MemoryTracker.currentMB = mb
     MemoryTracker.lastSampleAt = now()
-    MemoryTracker.Evaluate(mb, colors)
+    MemoryTracker.Evaluate(mb)
 end
 
 function MemoryTracker.Cleanup()

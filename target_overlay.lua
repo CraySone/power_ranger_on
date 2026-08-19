@@ -4761,13 +4761,13 @@ function TargetOverlay.refreshFloatOptionButtons()
     if raidOptions.floatButtons.memory and raidOptions.floatButtons.memory._label then
         local memLabel = raidOptions.floatButtons.memory._label
         memLabel:SetText(MemoryTracker.LabelText())
-        -- Colour the TEXT, not the fill. ToneFor returns readable text colours, and one of
-        -- its bands is white -- run through setFlatButtonTone that painted the whole button
-        -- white and made the readout look broken. The fill stays the standard button tone so
-        -- the memory button still reads as one of the float bar's buttons.
+        -- Colour the TEXT, not the fill. ToneFor returns readable text colours and owns them
+        -- itself: routing them through setFlatButtonTone painted the whole button, and
+        -- sourcing them from COLORS produced grey, because COLORS.active is a dark fill tone
+        -- rather than something meant to be read at 10px.
         if memLabel.style then
             local tone = MemoryTracker.currentMB
-                and MemoryTracker.ToneFor(MemoryTracker.currentMB, COLORS)
+                and MemoryTracker.ToneFor(MemoryTracker.currentMB)
                 or COLORS.muted
             memLabel.style:SetColor(tone[1], tone[2], tone[3], tone[4] or 1)
         end
@@ -5226,7 +5226,7 @@ function TargetOverlay.update(dt)
     -- it on an unchanged value would be pure churn on every tick.
     do
         local mb = MemoryTracker.currentMB
-        MemoryTracker.Update(elapsed, COLORS)
+        MemoryTracker.Update(elapsed)
         if MemoryTracker.currentMB ~= mb and settings.memoryFloatButton == true then
             TargetOverlay.refreshFloatOptionButtons()
         end
