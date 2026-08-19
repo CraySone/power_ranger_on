@@ -9,6 +9,7 @@ local CooldownLearning = require("power_ranger_on/cooldown_learning")
 local HotSwap = require("power_ranger_on/hot_swap")
 local ClassIntelProfiles = require("power_ranger_on/class_intel_profiles")
 local SkillProbe = require("power_ranger_on/skill_probe")
+local MemoryTracker = require("power_ranger_on/memory_tracker")
 local SettingsSanitizer = require("power_ranger_on/settings_sanitizer")
 local SettingsProfile = require("power_ranger_on/settings_profile")
 local SettingsStore = require("power_ranger_on/settings_store")
@@ -136,6 +137,14 @@ local defaults = {
     nodeTimers = {},
     nodeFloatButton = false,
     optionFloatVertical = false,
+    -- Client memory watch. Defaults match CrashAge's, which are tuned to where the AA client
+    -- actually starts dying rather than to any documented limit.
+    memoryWatchEnabled = false,
+    memoryFloatButton = false,
+    memoryCriticalMB = 3000,
+    memorySampleMs = 2000,
+    memoryWarnX = 700,
+    memoryWarnY = 220,
     nodeTrackerScaleLevel = 0,
     nodeTrackerOpacityLevel = 8,
     nodeTrackerX = 400,
@@ -3853,6 +3862,11 @@ function refreshSettingsButtons()
     setToggle(settingsWnd.hotSwapEnabledBtn, hotSwap.IsEnabled(), "HotSwap")
     setToggle(settingsWnd.hotSwapFloatBtn, hotSwap.IsFloatShown(), "Float")
     setToggle(settingsWnd.cooldownReadyPopupBtn, settings.cooldownReadyPopup == true, "CD Popup")
+    setToggle(settingsWnd.memoryWatchBtn, settings.memoryWatchEnabled == true, "Memory")
+    setToggle(settingsWnd.memoryFloatBtn, settings.memoryFloatButton == true, "Float")
+    if settingsWnd.memoryCriticalValue then
+        settingsWnd.memoryCriticalValue:SetText(tostring(settings.memoryCriticalMB or 3000))
+    end
     if settingsWnd.cooldownReadyMoveBtn then
         local moving = TargetOverlay.readyPopup.IsMoveMode()
         settingsWnd.cooldownReadyMoveBtn:SetCleanText(moving and "Done" or "Move")
@@ -4357,7 +4371,7 @@ local function createSettingsWindow()
         id = "PowerRangerSettings",
         title = "Power Ranger ON",
         width = 620,
-        height = TARGET_API_FEATURES_DISABLED and 1090 or 1330,
+        height = TARGET_API_FEATURES_DISABLED and 1120 or 1360,
         x = settings.settingsX,
         y = settings.settingsY,
         xKey = "settingsX",
@@ -4389,7 +4403,7 @@ local function createSettingsWindow()
     local travelY = 536
     local hotSwapY = 682
     local clientOptionsY = 778
-    local weaponY = 908
+    local weaponY = 938
 
     if not TARGET_API_FEATURES_DISABLED then
         settingsSections.BuildIntelWindow(settingsWnd, {
@@ -4410,7 +4424,7 @@ local function createSettingsWindow()
         travelY = 806
         hotSwapY = 952
         clientOptionsY = 1042
-        weaponY = 1172
+        weaponY = 1202
     else
         settingsSections.BuildGuildLabel(settingsWnd, {
             colors = COLORS,
@@ -4459,6 +4473,7 @@ local function createSettingsWindow()
         refreshSettingsButtons = refreshSettingsButtons
     }, hotSwapY)
     settingsSections.BuildClientOptions(settingsWnd, {
+        shiftMemoryCritical = function(delta) TargetOverlay.shiftMemoryCritical(delta) end,
         colors = COLORS,
         sectionPanel = TargetOverlay.uiContext.sectionPanel,
         label = TargetOverlay.uiContext.label,
@@ -4687,6 +4702,20 @@ local function createRaidOptionButton(parent, id, text, x, onClick)
     return btn
 end
 
+TargetOverlay.memoryTracker = MemoryTracker
+
+-- 100 MB steps over a 1500..6000 range. Finer steps would be false precision: the client
+-- does not die at a repeatable number, and the point is a margin, not a limit.
+function TargetOverlay.shiftMemoryCritical(delta)
+    local value = (tonumber(settings.memoryCriticalMB) or 3000) + ((tonumber(delta) or 0) * 100)
+    if value < 1500 then value = 1500 end
+    if value > 6000 then value = 6000 end
+    settings.memoryCriticalMB = value
+    saveSettings()
+    refreshSettingsButtons()
+    TargetOverlay.refreshFloatOptionButtons()
+end
+
 function TargetOverlay.refreshFloatOptionButtons()
     if not settings then return end
     -- Each float button has its own toggle and the bar appears whenever ANY of them is on,
@@ -4694,7 +4723,8 @@ function TargetOverlay.refreshFloatOptionButtons()
     -- so the node button was invisible unless an unrelated option happened to be enabled.
     local showDefApp = settings.showFloatOptionButtons == true
     local showNode = settings.nodeFloatButton == true
-    if not showDefApp and not showNode then
+    local showMemory = settings.memoryFloatButton == true and settings.memoryWatchEnabled == true
+    if not showDefApp and not showNode and not showMemory then
         if raidOptions.floatWindow then raidOptions.floatWindow:Show(false) end
         return
     end
@@ -4736,6 +4766,11 @@ function TargetOverlay.refreshFloatOptionButtons()
             if TargetOverlay.nodeTracker.HasConflict() then return end
             toggleSetting("nodeAutotrackEnabled")
         end)
+        -- Memory readout. A button rather than a plain label so it re-flows with the others
+        -- and so clicking it does something useful: dismiss a warning you have already read.
+        raidOptions.floatButtons.memory = createRaidOptionButton(raidOptions.floatWindow, "power_ranger_float_memory", "Mem --", 206, function()
+            MemoryTracker.HideWarning()
+        end)
         -- Anchored once so the refresh tick does not rubberband it. Drag the small
         -- grip to reposition; clicking a button only toggles its client option.
         settings.optionFloatX, settings.optionFloatY = TargetOverlay.safeWindowPosition(settings.optionFloatX, settings.optionFloatY, 208, 30)
@@ -4753,12 +4788,19 @@ function TargetOverlay.refreshFloatOptionButtons()
         raidOptions.floatButtons.nodeAutotrack._label:SetText(conflicted and "L.Barons" or (tracking and "Track ON" or "Track OFF"))
         setFlatButtonTone(raidOptions.floatButtons.nodeAutotrack, (tracking and not conflicted) and COLORS.active or COLORS.button)
     end
+    if raidOptions.floatButtons.memory and raidOptions.floatButtons.memory._label then
+        raidOptions.floatButtons.memory._label:SetText(MemoryTracker.LabelText())
+        -- Tone carries the state, so the number is readable at a glance without reading it.
+        setFlatButtonTone(raidOptions.floatButtons.memory,
+            MemoryTracker.currentMB and MemoryTracker.ToneFor(MemoryTracker.currentMB, COLORS) or COLORS.button)
+    end
     -- Re-flow: only the enabled buttons take a slot, so hiding one closes the gap instead of
     -- leaving a hole, and the bar shrinks to fit. Vertical stacks them under the grip.
     local vertical = settings.optionFloatVertical == true
     local shown = {}
     if showDefApp then shown[#shown + 1] = raidOptions.floatButtons.defaultAppearances end
     if showNode then shown[#shown + 1] = raidOptions.floatButtons.nodeAutotrack end
+    if showMemory then shown[#shown + 1] = raidOptions.floatButtons.memory end
     for index, btn in ipairs(shown) do
         btn:RemoveAllAnchors()
         if vertical then
@@ -4773,6 +4815,9 @@ function TargetOverlay.refreshFloatOptionButtons()
     end
     if raidOptions.floatButtons.nodeAutotrack then
         raidOptions.floatButtons.nodeAutotrack:Show(showNode)
+    end
+    if raidOptions.floatButtons.memory then
+        raidOptions.floatButtons.memory:Show(showMemory)
     end
     if vertical then
         raidOptions.floatWindow:SetExtent(118, 8 + (math.max(1, #shown) * 26))
@@ -4856,6 +4901,7 @@ function TargetOverlay.init()
     TargetOverlay.ownersMark.Init(settings, applyHandleDrag)
     TargetOverlay.weaponProc.Init(settings, applyHandleDrag)
     TargetOverlay.readyPopup.Init(settings, applyHandleDrag)
+    MemoryTracker.Init(settings, applyHandleDrag, TargetOverlay.notify)
     TargetOverlay.nodeTracker.onChanged = saveSettings
     TargetOverlay.nodeTracker.onMessage = function(text) TargetOverlay.notify(text, true) end
     TargetOverlay.nodeTracker.Init(settings, applyHandleDrag)
@@ -5197,6 +5243,16 @@ function TargetOverlay.update(dt)
     TargetOverlay.ownersMark.Update(elapsed)
     TargetOverlay.weaponProc.Update(elapsed)
     TargetOverlay.readyPopup.Update(elapsed)
+    -- Repaint the float readout only when the number actually moved. Sampling is already
+    -- throttled to memorySampleMs, but the float refresh re-anchors every button, so running
+    -- it on an unchanged value would be pure churn on every tick.
+    do
+        local mb = MemoryTracker.currentMB
+        MemoryTracker.Update(elapsed, COLORS)
+        if MemoryTracker.currentMB ~= mb and settings.memoryFloatButton == true then
+            TargetOverlay.refreshFloatOptionButtons()
+        end
+    end
     TargetOverlay.nodeTracker.Update(elapsed)
     -- Slow self-heal: re-asserts the unit-frame percent patch if a frame was not ready at
     -- login or another bar addon patched after us. Without it the setting had to be
@@ -5446,6 +5502,7 @@ function TargetOverlay.cleanup()
     TargetOverlay.ownersMark.Cleanup()
     TargetOverlay.weaponProc.Cleanup()
     TargetOverlay.readyPopup.Cleanup()
+    MemoryTracker.Cleanup()
     TargetOverlay.nodeTracker.Cleanup()
     pcall(function() require("power_ranger_on/node_window").Cleanup() end)
     TargetOverlay.hpPercentBars.Cleanup()

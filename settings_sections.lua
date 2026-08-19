@@ -241,15 +241,20 @@ function SettingsSections.BuildSelfCooldowns(wnd, ctx)
             ctx.notify("CD Popup is off - turn it on first.", true)
         end
     end)
+    -- Move arms BOTH on-screen popups -- the cooldown icon and the memory warning banner.
+    -- They are the same kind of thing (a transient plate over the world) and the Client
+    -- Options row has no space left for a second Move button, so one control covers both.
     wnd.cooldownReadyMoveBtn = flatButton(p, "power_ranger_cd_ready_move", "Move", 220, 158, 60, 20, colors.button, function()
         local popup = require("power_ranger_on/ready_popup")
-        popup.SetMoveMode(not popup.IsMoveMode())
+        local on = not popup.IsMoveMode()
+        popup.SetMoveMode(on)
+        pcall(function() require("power_ranger_on/memory_tracker").SetMoveMode(on) end)
         if ctx.refreshSettingsButtons then ctx.refreshSettingsButtons() end
     end)
     wnd.cooldownReadyPopupBtn = flatButton(p, "power_ranger_cd_ready_popup", "", 286, 158, 118, 20, colors.active, function()
         toggleSetting("cooldownReadyPopup")
     end)
-    label(p, "power_ranger_cd_ready_hint", "Shift-drag in Move mode.", 412, 161, 130, 14, 10, colors.muted, ALIGN.LEFT)
+    label(p, "power_ranger_cd_ready_hint", "Move arms this + memory banner.", 412, 161, 130, 14, 10, colors.muted, ALIGN.LEFT)
     return p
 end
 
@@ -279,9 +284,9 @@ end
 
 function SettingsSections.BuildClientOptions(wnd, ctx, y)
     local colors = ctx.colors
-    -- 122 tall: rows at 34 / 64 / 94. Default appearances and the float bar share one row --
-    -- layout axis, then the float toggle, then Default App itself.
-    local p = ctx.sectionPanel(wnd, "power_ranger_client_options_panel", 18, y, 584, 122, "Client Options")
+    -- 152 tall: rows at 34 / 64 / 94 / 124. Default appearances and the float bar share one
+    -- row -- layout axis, then the float toggle, then Default App itself.
+    local p = ctx.sectionPanel(wnd, "power_ranger_client_options_panel", 18, y, 584, 152, "Client Options")
     ctx.label(p, "power_ranger_default_appearance_label", "Default appearances", 14, 34, 120, 14, 10, colors.gold, ALIGN.LEFT)
     ctx.label(p, "power_ranger_default_appearance_hint", "Float bar shows while any button is on.", 140, 34, 132, 14, 10, colors.muted, ALIGN.LEFT)
     wnd.floatAxisBtn = ctx.flatButton(p, "power_ranger_float_axis", "", 276, 29, 60, 22, colors.blue, function()
@@ -314,6 +319,31 @@ function SettingsSections.BuildClientOptions(wnd, ctx, y)
     wnd.nodeTrackerHint = ctx.label(p, "power_ranger_node_hint", "Water, logs, fish, gamekeeper spots and timers.", 152, 94, 260, 14, 10, colors.muted, ALIGN.LEFT)
     wnd.nodeTrackerBtn = ctx.flatButton(p, "power_ranger_node_open", "Node Tracker", 428, 89, 118, 22, colors.blue, function()
         if ctx.openNodeWindow then ctx.openNodeWindow() end
+    end)
+
+    -- Client memory watch. One row, because the shell is already at the ~1360px ceiling a
+    -- 1080p screen allows and a second row would push it off.
+    --
+    -- Only the critical number is configurable: warnings are derived from it (-200, -100).
+    -- The player knows roughly where their client dies; asking them to also compose a list
+    -- of warning points is asking the same question twice.
+    ctx.label(p, "power_ranger_memory_label", "Client memory", 14, 124, 104, 14, 10, colors.gold, ALIGN.LEFT)
+    ctx.label(p, "power_ranger_memory_hint", "Warns before the client runs out and crashes.", 122, 124, 152, 14, 10, colors.muted, ALIGN.LEFT)
+    ctx.label(p, "power_ranger_memory_crit_label", "Crit", 278, 124, 26, 14, 10, colors.muted, ALIGN.LEFT)
+    ctx.flatButton(p, "power_ranger_memory_crit_down", "-", 304, 119, 24, 22, colors.button, function()
+        if ctx.shiftMemoryCritical then ctx.shiftMemoryCritical(-1) end
+    end)
+    wnd.memoryCriticalValue = ctx.label(p, "power_ranger_memory_crit_value", "3000", 330, 124, 42, 14, 10, colors.white, ALIGN.CENTER)
+    ctx.flatButton(p, "power_ranger_memory_crit_up", "+", 374, 119, 24, 22, colors.button, function()
+        if ctx.shiftMemoryCritical then ctx.shiftMemoryCritical(1) end
+    end)
+    wnd.memoryFloatBtn = ctx.flatButton(p, "power_ranger_memory_float", "", 404, 119, 66, 22, colors.active, function()
+        if ctx.toggleSetting then ctx.toggleSetting("memoryFloatButton") end
+        if ctx.refreshClientOptionButtons then ctx.refreshClientOptionButtons() end
+    end)
+    wnd.memoryWatchBtn = ctx.flatButton(p, "power_ranger_memory_watch", "", 476, 119, 70, 22, colors.active, function()
+        if ctx.toggleSetting then ctx.toggleSetting("memoryWatchEnabled") end
+        if ctx.refreshClientOptionButtons then ctx.refreshClientOptionButtons() end
     end)
     return p
 end
