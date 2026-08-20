@@ -4522,7 +4522,17 @@ function TargetOverlay.openSettings()
         -- Before the refresh pass: this window is built during OnLoad, when GetUIScale()
         -- still reads 1, so every border in it was laid one UI UNIT thick instead of one
         -- device pixel. This is the first moment the real scale is readable.
-        require("power_ranger_on/ui_helpers").RefreshScale()
+        local relaid, uiScale, pxCount = require("power_ranger_on/ui_helpers").RefreshScale()
+        -- Behind the Debug toggle: the only way to tell a working refresh from a silent
+        -- no-op without eyeballing border thickness at 130%. A count of 0 means the library
+        -- registered nothing; a scale of exactly 1 while the client is set elsewhere means
+        -- the value still is not readable at this point.
+        if settings.debugLogging then
+            TargetOverlay.notify(string.format(
+                "UI scale %.2f | %d px-geometry entries | %s",
+                tonumber(uiScale) or 0, tonumber(pxCount) or 0,
+                relaid and "RE-LAID this open" or "unchanged since last open"))
+        end
         refreshSettingsButtons()
         settingsWnd:Show(true)
     end

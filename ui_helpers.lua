@@ -49,8 +49,9 @@ local function unavailable() return nil end
 -- Re-lays every device-pixel line the library drew, if the UI scale has changed since the
 -- last pass. This window is built during OnLoad, when GetUIScale() still reads 1, so every
 -- border in it was laid at the wrong scale until this runs. Cheap when nothing changed.
+-- Returns: didRelay, scale, registeredCount
 function UiHelpers.RefreshScale()
-    if not AddonUILib then return false end
+    if not AddonUILib then return false, 1, 0 end
     return AddonUILib.Core.RefreshPx()
 end
 
