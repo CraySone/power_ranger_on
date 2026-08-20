@@ -82,8 +82,30 @@ local function describe(value)
     return t
 end
 
+-- Everything recorded this session, oldest first, for the file dump. The on-screen log is
+-- capped at MAX_LOG so it fits the pane; this one is not, because the point of the file is
+-- having the whole sequence afterwards.
+local transcript = {}
+
+-- Chat scrolls away and cannot be diffed, and this probe's output is a sequence you want to
+-- compare against what you saw on screen. Written after every call as well as on demand, so
+-- a crash mid-probe does not lose the run.
+local DUMP_PATH = "power_ranger_on/nametag_probe_dump.txt"
+
+local function writeDump()
+    local lines = {
+        "X2NameTag probe -- power_ranger_on",
+        "Each line: the call, then what it returned. Whether it CHANGED anything is only",
+        "visible in game -- these methods have no getters.",
+        ""
+    }
+    for i = 1, #transcript do lines[#lines + 1] = transcript[i] end
+    return (pcall(function() api.File:Write(DUMP_PATH, table.concat(lines, "\n")) end))
+end
+
 local function record(text)
     table.insert(NametagProbe.log, 1, text)
+    transcript[#transcript + 1] = text
     while #NametagProbe.log > MAX_LOG do table.remove(NametagProbe.log) end
     if NametagProbe.resultLabel then
         NametagProbe.resultLabel:SetText(table.concat(NametagProbe.log, "\n"))
@@ -111,6 +133,7 @@ local function invoke(entry)
     else
         record(entry.label .. "  ->  ERROR: " .. describe(result))
     end
+    writeDump()
 end
 
 function NametagProbe.Open(ctx)
@@ -159,6 +182,11 @@ function NametagProbe.Open(ctx)
             y = y + 22
         end
     end
+
+    UiHelpers.FlatButton(wnd, "power_ranger_nametag_dump", "Write dump file", 286, 76, 150, 20,
+        colors.blue or {0.16, 0.24, 0.38, 0.95}, function()
+            record(writeDump() and ("dump written to " .. DUMP_PATH) or "dump FAILED to write")
+        end, colors)
 
     UiHelpers.Label(wnd, "power_ranger_nametag_result_title", "Results (newest first)",
         286, 104, 300, 14, 11, colors.gold or {1, 0.84, 0, 1}, ALIGN.LEFT)
