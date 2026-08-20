@@ -4580,7 +4580,7 @@ local function createSettingsWindow()
     -- ADDON_VERSION is duplicated from main.lua on purpose. BetterBars hit an every-login
     -- settings reset from require'ing its manifest at parse time, so this is kept in sync by
     -- hand instead.
-    local ADDON_VERSION = "1.7.0"
+    local ADDON_VERSION = "1.7.2"
     local uiLib = require("power_ranger_on/ui_helpers")
 
     -- The rail. Built AFTER the sections so its buttons draw above any panel that starts at

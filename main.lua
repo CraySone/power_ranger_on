@@ -7,7 +7,7 @@ local power_ranger_on = {
     name = "Power Ranger ON",
     author = "CraySone",
     desc = "PvP self tracking and gear tools",
-    version = "1.7.0"
+    version = "1.7.2"
 }
 
 local active = false
