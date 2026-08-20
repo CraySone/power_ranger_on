@@ -139,6 +139,7 @@ local defaults = {
     optionFloatVertical = false,
     -- Client memory watch. Defaults match CrashAge's, which are tuned to where the AA client
     -- actually starts dying rather than to any documented limit.
+    portalFloatButton = false,
     memoryWatchEnabled = false,
     memoryFloatButton = false,
     memoryCriticalMB = 3000,
@@ -3868,6 +3869,7 @@ function refreshSettingsButtons()
             setToggle(settingsWnd.onlyMyPortalBtn, portal, "Mine only")
         end
     end
+    setToggle(settingsWnd.portalFloatBtn, settings.portalFloatButton == true, "Float")
     setToggle(settingsWnd.memoryWatchBtn, settings.memoryWatchEnabled == true, "Memory")
     setToggle(settingsWnd.memoryFloatBtn, settings.memoryFloatButton == true, "Float")
     if settingsWnd.memoryCriticalValue then
@@ -4081,6 +4083,17 @@ end
 
 -- Reads the client's own value, flips it, writes it back. No setting of ours is involved,
 -- so changing it in the game's options window and reopening ours shows the new state.
+-- TEMPORARY, with nametag_probe.lua: no ADDON_API wrapper exists for the NPC-name option,
+-- but the raw X2NameTag engine object IS in the sandbox and nobody has mapped its six
+-- methods. Remove this and the file once they are understood.
+function TargetOverlay.openNametagProbe()
+    require("power_ranger_on/nametag_probe").Open({
+        colors = COLORS,
+        applyDrag = applyDrag,
+        safePosition = TargetOverlay.safeWindowPosition
+    })
+end
+
 function TargetOverlay.toggleOnlyMyPortal()
     local current = AppearanceOptions.GetOnlyMyPortal()
     if current == nil then
@@ -4092,6 +4105,7 @@ function TargetOverlay.toggleOnlyMyPortal()
         return
     end
     refreshSettingsButtons()
+    TargetOverlay.refreshFloatOptionButtons()
 end
 
 function TargetOverlay.shiftSpeedOpacity(delta)
@@ -4361,7 +4375,7 @@ local function createSettingsWindow()
         id = "PowerRangerSettings",
         title = "Power Ranger ON",
         width = 620,
-        height = TARGET_API_FEATURES_DISABLED and 1120 or 1360,
+        height = TARGET_API_FEATURES_DISABLED and 1150 or 1390,
         x = settings.settingsX,
         y = settings.settingsY,
         xKey = "settingsX",
@@ -4393,7 +4407,7 @@ local function createSettingsWindow()
     local travelY = 536
     local hotSwapY = 682
     local clientOptionsY = 778
-    local weaponY = 938
+    local weaponY = 968
 
     if not TARGET_API_FEATURES_DISABLED then
         settingsSections.BuildIntelWindow(settingsWnd, {
@@ -4414,7 +4428,7 @@ local function createSettingsWindow()
         travelY = 806
         hotSwapY = 952
         clientOptionsY = 1042
-        weaponY = 1202
+        weaponY = 1232
     else
         settingsSections.BuildGuildLabel(settingsWnd, {
             colors = COLORS,
@@ -4459,10 +4473,13 @@ local function createSettingsWindow()
         label = TargetOverlay.uiContext.label,
         flatButton = TargetOverlay.uiContext.flatButton,
         toggleSetting = toggleSetting,
-        refreshSettingsButtons = refreshSettingsButtons
+        refreshSettingsButtons = refreshSettingsButtons,
+        -- TEMPORARY: see nametag_probe.lua
+        openNametagProbe = function() TargetOverlay.openNametagProbe() end
     }, hotSwapY)
     settingsSections.BuildClientOptions(settingsWnd, {
         shiftMemoryCritical = function(delta) TargetOverlay.shiftMemoryCritical(delta) end,
+        toggleOnlyMyPortal = function() TargetOverlay.toggleOnlyMyPortal() end,
         colors = COLORS,
         sectionPanel = TargetOverlay.uiContext.sectionPanel,
         label = TargetOverlay.uiContext.label,
@@ -4485,7 +4502,6 @@ local function createSettingsWindow()
         settings = settings,
         setSpeedOpacityLevel = function(v) TargetOverlay.setSpeedOpacityLevel(v) end,
         setOwnersMarkOpacityLevel = function(v) TargetOverlay.setOwnersMarkOpacityLevel(v) end,
-        toggleOnlyMyPortal = function() TargetOverlay.toggleOnlyMyPortal() end,
         shiftOwnersMarkOpacity = TargetOverlay.shiftOwnersMarkOpacity,
         targetApiDisabled = TARGET_API_FEATURES_DISABLED
     }, travelY)
@@ -4734,7 +4750,8 @@ function TargetOverlay.refreshFloatOptionButtons()
     local showDefApp = settings.showFloatOptionButtons == true
     local showNode = settings.nodeFloatButton == true
     local showMemory = settings.memoryFloatButton == true and settings.memoryWatchEnabled == true
-    if not showDefApp and not showNode and not showMemory then
+    local showPortal = settings.portalFloatButton == true
+    if not showDefApp and not showNode and not showMemory and not showPortal then
         if raidOptions.floatWindow then raidOptions.floatWindow:Show(false) end
         return
     end
@@ -4781,6 +4798,9 @@ function TargetOverlay.refreshFloatOptionButtons()
         raidOptions.floatButtons.memory = createRaidOptionButton(raidOptions.floatWindow, "power_ranger_float_memory", "Mem --", 206, function()
             MemoryTracker.HideWarning()
         end)
+        raidOptions.floatButtons.portal = createRaidOptionButton(raidOptions.floatWindow, "power_ranger_float_portal", "Portals", 296, function()
+            TargetOverlay.toggleOnlyMyPortal()
+        end)
         -- Anchored once so the refresh tick does not rubberband it. Drag the small
         -- grip to reposition; clicking a button only toggles its client option.
         settings.optionFloatX, settings.optionFloatY = TargetOverlay.safeWindowPosition(settings.optionFloatX, settings.optionFloatY, 208, 30)
@@ -4812,6 +4832,12 @@ function TargetOverlay.refreshFloatOptionButtons()
             memLabel.style:SetColor(tone[1], tone[2], tone[3], tone[4] or 1)
         end
     end
+    if raidOptions.floatButtons.portal and raidOptions.floatButtons.portal._label then
+        local portal = AppearanceOptions.GetOnlyMyPortal()
+        raidOptions.floatButtons.portal._label:SetText(
+            portal == nil and "Portal n/a" or (portal and "Portal MINE" or "Portal ALL"))
+        setFlatButtonTone(raidOptions.floatButtons.portal, portal and COLORS.active or COLORS.button)
+    end
     -- Re-flow: only the enabled buttons take a slot, so hiding one closes the gap instead of
     -- leaving a hole, and the bar shrinks to fit. Vertical stacks them under the grip.
     local vertical = settings.optionFloatVertical == true
@@ -4819,6 +4845,7 @@ function TargetOverlay.refreshFloatOptionButtons()
     if showDefApp then shown[#shown + 1] = raidOptions.floatButtons.defaultAppearances end
     if showNode then shown[#shown + 1] = raidOptions.floatButtons.nodeAutotrack end
     if showMemory then shown[#shown + 1] = raidOptions.floatButtons.memory end
+    if showPortal then shown[#shown + 1] = raidOptions.floatButtons.portal end
     for index, btn in ipairs(shown) do
         btn:RemoveAllAnchors()
         if vertical then
@@ -4836,6 +4863,9 @@ function TargetOverlay.refreshFloatOptionButtons()
     end
     if raidOptions.floatButtons.memory then
         raidOptions.floatButtons.memory:Show(showMemory)
+    end
+    if raidOptions.floatButtons.portal then
+        raidOptions.floatButtons.portal:Show(showPortal)
     end
     if vertical then
         raidOptions.floatWindow:SetExtent(118, 8 + (math.max(1, #shown) * 26))
@@ -5533,6 +5563,7 @@ function TargetOverlay.cleanup()
     TargetOverlay.weaponProc.Cleanup()
     TargetOverlay.readyPopup.Cleanup()
     MemoryTracker.Cleanup()
+    pcall(function() require("power_ranger_on/nametag_probe").Cleanup() end)
     TargetOverlay.nodeTracker.Cleanup()
     pcall(function() require("power_ranger_on/node_window").Cleanup() end)
     TargetOverlay.hpPercentBars.Cleanup()

@@ -269,14 +269,18 @@ function SettingsSections.BuildHotSwapLauncher(wnd, ctx, y)
     wnd.debugLogBtn = ctx.flatButton(p, "power_ranger_debug_logging", "", 234, 55, 82, 22, colors.button, function()
         ctx.toggleSetting("debugLogging")
     end)
+    -- TEMPORARY, alongside nametag_probe.lua. Remove both once the X2NameTag surface is known.
+    ctx.flatButton(p, "power_ranger_nametag_probe_open", "Nametag probe", 324, 55, 118, 22, colors.blue, function()
+        if ctx.openNametagProbe then ctx.openNametagProbe() end
+    end)
     return p
 end
 
 function SettingsSections.BuildClientOptions(wnd, ctx, y)
     local colors = ctx.colors
-    -- 152 tall: rows at 34 / 64 / 94 / 124. Default appearances and the float bar share one
-    -- row -- layout axis, then the float toggle, then Default App itself.
-    local p = ctx.sectionPanel(wnd, "power_ranger_client_options_panel", 18, y, 584, 152, "Client Options")
+    -- 182 tall: rows at 34 / 64 / 94 / 124 / 154. Default appearances and the float bar share
+    -- one row -- layout axis, then the float toggle, then Default App itself.
+    local p = ctx.sectionPanel(wnd, "power_ranger_client_options_panel", 18, y, 584, 182, "Client Options")
     ctx.label(p, "power_ranger_default_appearance_label", "Default appearances", 14, 34, 120, 14, 10, colors.gold, ALIGN.LEFT)
     ctx.label(p, "power_ranger_default_appearance_hint", "Float bar shows while any button is on.", 140, 34, 132, 14, 10, colors.muted, ALIGN.LEFT)
     wnd.floatAxisBtn = ctx.flatButton(p, "power_ranger_float_axis", "", 276, 29, 60, 22, colors.blue, function()
@@ -335,6 +339,20 @@ function SettingsSections.BuildClientOptions(wnd, ctx, y)
         if ctx.toggleSetting then ctx.toggleSetting("memoryWatchEnabled") end
         if ctx.refreshClientOptionButtons then ctx.refreshClientOptionButtons() end
     end)
+
+    -- "Only use my portal": stops other players' portals pulling you through. A CLIENT option,
+    -- not one of ours -- it has a real getter, so nothing is persisted on our side and the
+    -- button reads the game's own value. Change it in the client's options window and this
+    -- shows the new state rather than a stale copy.
+    ctx.label(p, "power_ranger_portal_label", "Portals", 14, 154, 104, 14, 10, colors.gold, ALIGN.LEFT)
+    ctx.label(p, "power_ranger_portal_hint", "Blocks other players' portals pulling you through.", 122, 154, 276, 14, 10, colors.muted, ALIGN.LEFT)
+    wnd.portalFloatBtn = ctx.flatButton(p, "power_ranger_portal_float", "", 404, 149, 66, 22, colors.active, function()
+        if ctx.toggleSetting then ctx.toggleSetting("portalFloatButton") end
+        if ctx.refreshClientOptionButtons then ctx.refreshClientOptionButtons() end
+    end)
+    wnd.onlyMyPortalBtn = ctx.flatButton(p, "power_ranger_only_my_portal", "", 476, 149, 70, 22, colors.active, function()
+        if ctx.toggleOnlyMyPortal then ctx.toggleOnlyMyPortal() end
+    end)
     return p
 end
 
@@ -392,14 +410,6 @@ function SettingsSections.BuildTravelTools(wnd, ctx, y)
         format = function(v) return string.format("%.2f", v / 10) end
     })
 
-    -- Client option, not one of ours: "only use my portal" stops other players' portals
-    -- pulling you through. The client's value IS the state -- it has a real getter, unlike
-    -- the appearance options -- so nothing is persisted here and the button cannot drift out
-    -- of sync with the game's own options window.
-    ctx.label(p, "power_ranger_portal_label", "Portals", 360, 116, 48, 14, 10, colors.muted, ALIGN.LEFT)
-    wnd.onlyMyPortalBtn = ctx.flatButton(p, "power_ranger_only_my_portal", "", 412, 113, 134, 18, colors.active, function()
-        if ctx.toggleOnlyMyPortal then ctx.toggleOnlyMyPortal() end
-    end)
     return p
 end
 
