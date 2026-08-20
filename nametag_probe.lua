@@ -112,21 +112,36 @@ end
 --
 -- SWEEP contains only the two methods that could plausibly separate categories.
 -- SetDrawNameTag is already known to be all-or-nothing and is not worth a step here.
+-- ROUND TWO. The first full sweep settled two of these:
+--
+--   SetNameTagMode(0)      hides PLAYER names and keeps NPC names -- the exact inverse of
+--                          what is wanted, but proof the engine discriminates by category
+--                          rather than being all-or-nothing underneath.
+--   SetNameTagMode(1..5)   no change.
+--   FactionSelection(any)  no change at all, including 255. Inert as called: either it wants
+--                          a different argument shape, or an apply step after it.
+--
+-- That leaves SetNameTag, the one method never called and the most generically named.
+-- api.Nametag enumerates exactly ten categories through its colour commands -- friendly,
+-- friendly_npc, neutral, party, raid, raidpk, pk, enemy, monster, pirate -- so
+-- SetNameTag(category, visible) is the obvious shape to try. Sweeping (n, 0) for n = 0..9
+-- asks whether any single category can be switched off on its own.
 local SWEEP = {
+    { fn = "SetNameTag", args = {0, 0}, label = "SetNameTag(0, 0)" },
+    { fn = "SetNameTag", args = {1, 0}, label = "SetNameTag(1, 0)" },
+    { fn = "SetNameTag", args = {2, 0}, label = "SetNameTag(2, 0)" },
+    { fn = "SetNameTag", args = {3, 0}, label = "SetNameTag(3, 0)" },
+    { fn = "SetNameTag", args = {4, 0}, label = "SetNameTag(4, 0)" },
+    { fn = "SetNameTag", args = {5, 0}, label = "SetNameTag(5, 0)" },
+    { fn = "SetNameTag", args = {6, 0}, label = "SetNameTag(6, 0)" },
+    { fn = "SetNameTag", args = {7, 0}, label = "SetNameTag(7, 0)" },
+    { fn = "SetNameTag", args = {8, 0}, label = "SetNameTag(8, 0)" },
+    { fn = "SetNameTag", args = {9, 0}, label = "SetNameTag(9, 0)" },
+    -- Single-argument forms, in case it is a plain on/off rather than per-category.
+    { fn = "SetNameTag", args = {0}, label = "SetNameTag(0)" },
+    { fn = "SetNameTag", args = {1}, label = "SetNameTag(1)" },
+    -- Re-checked last, since mode 0 is the one known lever and the sweep leaves it set.
     { fn = "SetNameTagMode", args = {0}, label = "SetNameTagMode(0)" },
-    { fn = "SetNameTagMode", args = {1}, label = "SetNameTagMode(1)" },
-    { fn = "SetNameTagMode", args = {2}, label = "SetNameTagMode(2)" },
-    { fn = "SetNameTagMode", args = {3}, label = "SetNameTagMode(3)" },
-    { fn = "SetNameTagMode", args = {4}, label = "SetNameTagMode(4)" },
-    { fn = "SetNameTagMode", args = {5}, label = "SetNameTagMode(5)" },
-    { fn = "SetNameTagFactionSelection", args = {0}, label = "FactionSelection(0)" },
-    { fn = "SetNameTagFactionSelection", args = {1}, label = "FactionSelection(1)" },
-    { fn = "SetNameTagFactionSelection", args = {2}, label = "FactionSelection(2)" },
-    { fn = "SetNameTagFactionSelection", args = {4}, label = "FactionSelection(4)" },
-    { fn = "SetNameTagFactionSelection", args = {8}, label = "FactionSelection(8)" },
-    { fn = "SetNameTagFactionSelection", args = {16}, label = "FactionSelection(16)" },
-    { fn = "SetNameTagFactionSelection", args = {32}, label = "FactionSelection(32)" },
-    { fn = "SetNameTagFactionSelection", args = {64}, label = "FactionSelection(64)" },
     { fn = "SetNameTagFactionSelection", args = {255}, label = "FactionSelection(255)" }
 }
 
