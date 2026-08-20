@@ -281,31 +281,48 @@ function SettingsSections.BuildClientOptions(wnd, ctx, y)
     -- Bound to the WINDOW, not the panel: a tooltip owned by a button draws behind the panel
     -- the button sits on, because Raise() only reorders among siblings.
     local tip = ctx.tooltipFor and ctx.tooltipFor(wnd) or function() end
-    -- 182 tall: rows at 34 / 64 / 94 / 124 / 154. Default appearances and the float bar share
-    -- one row -- layout axis, then the float toggle, then Default App itself.
-    local p = ctx.sectionPanel(wnd, "power_ranger_client_options_panel", 18, y, 584, 182, "Client Options")
-    ctx.label(p, "power_ranger_default_appearance_label", "Default appearances", 14, 34, 120, 14, 10, colors.gold, ALIGN.LEFT)
-    ctx.label(p, "power_ranger_default_appearance_hint", "Float bar shows while any button is on.", 140, 34, 132, 14, 10, colors.muted, ALIGN.LEFT)
-    wnd.floatAxisBtn = ctx.flatButton(p, "power_ranger_float_axis", "", 276, 29, 60, 22, colors.blue, function()
+
+    -- TWO-LINE ROWS. Each row is a gold title with its controls on the same line, and the
+    -- explanatory sentence on a second line underneath, spanning the width left of those
+    -- controls. The previous single-line layout gave each hint whatever space was left over
+    -- between title and first button -- 132px for a 195px sentence on row one, 152px for a
+    -- 220px one on the memory row -- so the text ran under the buttons beside it.
+    --
+    -- The room came free. With tabs a tab costs nothing until it is taller than the tallest,
+    -- and Target sets that at 272, so this panel had ~90px spare.
+    local ROW, HINT = 46, 17
+    local r1, r2, r3, r4, r5 = 34, 80, 126, 172, 218
+    local p = ctx.sectionPanel(wnd, "power_ranger_client_options_panel", 18, y, 584, 258, "Client Options")
+
+    -- Returns the hint label: two rows rewrite theirs at refresh time to report that another
+    -- addon has taken the feature over, so the caller needs to keep the handle.
+    local function row(title, hint, top, hintWidth)
+        ctx.label(p, "power_ranger_co_title_" .. top, title, 14, top, 260, 14, 11, colors.gold, ALIGN.LEFT)
+        return ctx.label(p, "power_ranger_co_hint_" .. top, hint, 14, top + HINT, hintWidth, 14, 10, colors.muted, ALIGN.LEFT)
+    end
+
+    -- Row 1 carries three controls, so its hint stops short of them.
+    row("Default appearances", "Float bar shows while any button is on.", r1, 258)
+    wnd.floatAxisBtn = ctx.flatButton(p, "power_ranger_float_axis", "", 280, r1 - 3, 60, 22, colors.blue, function()
         if ctx.toggleSetting then ctx.toggleSetting("optionFloatVertical") end
         if ctx.refreshClientOptionButtons then ctx.refreshClientOptionButtons() end
     end)
     tip(wnd.floatAxisBtn, "power_ranger_float_axis_tip", "Lay the float bar out horizontally or vertically. Affects every button on it.")
-    wnd.floatOptionButtonsBtn = ctx.flatButton(p, "power_ranger_float_option_buttons", "", 342, 29, 100, 22, colors.active, function()
+    wnd.floatOptionButtonsBtn = ctx.flatButton(p, "power_ranger_float_option_buttons", "", 346, r1 - 3, 92, 22, colors.active, function()
         if ctx.toggleSetting then ctx.toggleSetting("showFloatOptionButtons") end
         if ctx.refreshClientOptionButtons then ctx.refreshClientOptionButtons() end
     end)
     tip(wnd.floatOptionButtonsBtn, "power_ranger_float_option_buttons_tip", "Show the Default Appearances button on the float bar. The bar itself appears whenever any of its buttons is enabled.")
-    wnd.defaultAppearancesBtn = ctx.flatButton(p, "power_ranger_default_appearances", "", 448, 29, 100, 22, colors.active, function()
+    wnd.defaultAppearancesBtn = ctx.flatButton(p, "power_ranger_default_appearances", "", 444, r1 - 3, 102, 22, colors.active, function()
         if ctx.toggleDefaultAppearances then ctx.toggleDefaultAppearances() end
     end)
     tip(wnd.defaultAppearancesBtn, "power_ranger_default_appearances_tip", "Replaces other players' costumes with their default appearance. Fewer models to load, which helps framerate in crowds and sieges.")
-    ctx.label(p, "power_ranger_ui_hp_percent_label", "UI HP/MP percent", 14, 64, 132, 14, 10, colors.gold, ALIGN.LEFT)
-    wnd.uiHpPercentHint = ctx.label(p, "power_ranger_ui_hp_percent_hint", "Shows percent text inside unit-frame bars.", 152, 64, 268, 14, 10, colors.muted, ALIGN.LEFT)
-    wnd.uiHpPercentBtn = ctx.flatButton(p, "power_ranger_ui_hp_percent", "", 428, 59, 118, 22, colors.active, function()
-        -- BetterBars already owns these labels, so ours stands down and the button
-        -- becomes a shortcut into its settings instead. "ADDON_SETTINGS_OPENED" +
-        -- the addon name is BetterBars' own open hook (BetterBars/main.lua:2297).
+
+    wnd.uiHpPercentHint = row("UI HP/MP percent", "Shows percent text inside the game's own unit-frame bars.", r2, 400)
+    wnd.uiHpPercentBtn = ctx.flatButton(p, "power_ranger_ui_hp_percent", "", 428, r2 - 3, 118, 22, colors.active, function()
+        -- BetterBars already owns these labels, so ours stands down and the button becomes a
+        -- shortcut into its settings instead. "ADDON_SETTINGS_OPENED" plus the addon name is
+        -- BetterBars' own open hook (BetterBars/main.lua:2297).
         if require("power_ranger_on/hp_percent_bars").HasConflict() then
             pcall(function() require("api"):Emit("ADDON_SETTINGS_OPENED", "BetterBars") end)
             return
@@ -314,54 +331,44 @@ function SettingsSections.BuildClientOptions(wnd, ctx, y)
     end)
     tip(wnd.uiHpPercentBtn, "power_ranger_ui_hp_percent_tip", "Writes a percentage inside the game's own health and mana bars. If BetterBars is loaded it owns those labels instead, and this button opens its settings.")
 
-    -- Node tracker gets its own window: the main shell is already ~1360px tall and another
-    -- full section would push it past a 1080p screen.
-    ctx.label(p, "power_ranger_node_label", "Node tracker", 14, 94, 132, 14, 10, colors.gold, ALIGN.LEFT)
-    wnd.nodeTrackerHint = ctx.label(p, "power_ranger_node_hint", "Water, logs, fish, gamekeeper spots and timers.", 152, 94, 260, 14, 10, colors.muted, ALIGN.LEFT)
-    wnd.nodeTrackerBtn = ctx.flatButton(p, "power_ranger_node_open", "Node Tracker", 428, 89, 118, 22, colors.blue, function()
+    wnd.nodeTrackerHint = row("Node tracker", "Water, logs, fish and gamekeeper spots, with respawn timers.", r3, 400)
+    wnd.nodeTrackerBtn = ctx.flatButton(p, "power_ranger_node_open", "Node Tracker", 428, r3 - 3, 118, 22, colors.blue, function()
         if ctx.openNodeWindow then ctx.openNodeWindow() end
     end)
     tip(wnd.nodeTrackerBtn, "power_ranger_node_open_tip", "Tracks gathering nodes and their respawn timers. Opens in its own window. Stands down completely while Land Barons is loaded.")
 
-    -- Client memory watch. One row, because the shell is already at the ~1360px ceiling a
-    -- 1080p screen allows and a second row would push it off.
-    --
-    -- Only the critical number is configurable: warnings are derived from it (-200, -100).
-    -- The player knows roughly where their client dies; asking them to also compose a list
-    -- of warning points is asking the same question twice.
-    ctx.label(p, "power_ranger_memory_label", "Client memory", 14, 124, 104, 14, 10, colors.gold, ALIGN.LEFT)
-    ctx.label(p, "power_ranger_memory_hint", "Warns before the client runs out and crashes.", 122, 124, 152, 14, 10, colors.muted, ALIGN.LEFT)
-    ctx.label(p, "power_ranger_memory_crit_label", "Crit", 278, 124, 26, 14, 10, colors.muted, ALIGN.LEFT)
-    ctx.flatButton(p, "power_ranger_memory_crit_down", "-", 304, 119, 24, 22, colors.button, function()
+    -- The limit stepper sits on the HINT line, to the right of the sentence, so the title
+    -- line stays just the two toggles. Only this number is configurable; the warning points
+    -- derive from it at -200 and -100.
+    row("Client memory", "Warns before the client runs out of memory and crashes.", r4, 258)
+    ctx.label(p, "power_ranger_memory_crit_label", "Limit", 282, r4 + HINT, 34, 14, 10, colors.muted, ALIGN.LEFT)
+    ctx.flatButton(p, "power_ranger_memory_crit_down", "-", 318, r4 + HINT - 4, 22, 20, colors.button, function()
         if ctx.shiftMemoryCritical then ctx.shiftMemoryCritical(-1) end
     end)
-    wnd.memoryCriticalValue = ctx.label(p, "power_ranger_memory_crit_value", "3000", 330, 124, 42, 14, 10, colors.white, ALIGN.CENTER)
-    ctx.flatButton(p, "power_ranger_memory_crit_up", "+", 374, 119, 24, 22, colors.button, function()
+    wnd.memoryCriticalValue = ctx.label(p, "power_ranger_memory_crit_value", "3000", 342, r4 + HINT, 40, 14, 10, colors.white, ALIGN.CENTER)
+    ctx.flatButton(p, "power_ranger_memory_crit_up", "+", 384, r4 + HINT - 4, 22, 20, colors.button, function()
         if ctx.shiftMemoryCritical then ctx.shiftMemoryCritical(1) end
     end)
-    wnd.memoryFloatBtn = ctx.flatButton(p, "power_ranger_memory_float", "", 404, 119, 66, 22, colors.active, function()
+    wnd.memoryFloatBtn = ctx.flatButton(p, "power_ranger_memory_float", "", 428, r4 - 3, 56, 22, colors.active, function()
         if ctx.toggleSetting then ctx.toggleSetting("memoryFloatButton") end
         if ctx.refreshClientOptionButtons then ctx.refreshClientOptionButtons() end
     end)
     tip(wnd.memoryFloatBtn, "power_ranger_memory_float_tip", "Show the live memory readout on the float bar. Green well below your limit, then white, amber and red as it climbs.")
-    wnd.memoryWatchBtn = ctx.flatButton(p, "power_ranger_memory_watch", "", 476, 119, 70, 22, colors.active, function()
+    wnd.memoryWatchBtn = ctx.flatButton(p, "power_ranger_memory_watch", "", 490, r4 - 3, 56, 22, colors.active, function()
         if ctx.toggleSetting then ctx.toggleSetting("memoryWatchEnabled") end
         if ctx.refreshClientOptionButtons then ctx.refreshClientOptionButtons() end
     end)
     tip(wnd.memoryWatchBtn, "power_ranger_memory_watch_tip", "Watches the client's memory and warns before it runs out. ArcheAge leaks memory over a long session and eventually crashes; the point is to relog on your own terms.")
 
-    -- "Only use my portal": stops other players' portals pulling you through. A CLIENT option,
-    -- not one of ours -- it has a real getter, so nothing is persisted on our side and the
-    -- button reads the game's own value. Change it in the client's options window and this
-    -- shows the new state rather than a stale copy.
-    ctx.label(p, "power_ranger_portal_label", "Portals", 14, 154, 104, 14, 10, colors.gold, ALIGN.LEFT)
-    ctx.label(p, "power_ranger_portal_hint", "Blocks other players' portals pulling you through.", 122, 154, 276, 14, 10, colors.muted, ALIGN.LEFT)
-    wnd.portalFloatBtn = ctx.flatButton(p, "power_ranger_portal_float", "", 404, 149, 66, 22, colors.active, function()
+    -- A CLIENT option, not one of ours. It has a real getter, so nothing is persisted here
+    -- and the button reads the game's own value.
+    row("Portals", "Blocks other players' portals from pulling you through.", r5, 400)
+    wnd.portalFloatBtn = ctx.flatButton(p, "power_ranger_portal_float", "", 428, r5 - 3, 56, 22, colors.active, function()
         if ctx.toggleSetting then ctx.toggleSetting("portalFloatButton") end
         if ctx.refreshClientOptionButtons then ctx.refreshClientOptionButtons() end
     end)
     tip(wnd.portalFloatBtn, "power_ranger_portal_float_tip", "Show the portal toggle on the float bar, so it can be flipped without opening settings.")
-    wnd.onlyMyPortalBtn = ctx.flatButton(p, "power_ranger_only_my_portal", "", 476, 149, 70, 22, colors.active, function()
+    wnd.onlyMyPortalBtn = ctx.flatButton(p, "power_ranger_only_my_portal", "", 490, r5 - 3, 56, 22, colors.active, function()
         if ctx.toggleOnlyMyPortal then ctx.toggleOnlyMyPortal() end
     end)
     tip(wnd.onlyMyPortalBtn, "power_ranger_only_my_portal_tip", "A client setting, not one of ours: when on, only your own portals will pull you through. Reads the game's own value, so changing it in the client's options shows here too.")

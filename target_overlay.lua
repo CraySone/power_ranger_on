@@ -3891,7 +3891,7 @@ function refreshSettingsButtons()
         if settingsWnd.nodeTrackerHint then
             settingsWnd.nodeTrackerHint:SetText(landBarons
                 and "Land Barons is installed and owns node tracking."
-                or "Water, logs, fish, gamekeeper spots and timers.")
+                or "Water, logs, fish and gamekeeper spots, with respawn timers.")
         end
     end
     if settingsWnd.floatAxisBtn then
@@ -3911,7 +3911,7 @@ function refreshSettingsButtons()
         if settingsWnd.uiHpPercentHint then
             settingsWnd.uiHpPercentHint:SetText(barsConflict
                 and "BetterBars handles the bars. Opens its settings."
-                or "Shows percent text inside unit-frame bars.")
+                or "Shows percent text inside the game's own unit-frame bars.")
         end
     end
     if settingsWnd.scaleValue then
