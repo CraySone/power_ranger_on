@@ -47,51 +47,10 @@ end
 -- Booleans AND integers are offered for the same method on purpose -- the engine's other
 -- setters take 0/1 (SetOptionItemValue does), but Lua bindings often accept either, and which
 -- one a method wants is exactly what is unknown here.
-local CALLS = {
-    { group = "Master switch -- most likely to be the NPC name toggle" },
-    { fn = "SetDrawNameTag", args = {0},     label = "SetDrawNameTag(0)" },
-    { fn = "SetDrawNameTag", args = {1},     label = "SetDrawNameTag(1)" },
-    { fn = "SetDrawNameTag", args = {false}, label = "SetDrawNameTag(false)" },
-    { fn = "SetDrawNameTag", args = {true},  label = "SetDrawNameTag(true)" },
+-- The per-value button list lived here. The guided SWEEP below replaces it: a wall of
+-- 25 buttons invited exactly the free-clicking that produced two dumps with no usable
+-- observations in them.
 
-    -- THE PROMISING ONE. A first run reported "NPC names hidden, player names still visible"
-    -- somewhere in this group, which is exactly the wanted behaviour -- but three calls were
-    -- made before three observations, so which value did it was lost. Swept further here, and
-    -- observations now name their call.
-    { group = "Mode -- one of these hid NPC names and kept players. Find which." },
-    { fn = "SetNameTagMode", args = {0}, label = "SetNameTagMode(0)" },
-    { fn = "SetNameTagMode", args = {1}, label = "SetNameTagMode(1)" },
-    { fn = "SetNameTagMode", args = {2}, label = "SetNameTagMode(2)" },
-    { fn = "SetNameTagMode", args = {3}, label = "SetNameTagMode(3)" },
-    { fn = "SetNameTagMode", args = {4}, label = "SetNameTagMode(4)" },
-    { fn = "SetNameTagMode", args = {5}, label = "SetNameTagMode(5)" },
-
-    -- THE ONE THAT MATTERS for "hide NPC names, keep player names". api.Nametag proves the
-    -- client tracks nametags per CATEGORY: it has separate colour commands for friendly,
-    -- friendly_npc, neutral, party, raid, pk, enemy, monster and pirate. So something selects
-    -- categories, and this is the only method named for it.
-    --
-    -- Swept as a bitmask, because "FactionSelection" reads like flags rather than a mode --
-    -- with nine categories, powers of two reveal which bit owns which. Stand where you can
-    -- see an NPC and a player at once, and note which of them disappears at each value.
-    { group = "Faction selection -- watch an NPC AND a player at the same time" },
-    { fn = "SetNameTagFactionSelection", args = {0}, label = "FactionSelection(0)" },
-    { fn = "SetNameTagFactionSelection", args = {1}, label = "FactionSelection(1)" },
-    { fn = "SetNameTagFactionSelection", args = {2}, label = "FactionSelection(2)" },
-    { fn = "SetNameTagFactionSelection", args = {4}, label = "FactionSelection(4)" },
-    { fn = "SetNameTagFactionSelection", args = {8}, label = "FactionSelection(8)" },
-    { fn = "SetNameTagFactionSelection", args = {16}, label = "FactionSelection(16)" },
-    { fn = "SetNameTagFactionSelection", args = {32}, label = "FactionSelection(32)" },
-    { fn = "SetNameTagFactionSelection", args = {64}, label = "FactionSelection(64)" },
-    { fn = "SetNameTagFactionSelection", args = {255}, label = "FactionSelection(255) all bits" },
-    { group = "Self -- safe to test, the effect is obvious and only affects you" },
-    { fn = "SetSelfNameTagVisible", args = {0}, label = "SetSelfNameTagVisible(0)" },
-    { fn = "SetSelfNameTagVisible", args = {1}, label = "SetSelfNameTagVisible(1)" },
-
-    { group = "Fade distance -- confirms the argument convention (engine's typo, not ours)" },
-    { fn = "SetNameTageFadeOutDistance", args = {50},  label = "SetNameTageFadeOutDistance(50)" },
-    { fn = "SetNameTageFadeOutDistance", args = {200}, label = "SetNameTageFadeOutDistance(200)" }
-}
 
 local function describe(value)
     local t = type(value)
@@ -141,6 +100,39 @@ local function record(text)
     pcall(function() api.Log:Info("[PR nametag probe] " .. text) end)
 end
 
+-- === GUIDED SWEEP ==========================================================================
+--
+-- Two rounds of free-clicking produced 28 calls and no usable observations, because the
+-- protocol asked the tester to remember a second click AFTER walking to a window and looking
+-- at the world. That does not survive contact with actually looking.
+--
+-- So the probe asks instead. It applies one value, then puts two yes/no questions on screen
+-- and will not move on until both are answered. The answer for the value is recorded with the
+-- value, so nothing can drift out of pairing, and it advances by itself.
+--
+-- SWEEP contains only the two methods that could plausibly separate categories.
+-- SetDrawNameTag is already known to be all-or-nothing and is not worth a step here.
+local SWEEP = {
+    { fn = "SetNameTagMode", args = {0}, label = "SetNameTagMode(0)" },
+    { fn = "SetNameTagMode", args = {1}, label = "SetNameTagMode(1)" },
+    { fn = "SetNameTagMode", args = {2}, label = "SetNameTagMode(2)" },
+    { fn = "SetNameTagMode", args = {3}, label = "SetNameTagMode(3)" },
+    { fn = "SetNameTagMode", args = {4}, label = "SetNameTagMode(4)" },
+    { fn = "SetNameTagMode", args = {5}, label = "SetNameTagMode(5)" },
+    { fn = "SetNameTagFactionSelection", args = {0}, label = "FactionSelection(0)" },
+    { fn = "SetNameTagFactionSelection", args = {1}, label = "FactionSelection(1)" },
+    { fn = "SetNameTagFactionSelection", args = {2}, label = "FactionSelection(2)" },
+    { fn = "SetNameTagFactionSelection", args = {4}, label = "FactionSelection(4)" },
+    { fn = "SetNameTagFactionSelection", args = {8}, label = "FactionSelection(8)" },
+    { fn = "SetNameTagFactionSelection", args = {16}, label = "FactionSelection(16)" },
+    { fn = "SetNameTagFactionSelection", args = {32}, label = "FactionSelection(32)" },
+    { fn = "SetNameTagFactionSelection", args = {64}, label = "FactionSelection(64)" },
+    { fn = "SetNameTagFactionSelection", args = {255}, label = "FactionSelection(255)" }
+}
+
+local sweepIndex = 0
+local sweepNpc = nil        -- nil = not answered yet for the current step
+
 local function invoke(entry)
     local obj = nameTag()
     if not obj then
@@ -163,6 +155,54 @@ local function invoke(entry)
         record(entry.label .. "  ->  ERROR: " .. describe(result))
     end
     writeDump()
+end
+
+-- Applies the next value and asks about it. Called once to begin, then after each answered
+-- pair.
+local function sweepStep()
+    sweepNpc = nil
+    sweepIndex = sweepIndex + 1
+    if sweepIndex > #SWEEP then
+        record("SWEEP COMPLETE -- see the dump file for the table.")
+        NametagProbe.SetPrompt("Sweep complete. Send me the dump file.")
+        writeDump()
+        return
+    end
+    local entry = SWEEP[sweepIndex]
+    invoke(entry)
+    NametagProbe.SetPrompt(string.format("Step %d/%d -- %s applied.  Can you still see NPC names?",
+        sweepIndex, #SWEEP, entry.label))
+end
+
+-- Two questions per value: NPC names visible, then player names visible. Recorded together so
+-- the pair is meaningful on its own line.
+local function sweepAnswer(visible)
+    if sweepIndex < 1 or sweepIndex > #SWEEP then return end
+    local entry = SWEEP[sweepIndex]
+    if sweepNpc == nil then
+        sweepNpc = visible
+        NametagProbe.SetPrompt(string.format("Step %d/%d -- %s.  And PLAYER names?",
+            sweepIndex, #SWEEP, entry.label))
+        return
+    end
+    local verdict = "  <-- NPC HIDDEN, PLAYERS KEPT"
+    if sweepNpc or not visible then verdict = "" end
+    record(string.format("RESULT  %-24s npc=%s  player=%s%s",
+        entry.label, sweepNpc and "yes" or "no", visible and "yes" or "no", verdict))
+    writeDump()
+    sweepStep()
+end
+
+function NametagProbe.StartSweep()
+    sweepIndex = 0
+    record("=== GUIDED SWEEP START -- stand where an NPC and a player are both visible ===")
+    sweepStep()
+end
+
+function NametagProbe.SetPrompt(text)
+    if NametagProbe.promptLabel then
+        pcall(function() NametagProbe.promptLabel:SetText(text or "") end)
+    end
 end
 
 function NametagProbe.Open(ctx)
@@ -192,53 +232,54 @@ function NametagProbe.Open(ctx)
     NametagProbe.window = wnd
 
     UiHelpers.Label(wnd, "power_ranger_nametag_probe_warn",
-        "These write real client settings and there are no getters to read them back.",
-        16, 44, 560, 14, 11, colors.danger or {1, 0.42, 0.40, 1}, ALIGN.LEFT)
+        "Writes real client settings. There are no getters, so nothing here can read your",
+        16, 42, 580, 14, 11, colors.danger or {1, 0.42, 0.40, 1}, ALIGN.LEFT)
     UiHelpers.Label(wnd, "power_ranger_nametag_probe_warn2",
-        "Note your nametag options before clicking. Only the client's options window can undo them.",
-        16, 60, 560, 14, 10, colors.muted or {0.64, 0.66, 0.70, 1}, ALIGN.LEFT)
+        "values back or restore them. Only the client's own options window can undo it.",
+        16, 58, 580, 14, 11, colors.danger or {1, 0.42, 0.40, 1}, ALIGN.LEFT)
 
-    local y = 84
-    for index, entry in ipairs(CALLS) do
-        if entry.group then
-            UiHelpers.Label(wnd, "power_ranger_nametag_group_" .. index, entry.group,
-                16, y + 4, 560, 14, 10, colors.gold or {1, 0.84, 0, 1}, ALIGN.LEFT)
-            y = y + 20
-        else
-            UiHelpers.FlatButton(wnd, "power_ranger_nametag_call_" .. index, entry.label,
-                16, y, 250, 20, colors.blue or {0.16, 0.24, 0.38, 0.95},
-                function() invoke(entry) end, colors)
-            y = y + 22
-        end
-    end
+    -- THE GUIDED SWEEP is the whole point of the window. Two rounds of free-clicking produced
+    -- 28 calls and no usable observations, because the protocol relied on the tester
+    -- remembering a second click after walking away to look at the world. This applies one
+    -- value, asks two yes/no questions about it, and advances by itself -- so an answer can
+    -- never end up paired with the wrong value.
+    NametagProbe.promptLabel = UiHelpers.Label(wnd, "power_ranger_nametag_prompt",
+        "Press Start. Stand where an NPC and a player are both visible.",
+        16, 84, 580, 16, 12, colors.gold or {1, 0.84, 0, 1}, ALIGN.LEFT)
 
-    -- Every call returns nil, so the transcript alone records clicks and no outcomes. These
-    -- stamp the observation against the call immediately above it.
-    UiHelpers.FlatButton(wnd, "power_ranger_nametag_saw_npc", "^ hid NPC names only", 442, 54, 160, 20,
-        colors.active or {0.12, 0.28, 0.15, 0.95}, function()
-            record("    ^^ [" .. lastCall .. "] OBSERVED: NPC names hidden, player names still visible")
-            writeDump()
-        end, colors)
-    UiHelpers.FlatButton(wnd, "power_ranger_nametag_saw_all", "^ hid everything", 442, 76, 160, 20,
+    UiHelpers.FlatButton(wnd, "power_ranger_nametag_sweep", "Start sweep", 16, 106, 120, 24,
+        colors.blue or {0.16, 0.24, 0.38, 0.95}, function() NametagProbe.StartSweep() end, colors)
+    UiHelpers.FlatButton(wnd, "power_ranger_nametag_yes", "Yes, visible", 146, 106, 120, 24,
+        colors.active or {0.12, 0.28, 0.15, 0.95}, function() sweepAnswer(true) end, colors)
+    UiHelpers.FlatButton(wnd, "power_ranger_nametag_no", "No, hidden", 276, 106, 120, 24,
+        colors.button or {0.14, 0.14, 0.16, 0.95}, function() sweepAnswer(false) end, colors)
+    UiHelpers.FlatButton(wnd, "power_ranger_nametag_dump", "Write dump", 406, 106, 120, 24,
         colors.button or {0.14, 0.14, 0.16, 0.95}, function()
-            record("    ^^ [" .. lastCall .. "] OBSERVED: all nametags hidden")
-            writeDump()
-        end, colors)
-    UiHelpers.FlatButton(wnd, "power_ranger_nametag_saw_none", "^ no visible change", 442, 98, 160, 20,
-        colors.button or {0.14, 0.14, 0.16, 0.95}, function()
-            record("    ^^ [" .. lastCall .. "] OBSERVED: no change")
-            writeDump()
-        end, colors)
-
-    UiHelpers.FlatButton(wnd, "power_ranger_nametag_dump", "Write dump file", 286, 76, 150, 20,
-        colors.blue or {0.16, 0.24, 0.38, 0.95}, function()
             record(writeDump() and ("dump written to " .. DUMP_PATH) or "dump FAILED to write")
         end, colors)
 
-    UiHelpers.Label(wnd, "power_ranger_nametag_result_title", "Results (newest first)",
-        286, 104, 300, 14, 11, colors.gold or {1, 0.84, 0, 1}, ALIGN.LEFT)
+    -- The three values the sweep does not cover, because they are already understood or are
+    -- about you rather than about categories. Handy for putting nametags back afterwards.
+    UiHelpers.Label(wnd, "power_ranger_nametag_extra_title", "Direct calls",
+        16, 142, 200, 14, 11, colors.gold or {1, 0.84, 0, 1}, ALIGN.LEFT)
+    local EXTRAS = {
+        { fn = "SetDrawNameTag", args = {1}, label = "SetDrawNameTag(1) -- all back on" },
+        { fn = "SetDrawNameTag", args = {0}, label = "SetDrawNameTag(0) -- all off" },
+        { fn = "SetSelfNameTagVisible", args = {1}, label = "SetSelfNameTagVisible(1)" },
+        { fn = "SetSelfNameTagVisible", args = {0}, label = "SetSelfNameTagVisible(0)" }
+    }
+    local ey = 160
+    for index, entry in ipairs(EXTRAS) do
+        UiHelpers.FlatButton(wnd, "power_ranger_nametag_extra_" .. index, entry.label,
+            16, ey, 240, 20, colors.button or {0.14, 0.14, 0.16, 0.95},
+            function() invoke(entry) end, colors)
+        ey = ey + 22
+    end
+
+    UiHelpers.Label(wnd, "power_ranger_nametag_result_title", "Log (newest first)",
+        276, 142, 300, 14, 11, colors.gold or {1, 0.84, 0, 1}, ALIGN.LEFT)
     NametagProbe.resultLabel = UiHelpers.Label(wnd, "power_ranger_nametag_result", "",
-        286, 122, 316, 300, 10, colors.white or {1, 1, 1, 1}, ALIGN.LEFT)
+        276, 160, 326, 280, 10, colors.white or {1, 1, 1, 1}, ALIGN.LEFT)
 
     -- Reports whether the object is reachable at all before anything is clicked, so an absent
     -- X2NameTag is distinguishable from a method that silently does nothing.
