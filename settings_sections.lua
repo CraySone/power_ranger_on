@@ -391,6 +391,15 @@ function SettingsSections.BuildTravelTools(wnd, ctx, y)
         set = function(v) ctx.setOwnersMarkOpacityLevel(v) end,
         format = function(v) return string.format("%.2f", v / 10) end
     })
+
+    -- Client option, not one of ours: "only use my portal" stops other players' portals
+    -- pulling you through. The client's value IS the state -- it has a real getter, unlike
+    -- the appearance options -- so nothing is persisted here and the button cannot drift out
+    -- of sync with the game's own options window.
+    ctx.label(p, "power_ranger_portal_label", "Portals", 360, 116, 48, 14, 10, colors.muted, ALIGN.LEFT)
+    wnd.onlyMyPortalBtn = ctx.flatButton(p, "power_ranger_only_my_portal", "", 412, 113, 134, 18, colors.active, function()
+        if ctx.toggleOnlyMyPortal then ctx.toggleOnlyMyPortal() end
+    end)
     return p
 end
 

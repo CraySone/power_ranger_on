@@ -3858,6 +3858,16 @@ function refreshSettingsButtons()
     setToggle(settingsWnd.hotSwapEnabledBtn, hotSwap.IsEnabled(), "HotSwap")
     setToggle(settingsWnd.hotSwapFloatBtn, hotSwap.IsFloatShown(), "Float")
     setToggle(settingsWnd.cooldownReadyPopupBtn, settings.cooldownReadyPopup == true, "CD Popup")
+    if settingsWnd.onlyMyPortalBtn then
+        local portal = AppearanceOptions.GetOnlyMyPortal()
+        if portal == nil then
+            -- nil is not false: the option is unreachable, not switched off.
+            settingsWnd.onlyMyPortalBtn:SetCleanText("Portals n/a")
+            setFlatButtonTone(settingsWnd.onlyMyPortalBtn, COLORS.button)
+        else
+            setToggle(settingsWnd.onlyMyPortalBtn, portal, "Mine only")
+        end
+    end
     setToggle(settingsWnd.memoryWatchBtn, settings.memoryWatchEnabled == true, "Memory")
     setToggle(settingsWnd.memoryFloatBtn, settings.memoryFloatButton == true, "Float")
     if settingsWnd.memoryCriticalValue then
@@ -4067,6 +4077,21 @@ function TargetOverlay.setSpeedOpacityLevel(value)
     saveSettings()
     refreshSettingsButtons()
     TargetOverlay.travelSpeed.Refresh()
+end
+
+-- Reads the client's own value, flips it, writes it back. No setting of ours is involved,
+-- so changing it in the game's options window and reopening ours shows the new state.
+function TargetOverlay.toggleOnlyMyPortal()
+    local current = AppearanceOptions.GetOnlyMyPortal()
+    if current == nil then
+        TargetOverlay.notify("Portal option is not available on this client build.", true)
+        return
+    end
+    if not AppearanceOptions.SetOnlyMyPortal(not current) then
+        TargetOverlay.notify("Could not change the portal option.", true)
+        return
+    end
+    refreshSettingsButtons()
 end
 
 function TargetOverlay.shiftSpeedOpacity(delta)
@@ -4460,6 +4485,7 @@ local function createSettingsWindow()
         settings = settings,
         setSpeedOpacityLevel = function(v) TargetOverlay.setSpeedOpacityLevel(v) end,
         setOwnersMarkOpacityLevel = function(v) TargetOverlay.setOwnersMarkOpacityLevel(v) end,
+        toggleOnlyMyPortal = function() TargetOverlay.toggleOnlyMyPortal() end,
         shiftOwnersMarkOpacity = TargetOverlay.shiftOwnersMarkOpacity,
         targetApiDisabled = TARGET_API_FEATURES_DISABLED
     }, travelY)
