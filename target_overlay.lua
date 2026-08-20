@@ -4519,6 +4519,10 @@ end
 function TargetOverlay.openSettings()
     if settingsWnd then
         cleanDeprecatedTrackedSkills()
+        -- Before the refresh pass: this window is built during OnLoad, when GetUIScale()
+        -- still reads 1, so every border in it was laid one UI UNIT thick instead of one
+        -- device pixel. This is the first moment the real scale is readable.
+        require("power_ranger_on/ui_helpers").RefreshScale()
         refreshSettingsButtons()
         settingsWnd:Show(true)
     end

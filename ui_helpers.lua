@@ -46,6 +46,14 @@ end
 -- crash mid-layout. Every function below returns nil in that state.
 local function unavailable() return nil end
 
+-- Re-lays every device-pixel line the library drew, if the UI scale has changed since the
+-- last pass. This window is built during OnLoad, when GetUIScale() still reads 1, so every
+-- border in it was laid at the wrong scale until this runs. Cheap when nothing changed.
+function UiHelpers.RefreshScale()
+    if not AddonUILib then return false end
+    return AddonUILib.Core.RefreshPx()
+end
+
 function UiHelpers.SetTextColor(widget, color)
     if not AddonUILib then return unavailable() end
     return AddonUILib.Core.SetTextColor(widget, color)
