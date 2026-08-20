@@ -8,7 +8,7 @@ local PANEL_X = 18
 -- AddonUILib, which derives both from the same arguments by construction, so there is
 -- nothing left to stamp.
 
-function SettingsSections.BuildTargetOverhead(wnd, ctx)
+function SettingsSections.BuildTargetOverhead(wnd, ctx, y)
     local colors = ctx.colors
     local sectionPanel = ctx.sectionPanel
     local label = ctx.label
@@ -21,7 +21,7 @@ function SettingsSections.BuildTargetOverhead(wnd, ctx)
     local shiftModelRangeOffset = ctx.shiftModelRangeOffset
     local cycleOverlayTextStyle = ctx.cycleOverlayTextStyle
 
-    local p = sectionPanel(wnd, "power_ranger_model_panel", 18, 52, 584, 190, "Target Overhead")
+    local p = sectionPanel(wnd, "power_ranger_model_panel", 18, y or 52, 584, 190, "Target Overhead")
     label(p, "power_ranger_model_compact_only", "Compact only", 16, 35, 86, 14, 10, colors.gold, ALIGN.LEFT)
     label(p, "power_ranger_scale_label", "Scale", 116, 35, 36, 14, 10, colors.muted, ALIGN.LEFT)
     flatButton(p, "power_ranger_scale_down", "-", 154, 32, 22, 20, colors.button, function() shiftUiScale(-1) end)
@@ -87,7 +87,7 @@ function SettingsSections.BuildGuildLabel(wnd, ctx, y)
     return p
 end
 
-function SettingsSections.BuildIntelWindow(wnd, ctx)
+function SettingsSections.BuildIntelWindow(wnd, ctx, y)
     local colors = ctx.colors
     local sectionPanel = ctx.sectionPanel
     local label = ctx.label
@@ -99,7 +99,7 @@ function SettingsSections.BuildIntelWindow(wnd, ctx)
     local shiftGuildFamilyScale = ctx.shiftGuildFamilyScale or shiftUiScale
     local fields = ctx.fields or {}
 
-    local p = sectionPanel(wnd, "power_ranger_window_panel", 18, 254, 584, 344, "Stats Window")
+    local p = sectionPanel(wnd, "power_ranger_window_panel", 18, y or 254, 584, 344, "Stats Window")
     local function band(id, y, h)
         local bg = p:CreateColorDrawable(0.07, 0.075, 0.085, 0.62, "background")
         bg:SetExtent(552, h)
@@ -171,7 +171,7 @@ function SettingsSections.BuildIntelWindow(wnd, ctx)
     return p
 end
 
-function SettingsSections.BuildSelfCooldowns(wnd, ctx)
+function SettingsSections.BuildSelfCooldowns(wnd, ctx, y)
     local colors = ctx.colors
     local sectionPanel = ctx.sectionPanel
     local label = ctx.label
@@ -184,7 +184,7 @@ function SettingsSections.BuildSelfCooldowns(wnd, ctx)
     local openDetectedSkillsWindow = ctx.openDetectedSkillsWindow
     local openCooldownManagerWindow = ctx.openCooldownManagerWindow or function() end
 
-    local p = sectionPanel(wnd, "power_ranger_self_panel", 18, ctx.y or 566, 584, 182, "Self Cooldowns & Gear")
+    local p = sectionPanel(wnd, "power_ranger_self_panel", 18, y or ctx.y or 566, 584, 182, "Self Cooldowns & Gear")
     label(p, "power_ranger_self_hint", "Known cooldown auras stay ID-based.", 14, 32, 260, 14, 10, colors.muted, ALIGN.LEFT)
     wnd.nuziImportBtn = flatButton(p, "power_ranger_toggle_nuzi_cd_import", "", 286, 29, 104, 20, colors.blue, function() toggleSetting("importNuziCooldowns") end)
     label(p, "power_ranger_self_scale_label", "Scale", 410, 32, 40, 14, 10, colors.muted, ALIGN.LEFT)

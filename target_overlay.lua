@@ -139,6 +139,7 @@ local defaults = {
     optionFloatVertical = false,
     -- Client memory watch. Defaults match CrashAge's, which are tuned to where the AA client
     -- actually starts dying rather than to any documented limit.
+    activeSettingsTab = "target",
     portalFloatButton = false,
     memoryWatchEnabled = false,
     memoryFloatButton = false,
@@ -4368,6 +4369,43 @@ local function toggleProbeLogging()
     api.Log:Info("[Power Ranger On] skill probe logging " .. (settings.skillProbeLogging and "ON" or "OFF"))
 end
 
+-- Five tabs, not eight sections: Target Overhead and Guild Label are both "what floats over
+-- a target"; the Stats and Self windows are both draggable HUD panels; Weapon Proc and Hot
+-- Swap are both fight-time. Grouping by when you reach for something beats grouping by which
+-- code file it lives in.
+local SETTINGS_TABS = {
+    { key = "target",  label = "Target" },
+    { key = "windows", label = "Windows" },
+    { key = "combat",  label = "Combat" },
+    { key = "world",   label = "World" },
+    { key = "client",  label = "Client" }
+}
+
+function TargetOverlay.setSettingsTab(key)
+    if not settingsWnd or not settingsWnd.tabPanels then return end
+    local valid = false
+    for _, tab in ipairs(SETTINGS_TABS) do
+        if tab.key == key then valid = true end
+    end
+    if not valid then key = SETTINGS_TABS[1].key end
+    settings.activeSettingsTab = key
+    saveSettings()
+    for _, tab in ipairs(SETTINGS_TABS) do
+        local panels = settingsWnd.tabPanels[tab.key]
+        if panels then
+            for _, panel in ipairs(panels) do
+                pcall(function() panel:Show(tab.key == key) end)
+            end
+        end
+        -- btn:SetTone, not the local setFlatButtonTone helper: that one is declared further
+        -- down this file, so it is not an upvalue here and would resolve to nil at call time.
+        local btn = settingsWnd.tabButtons and settingsWnd.tabButtons[tab.key]
+        if btn and btn.SetTone then
+            pcall(function() btn:SetTone(tab.key == key and COLORS.blue or COLORS.button) end)
+        end
+    end
+end
+
 local function createSettingsWindow()
     local settingsUi = require("power_ranger_on/settings_ui")
     local settingsSections = require("power_ranger_on/settings_sections")
@@ -4375,7 +4413,10 @@ local function createSettingsWindow()
         id = "PowerRangerSettings",
         title = "Power Ranger ON",
         width = 620,
-        height = TARGET_API_FEATURES_DISABLED and 1150 or 1390,
+        -- Tallest tab plus chrome, not the sum of every section. Windows is the tallest:
+        -- Stats Window (344) above Self Cooldowns (182). Adding a section to any other tab
+        -- now costs nothing in height.
+        height = TARGET_API_FEATURES_DISABLED and 380 or 634,
         x = settings.settingsX,
         y = settings.settingsY,
         xKey = "settingsX",
@@ -4389,7 +4430,24 @@ local function createSettingsWindow()
         onClose = function() settingsWnd:Show(false) end
     })
 
-    settingsSections.BuildTargetOverhead(settingsWnd, {
+    -- TABS. Every section is built at the SAME y and only the active tab's panels are shown,
+    -- so the window is as tall as its tallest tab instead of the sum of all eight sections.
+    -- The wall this replaces was 1390px -- taller than a 1080p screen -- and every feature
+    -- added to it made that worse.
+    --
+    -- Nothing inside a section moves, and refreshSettingsButtons is untouched: it looks
+    -- widgets up by name on settingsWnd, and refreshing a hidden widget is harmless.
+    local TAB_Y = 80
+    local selfY = TAB_Y
+    settingsWnd.tabPanels = {}
+    local function inTab(key, panel, offset)
+        if not panel then return TAB_Y end
+        settingsWnd.tabPanels[key] = settingsWnd.tabPanels[key] or {}
+        table.insert(settingsWnd.tabPanels[key], panel)
+        return TAB_Y + (offset or 0)
+    end
+
+    inTab("target", settingsSections.BuildTargetOverhead(settingsWnd, {
         colors = COLORS,
         sectionPanel = TargetOverlay.uiContext.sectionPanel,
         label = TargetOverlay.uiContext.label,
@@ -4401,16 +4459,11 @@ local function createSettingsWindow()
         shiftCompactModelY = TargetOverlay.shiftCompactModelY,
         shiftModelRangeOffset = TargetOverlay.shiftModelRangeOffset,
         cycleOverlayTextStyle = TargetOverlay.cycleOverlayTextStyle
-    })
+    }, TAB_Y))
 
-    local selfY = 340
-    local travelY = 536
-    local hotSwapY = 682
-    local clientOptionsY = 778
-    local weaponY = 968
 
     if not TARGET_API_FEATURES_DISABLED then
-        settingsSections.BuildIntelWindow(settingsWnd, {
+        inTab("windows", settingsSections.BuildIntelWindow(settingsWnd, {
             colors = COLORS,
             sectionPanel = TargetOverlay.uiContext.sectionPanel,
             label = TargetOverlay.uiContext.label,
@@ -4422,15 +4475,13 @@ local function createSettingsWindow()
             shiftSimpleSpacing = TargetOverlay.shiftSimpleSpacing,
             fields = TARGET_INFO_FIELDS,
             openStatsPicker = function() TargetOverlay.openStatsPickerWindow() end
-        })
+        }, TAB_Y))
 
-        selfY = 610
-        travelY = 806
-        hotSwapY = 952
-        clientOptionsY = 1042
-        weaponY = 1232
+        -- Self Cooldowns sits under the Stats Window inside the Windows tab. With the intel
+        -- window absent it moves to the top of that tab instead.
+        selfY = TAB_Y + 352
     else
-        settingsSections.BuildGuildLabel(settingsWnd, {
+        inTab("target", settingsSections.BuildGuildLabel(settingsWnd, {
             colors = COLORS,
             sectionPanel = TargetOverlay.uiContext.sectionPanel,
             label = TargetOverlay.uiContext.label,
@@ -4438,10 +4489,10 @@ local function createSettingsWindow()
             colorCube = TargetOverlay.uiContext.colorCube,
             toggleSetting = toggleSetting,
             shiftGuildFamilyScale = shiftUiScale
-        }, 254)
+        }, TAB_Y + 198))
     end
 
-    settingsSections.BuildSelfCooldowns(settingsWnd, {
+    inTab("windows", settingsSections.BuildSelfCooldowns(settingsWnd, {
         colors = COLORS,
         sectionPanel = TargetOverlay.uiContext.sectionPanel,
         label = TargetOverlay.uiContext.label,
@@ -4466,8 +4517,8 @@ local function createSettingsWindow()
         notify = TargetOverlay.notify,
         refreshSettingsButtons = refreshSettingsButtons,
         y = selfY
-    })
-    settingsSections.BuildHotSwapLauncher(settingsWnd, {
+    }, selfY))
+    inTab("combat", settingsSections.BuildHotSwapLauncher(settingsWnd, {
         colors = COLORS,
         sectionPanel = TargetOverlay.uiContext.sectionPanel,
         label = TargetOverlay.uiContext.label,
@@ -4476,8 +4527,8 @@ local function createSettingsWindow()
         refreshSettingsButtons = refreshSettingsButtons,
         -- TEMPORARY: see nametag_probe.lua
         openNametagProbe = function() TargetOverlay.openNametagProbe() end
-    }, hotSwapY)
-    settingsSections.BuildClientOptions(settingsWnd, {
+    }, TAB_Y + 148))
+    inTab("client", settingsSections.BuildClientOptions(settingsWnd, {
         shiftMemoryCritical = function(delta) TargetOverlay.shiftMemoryCritical(delta) end,
         toggleOnlyMyPortal = function() TargetOverlay.toggleOnlyMyPortal() end,
         colors = COLORS,
@@ -4489,8 +4540,8 @@ local function createSettingsWindow()
         notify = TargetOverlay.notify,
         openNodeWindow = function() TargetOverlay.openNodeWindow() end,
         refreshClientOptionButtons = TargetOverlay.refreshClientOptionButtons
-    }, clientOptionsY)
-    settingsSections.BuildTravelTools(settingsWnd, {
+    }, TAB_Y))
+    inTab("world", settingsSections.BuildTravelTools(settingsWnd, {
         colors = COLORS,
         sectionPanel = TargetOverlay.uiContext.sectionPanel,
         label = TargetOverlay.uiContext.label,
@@ -4504,8 +4555,8 @@ local function createSettingsWindow()
         setOwnersMarkOpacityLevel = function(v) TargetOverlay.setOwnersMarkOpacityLevel(v) end,
         shiftOwnersMarkOpacity = TargetOverlay.shiftOwnersMarkOpacity,
         targetApiDisabled = TARGET_API_FEATURES_DISABLED
-    }, travelY)
-    settingsSections.BuildWeaponProc(settingsWnd, {
+    }, TAB_Y))
+    inTab("combat", settingsSections.BuildWeaponProc(settingsWnd, {
         colors = COLORS,
         sectionPanel = TargetOverlay.uiContext.sectionPanel,
         label = TargetOverlay.uiContext.label,
@@ -4517,13 +4568,25 @@ local function createSettingsWindow()
         setWeaponProcOpacityLevel = function(v) TargetOverlay.setWeaponProcOpacityLevel(v) end,
         shiftWeaponProcScale = TargetOverlay.shiftWeaponProcScale,
         shiftWeaponProcPopupScale = TargetOverlay.shiftWeaponProcPopupScale
-    }, weaponY)
+    }, TAB_Y))
 
     -- ADDON_VERSION is duplicated from main.lua on purpose. BetterBars hit an every-login
     -- settings reset from require'ing its manifest at parse time, so this is kept in sync by
     -- hand instead.
     local ADDON_VERSION = "1.7.0"
     local uiLib = require("power_ranger_on/ui_helpers")
+
+    -- The rail. Built AFTER the sections so its buttons draw above any panel that starts at
+    -- the same y, and so tabPanels is already populated when the first switch runs.
+    settingsWnd.tabButtons = {}
+    local tabX = 18
+    for _, tab in ipairs(SETTINGS_TABS) do
+        local key = tab.key
+        settingsWnd.tabButtons[key] = TargetOverlay.uiContext.flatButton(settingsWnd,
+            "power_ranger_tab_" .. key, tab.label, tabX, 46, 112, 24, COLORS.button,
+            function() TargetOverlay.setSettingsTab(key) end)
+        tabX = tabX + 116
+    end
 
     -- Info lives in a panel attached to the right edge, opened by an arrow tab.
     --
@@ -4555,6 +4618,7 @@ local function createSettingsWindow()
     end
 
     refreshSettingsButtons()
+    TargetOverlay.setSettingsTab(settings.activeSettingsTab or SETTINGS_TABS[1].key)
     settingsWnd:Show(false)
 end
 
