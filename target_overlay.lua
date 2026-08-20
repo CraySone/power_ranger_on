@@ -4375,7 +4375,11 @@ end
 -- code file it lives in.
 local SETTINGS_TABS = {
     { key = "target",  label = "Target" },
-    { key = "windows", label = "Windows" },
+    -- "Windows" only earns its name when the intel window exists. It does not today:
+    -- TARGET_API_FEATURES_DISABLED is true, so BuildIntelWindow never runs and this tab holds
+    -- Self Cooldowns alone. The label follows the flag rather than describing a panel that is
+    -- not there.
+    { key = "windows", label = TARGET_API_FEATURES_DISABLED and "Self" or "Windows" },
     { key = "combat",  label = "Combat" },
     { key = "world",   label = "World" },
     { key = "client",  label = "Client" }
@@ -4413,9 +4417,14 @@ local function createSettingsWindow()
         id = "PowerRangerSettings",
         title = "Power Ranger ON",
         width = 620,
-        -- Tallest tab plus chrome, not the sum of every section. Windows is the tallest:
-        -- Stats Window (344) above Self Cooldowns (182). Adding a section to any other tab
-        -- now costs nothing in height.
+        -- Tallest tab plus chrome, not the sum of every section.
+        --
+        -- With target features disabled (today) that is Target: Overhead (190) then Guild
+        -- Label (74) at +198, so content ends at 352 and 380 leaves a bottom margin. If the
+        -- flag is ever cleared the Stats Window (344) appears above Self Cooldowns (182) and
+        -- that tab becomes the tallest at 534, hence 634.
+        --
+        -- Either way, adding a section to any other tab costs nothing in height.
         height = TARGET_API_FEATURES_DISABLED and 380 or 634,
         x = settings.settingsX,
         y = settings.settingsY,
