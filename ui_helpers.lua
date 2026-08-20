@@ -67,6 +67,14 @@ function UiHelpers.Finite(v)
     return AddonUILib.Core.Finite(v)
 end
 
+-- opts.owner must be the containing WINDOW, not the control's panel: Raise() only reorders a
+-- widget among its siblings, so a tooltip owned by a button draws behind the panel that
+-- button sits on.
+function UiHelpers.Tooltip(parent, id, text, opts)
+    if not AddonUILib then return unavailable() end
+    return AddonUILib.Tooltip.Create(parent, id, text, opts)
+end
+
 function UiHelpers.SetTextColor(widget, color)
     if not AddonUILib then return unavailable() end
     return AddonUILib.Core.SetTextColor(widget, color)

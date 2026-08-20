@@ -20,6 +20,14 @@ function TargetUi.Context(colors, cycleColor)
         if opts.colors == nil then opts.colors = colors end
         return UiHelpers.Slider(parent, id, x, y, w, opts)
     end
+    -- ctx.tooltip(window)(control, id, text) -- curried so a section binds the window once
+    -- and every call after it is short. The window, not the panel, has to be the owner.
+    ctx.tooltipFor = function(window)
+        return function(control, id, text, width)
+            if not control then return nil end
+            return UiHelpers.Tooltip(control, id, text, { owner = window, width = width })
+        end
+    end
     ctx.colorCube = function(parent, id, x, y, key)
         return UiHelpers.ColorCube(parent, id, x, y, key, function(self)
             if cycleColor then cycleColor(self._colorKey) end

@@ -278,6 +278,9 @@ end
 
 function SettingsSections.BuildClientOptions(wnd, ctx, y)
     local colors = ctx.colors
+    -- Bound to the WINDOW, not the panel: a tooltip owned by a button draws behind the panel
+    -- the button sits on, because Raise() only reorders among siblings.
+    local tip = ctx.tooltipFor and ctx.tooltipFor(wnd) or function() end
     -- 182 tall: rows at 34 / 64 / 94 / 124 / 154. Default appearances and the float bar share
     -- one row -- layout axis, then the float toggle, then Default App itself.
     local p = ctx.sectionPanel(wnd, "power_ranger_client_options_panel", 18, y, 584, 182, "Client Options")
@@ -287,13 +290,16 @@ function SettingsSections.BuildClientOptions(wnd, ctx, y)
         if ctx.toggleSetting then ctx.toggleSetting("optionFloatVertical") end
         if ctx.refreshClientOptionButtons then ctx.refreshClientOptionButtons() end
     end)
+    tip(wnd.floatAxisBtn, "power_ranger_float_axis_tip", "Lay the float bar out horizontally or vertically. Affects every button on it.")
     wnd.floatOptionButtonsBtn = ctx.flatButton(p, "power_ranger_float_option_buttons", "", 342, 29, 100, 22, colors.active, function()
         if ctx.toggleSetting then ctx.toggleSetting("showFloatOptionButtons") end
         if ctx.refreshClientOptionButtons then ctx.refreshClientOptionButtons() end
     end)
+    tip(wnd.floatOptionButtonsBtn, "power_ranger_float_option_buttons_tip", "Show the Default Appearances button on the float bar. The bar itself appears whenever any of its buttons is enabled.")
     wnd.defaultAppearancesBtn = ctx.flatButton(p, "power_ranger_default_appearances", "", 448, 29, 100, 22, colors.active, function()
         if ctx.toggleDefaultAppearances then ctx.toggleDefaultAppearances() end
     end)
+    tip(wnd.defaultAppearancesBtn, "power_ranger_default_appearances_tip", "Replaces other players' costumes with their default appearance. Fewer models to load, which helps framerate in crowds and sieges.")
     ctx.label(p, "power_ranger_ui_hp_percent_label", "UI HP/MP percent", 14, 64, 132, 14, 10, colors.gold, ALIGN.LEFT)
     wnd.uiHpPercentHint = ctx.label(p, "power_ranger_ui_hp_percent_hint", "Shows percent text inside unit-frame bars.", 152, 64, 268, 14, 10, colors.muted, ALIGN.LEFT)
     wnd.uiHpPercentBtn = ctx.flatButton(p, "power_ranger_ui_hp_percent", "", 428, 59, 118, 22, colors.active, function()
@@ -306,6 +312,7 @@ function SettingsSections.BuildClientOptions(wnd, ctx, y)
         end
         if ctx.toggleSetting then ctx.toggleSetting("showUiHpPercent") end
     end)
+    tip(wnd.uiHpPercentBtn, "power_ranger_ui_hp_percent_tip", "Writes a percentage inside the game's own health and mana bars. If BetterBars is loaded it owns those labels instead, and this button opens its settings.")
 
     -- Node tracker gets its own window: the main shell is already ~1360px tall and another
     -- full section would push it past a 1080p screen.
@@ -314,6 +321,7 @@ function SettingsSections.BuildClientOptions(wnd, ctx, y)
     wnd.nodeTrackerBtn = ctx.flatButton(p, "power_ranger_node_open", "Node Tracker", 428, 89, 118, 22, colors.blue, function()
         if ctx.openNodeWindow then ctx.openNodeWindow() end
     end)
+    tip(wnd.nodeTrackerBtn, "power_ranger_node_open_tip", "Tracks gathering nodes and their respawn timers. Opens in its own window. Stands down completely while Land Barons is loaded.")
 
     -- Client memory watch. One row, because the shell is already at the ~1360px ceiling a
     -- 1080p screen allows and a second row would push it off.
@@ -335,10 +343,12 @@ function SettingsSections.BuildClientOptions(wnd, ctx, y)
         if ctx.toggleSetting then ctx.toggleSetting("memoryFloatButton") end
         if ctx.refreshClientOptionButtons then ctx.refreshClientOptionButtons() end
     end)
+    tip(wnd.memoryFloatBtn, "power_ranger_memory_float_tip", "Show the live memory readout on the float bar. Green well below your limit, then white, amber and red as it climbs.")
     wnd.memoryWatchBtn = ctx.flatButton(p, "power_ranger_memory_watch", "", 476, 119, 70, 22, colors.active, function()
         if ctx.toggleSetting then ctx.toggleSetting("memoryWatchEnabled") end
         if ctx.refreshClientOptionButtons then ctx.refreshClientOptionButtons() end
     end)
+    tip(wnd.memoryWatchBtn, "power_ranger_memory_watch_tip", "Watches the client's memory and warns before it runs out. ArcheAge leaks memory over a long session and eventually crashes; the point is to relog on your own terms.")
 
     -- "Only use my portal": stops other players' portals pulling you through. A CLIENT option,
     -- not one of ours -- it has a real getter, so nothing is persisted on our side and the
@@ -350,9 +360,11 @@ function SettingsSections.BuildClientOptions(wnd, ctx, y)
         if ctx.toggleSetting then ctx.toggleSetting("portalFloatButton") end
         if ctx.refreshClientOptionButtons then ctx.refreshClientOptionButtons() end
     end)
+    tip(wnd.portalFloatBtn, "power_ranger_portal_float_tip", "Show the portal toggle on the float bar, so it can be flipped without opening settings.")
     wnd.onlyMyPortalBtn = ctx.flatButton(p, "power_ranger_only_my_portal", "", 476, 149, 70, 22, colors.active, function()
         if ctx.toggleOnlyMyPortal then ctx.toggleOnlyMyPortal() end
     end)
+    tip(wnd.onlyMyPortalBtn, "power_ranger_only_my_portal_tip", "A client setting, not one of ours: when on, only your own portals will pull you through. Reads the game's own value, so changing it in the client's options shows here too.")
     return p
 end
 
