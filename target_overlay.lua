@@ -4086,16 +4086,6 @@ end
 
 -- Reads the client's own value, flips it, writes it back. No setting of ours is involved,
 -- so changing it in the game's options window and reopening ours shows the new state.
--- TEMPORARY, with nametag_probe.lua: no ADDON_API wrapper exists for the NPC-name option,
--- but the raw X2NameTag engine object IS in the sandbox and nobody has mapped its six
--- methods. Remove this and the file once they are understood.
-function TargetOverlay.openNametagProbe()
-    require("power_ranger_on/nametag_probe").Open({
-        colors = COLORS,
-        applyDrag = applyDrag,
-        safePosition = TargetOverlay.safeWindowPosition
-    })
-end
 
 function TargetOverlay.toggleOnlyMyPortal()
     local current = AppearanceOptions.GetOnlyMyPortal()
@@ -4541,8 +4531,6 @@ local function createSettingsWindow()
         tooltipFor = TargetOverlay.uiContext.tooltipFor,
         toggleSetting = toggleSetting,
         refreshSettingsButtons = refreshSettingsButtons,
-        -- TEMPORARY: see nametag_probe.lua
-        openNametagProbe = function() TargetOverlay.openNametagProbe() end
     }, TAB_Y + 148))
     inTab("client", settingsSections.BuildClientOptions(settingsWnd, {
         shiftMemoryCritical = function(delta) TargetOverlay.shiftMemoryCritical(delta) end,
@@ -5649,7 +5637,6 @@ function TargetOverlay.cleanup()
     TargetOverlay.weaponProc.Cleanup()
     TargetOverlay.readyPopup.Cleanup()
     MemoryTracker.Cleanup()
-    pcall(function() require("power_ranger_on/nametag_probe").Cleanup() end)
     TargetOverlay.nodeTracker.Cleanup()
     pcall(function() require("power_ranger_on/node_window").Cleanup() end)
     TargetOverlay.hpPercentBars.Cleanup()

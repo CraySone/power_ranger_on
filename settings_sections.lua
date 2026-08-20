@@ -301,10 +301,6 @@ function SettingsSections.BuildHotSwapLauncher(wnd, ctx, y)
         ctx.toggleSetting("debugLogging")
     end)
     tip(wnd.debugLogBtn, "power_ranger_debug_logging_tip", "Logs extra detail to the addon log, including the UI scale state when settings open. For diagnosing a problem -- leave it off otherwise.")
-    -- TEMPORARY, alongside nametag_probe.lua. Remove both once the X2NameTag surface is known.
-    ctx.flatButton(p, "power_ranger_nametag_probe_open", "Nametag probe", 324, 55, 118, 22, colors.blue, function()
-        if ctx.openNametagProbe then ctx.openNametagProbe() end
-    end)
     return p
 end
 
