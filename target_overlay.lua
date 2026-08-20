@@ -4911,7 +4911,11 @@ function TargetOverlay.init()
 end
 
 local function updateCanvasPosition()
+    -- Finite, not a plain truthiness test: NaN is a number and passes `not x`, and it appears
+    -- for a frame around mount/dismount. An unguarded NaN reaches AddAnchor below.
+    local fin = require("power_ranger_on/ui_helpers").Finite
     local x, y, z = api.Unit:GetUnitScreenPosition("target")
+    x, y, z = fin(x), fin(y), fin(z)
     if not x or not y or not z or z < 0 or z > CONFIG.maxScreenDistance then
         targetMisses.screen = targetMisses.screen + 1
         if targetMisses.screen >= 3 then
@@ -5083,6 +5087,10 @@ local function updateFastModelRange()
         return
     end
     local sX, sY, sZ = api.Unit:GetUnitScreenPosition("target")
+    do
+        local fin = require("power_ranger_on/ui_helpers").Finite
+        sX, sY, sZ = fin(sX), fin(sY), fin(sZ)
+    end
     if not sX or not sY or not sZ or sZ < 0 or sZ > CONFIG.maxScreenDistance then
         hideModelRange()
         return
@@ -5124,6 +5132,10 @@ local function updateTargetOwnersMarkOverlay()
         return
     end
     local sX, sY, sZ = api.Unit:GetUnitScreenPosition("target")
+    do
+        local fin = require("power_ranger_on/ui_helpers").Finite
+        sX, sY, sZ = fin(sX), fin(sY), fin(sZ)
+    end
     if not sX or not sY or not sZ or sZ < 0 or sZ > CONFIG.maxScreenDistance then
         hideTargetOwnersMarkOverlay()
         return

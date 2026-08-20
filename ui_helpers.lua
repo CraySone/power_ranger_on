@@ -55,6 +55,18 @@ function UiHelpers.RefreshScale()
     return AddonUILib.Core.RefreshPx()
 end
 
+-- Rejects NaN and infinity. tonumber() accepts NaN and `if x then` passes it, so every
+-- ordinary guard lets it through -- and NaN is contagious, so one bad sample entering a
+-- running average poisons it for the rest of the session.
+function UiHelpers.Finite(v)
+    if not AddonUILib then
+        v = tonumber(v)
+        if v == nil or v ~= v or v >= 1e308 or v <= -1e308 then return nil end
+        return v
+    end
+    return AddonUILib.Core.Finite(v)
+end
+
 function UiHelpers.SetTextColor(widget, color)
     if not AddonUILib then return unavailable() end
     return AddonUILib.Core.SetTextColor(widget, color)

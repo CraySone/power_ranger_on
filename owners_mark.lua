@@ -181,14 +181,18 @@ local function updatePopup(now)
         alert.label.style:SetColor(1, 0.18, 0.14, alpha)
     end
     local rise = 8 + (eased * 34)
+    -- Finite, not tonumber: GetUnitScreenPosition returns NaN for a frame around mount and
+    -- dismount, tonumber() accepts NaN, and popupLastY below is a running average -- so one
+    -- poisoned sample makes every later frame NaN and the popup never positions again.
     local x, y, z = safeCall(function() return api.Unit:GetUnitScreenPosition("player") end)
-    if tonumber(x) and tonumber(y) and tonumber(z) and tonumber(z) >= 0 then
-        local targetY = tonumber(y) - 42 - rise
-        local lastY = tonumber(OwnersMark.popupLastY)
+    x, y, z = UiHelpers.Finite(x), UiHelpers.Finite(y), UiHelpers.Finite(z)
+    if x and y and z and z >= 0 then
+        local targetY = y - 42 - rise
+        local lastY = UiHelpers.Finite(OwnersMark.popupLastY)
         if lastY then targetY = lastY + ((targetY - lastY) * 0.35) end
         OwnersMark.popupLastY = targetY
         alert:RemoveAllAnchors()
-        alert:AddAnchor("BOTTOM", "UIParent", "TOPLEFT", tonumber(x), math.floor(targetY + 0.5))
+        alert:AddAnchor("BOTTOM", "UIParent", "TOPLEFT", x, math.floor(targetY + 0.5))
     else
         alert:RemoveAllAnchors()
         alert:AddAnchor("CENTER", "UIParent", "CENTER", 0, math.floor(-86 - rise + 0.5))
