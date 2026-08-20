@@ -1,0 +1,41 @@
+"X2NameTag probe -- power_ranger_on\
+Each line: the call, then what it returned. Whether it CHANGED anything is only\
+visible in game -- these methods have no getters.\
+\
+X2NameTag reachable, 6 functions: SetDrawNameTag, SetNameTag, SetNameTagFactionSelection, SetNameTagMode, SetNameTageFadeOutDistance, SetSelfNameTagVisible\
+SetDrawNameTag(0)  ->  OK, returned nil\
+SetDrawNameTag(1)  ->  OK, returned nil\
+SetDrawNameTag(false)  ->  OK, returned nil\
+SetDrawNameTag(true)  ->  OK, returned nil\
+SetNameTagMode(0)  ->  OK, returned nil\
+SetNameTagMode(1)  ->  OK, returned nil\
+SetNameTagMode(2)  ->  OK, returned nil\
+SetNameTagMode(3)  ->  OK, returned nil\
+SetNameTagMode(0)  ->  OK, returned nil\
+SetNameTagFactionSelection(1)  ->  OK, returned nil\
+SetNameTagFactionSelection(2)  ->  OK, returned nil\
+SetSelfNameTagVisible(0)  ->  OK, returned nil\
+SetNameTagMode(0)  ->  OK, returned nil\
+SetNameTagMode(3)  ->  OK, returned nil\
+SetNameTagFactionSelection(0)  ->  OK, returned nil\
+SetNameTagFactionSelection(1)  ->  OK, returned nil\
+SetNameTagFactionSelection(1)  ->  OK, returned nil\
+SetSelfNameTagVisible(0)  ->  OK, returned nil\
+SetSelfNameTagVisible(1)  ->  OK, returned nil\
+SetSelfNameTagVisible(0)  ->  OK, returned nil\
+SetSelfNameTagVisible(1)  ->  OK, returned nil\
+SetSelfNameTagVisible(0)  ->  OK, returned nil\
+SetSelfNameTagVisible(1)  ->  OK, returned nil\
+SetSelfNameTagVisible(0)  ->  OK, returned nil\
+SetSelfNameTagVisible(1)  ->  OK, returned nil\
+SetNameTageFadeOutDistance(50)  ->  OK, returned nil\
+SetNameTageFadeOutDistance(200)  ->  OK, returned nil\
+SetNameTageFadeOutDistance(50)  ->  OK, returned nil\
+SetNameTageFadeOutDistance(200)  ->  OK, returned nil\
+SetNameTagMode(0)  ->  OK, returned nil\
+SetNameTagMode(1)  ->  OK, returned nil\
+SetDrawNameTag(true)  ->  OK, returned nil\
+SetDrawNameTag(false)  ->  OK, returned nil\
+SetDrawNameTag(1)  ->  OK, returned nil\
+SetDrawNameTag(0)  ->  OK, returned nil\
+SetNameTageFadeOutDistance(200)  ->  OK, returned nil"

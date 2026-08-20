@@ -60,11 +60,24 @@ local CALLS = {
     { fn = "SetNameTagMode", args = {2}, label = "SetNameTagMode(2)" },
     { fn = "SetNameTagMode", args = {3}, label = "SetNameTagMode(3)" },
 
-    { group = "Faction selection -- may be the per-category filter" },
-    { fn = "SetNameTagFactionSelection", args = {0}, label = "SetNameTagFactionSelection(0)" },
-    { fn = "SetNameTagFactionSelection", args = {1}, label = "SetNameTagFactionSelection(1)" },
-    { fn = "SetNameTagFactionSelection", args = {2}, label = "SetNameTagFactionSelection(2)" },
-
+    -- THE ONE THAT MATTERS for "hide NPC names, keep player names". api.Nametag proves the
+    -- client tracks nametags per CATEGORY: it has separate colour commands for friendly,
+    -- friendly_npc, neutral, party, raid, pk, enemy, monster and pirate. So something selects
+    -- categories, and this is the only method named for it.
+    --
+    -- Swept as a bitmask, because "FactionSelection" reads like flags rather than a mode --
+    -- with nine categories, powers of two reveal which bit owns which. Stand where you can
+    -- see an NPC and a player at once, and note which of them disappears at each value.
+    { group = "Faction selection -- watch an NPC AND a player at the same time" },
+    { fn = "SetNameTagFactionSelection", args = {0}, label = "FactionSelection(0)" },
+    { fn = "SetNameTagFactionSelection", args = {1}, label = "FactionSelection(1)" },
+    { fn = "SetNameTagFactionSelection", args = {2}, label = "FactionSelection(2)" },
+    { fn = "SetNameTagFactionSelection", args = {4}, label = "FactionSelection(4)" },
+    { fn = "SetNameTagFactionSelection", args = {8}, label = "FactionSelection(8)" },
+    { fn = "SetNameTagFactionSelection", args = {16}, label = "FactionSelection(16)" },
+    { fn = "SetNameTagFactionSelection", args = {32}, label = "FactionSelection(32)" },
+    { fn = "SetNameTagFactionSelection", args = {64}, label = "FactionSelection(64)" },
+    { fn = "SetNameTagFactionSelection", args = {255}, label = "FactionSelection(255) all bits" },
     { group = "Self -- safe to test, the effect is obvious and only affects you" },
     { fn = "SetSelfNameTagVisible", args = {0}, label = "SetSelfNameTagVisible(0)" },
     { fn = "SetSelfNameTagVisible", args = {1}, label = "SetSelfNameTagVisible(1)" },
@@ -92,15 +105,18 @@ local transcript = {}
 -- a crash mid-probe does not lose the run.
 local DUMP_PATH = "power_ranger_on/nametag_probe_dump.txt"
 
+-- api.File:Write runs its argument through serializeTable, so a single joined string comes
+-- back out as one escaped Lua string literal with a trailing backslash on every line. Passing
+-- the TABLE writes a readable list instead.
 local function writeDump()
     local lines = {
         "X2NameTag probe -- power_ranger_on",
-        "Each line: the call, then what it returned. Whether it CHANGED anything is only",
-        "visible in game -- these methods have no getters.",
+        "Each line is a call and what it returned. Whether it CHANGED anything is only",
+        "visible in game: none of these methods has a getter.",
         ""
     }
     for i = 1, #transcript do lines[#lines + 1] = transcript[i] end
-    return (pcall(function() api.File:Write(DUMP_PATH, table.concat(lines, "\n")) end))
+    return (pcall(function() api.File:Write(DUMP_PATH, lines) end))
 end
 
 local function record(text)
@@ -182,6 +198,24 @@ function NametagProbe.Open(ctx)
             y = y + 22
         end
     end
+
+    -- Every call returns nil, so the transcript alone records clicks and no outcomes. These
+    -- stamp the observation against the call immediately above it.
+    UiHelpers.FlatButton(wnd, "power_ranger_nametag_saw_npc", "^ hid NPC names only", 442, 54, 160, 20,
+        colors.active or {0.12, 0.28, 0.15, 0.95}, function()
+            record("    ^^ OBSERVED: NPC names hidden, player names still visible")
+            writeDump()
+        end, colors)
+    UiHelpers.FlatButton(wnd, "power_ranger_nametag_saw_all", "^ hid everything", 442, 76, 160, 20,
+        colors.button or {0.14, 0.14, 0.16, 0.95}, function()
+            record("    ^^ OBSERVED: all nametags hidden")
+            writeDump()
+        end, colors)
+    UiHelpers.FlatButton(wnd, "power_ranger_nametag_saw_none", "^ no visible change", 442, 98, 160, 20,
+        colors.button or {0.14, 0.14, 0.16, 0.95}, function()
+            record("    ^^ OBSERVED: no change")
+            writeDump()
+        end, colors)
 
     UiHelpers.FlatButton(wnd, "power_ranger_nametag_dump", "Write dump file", 286, 76, 150, 20,
         colors.blue or {0.16, 0.24, 0.38, 0.95}, function()
