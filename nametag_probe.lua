@@ -54,11 +54,17 @@ local CALLS = {
     { fn = "SetDrawNameTag", args = {false}, label = "SetDrawNameTag(false)" },
     { fn = "SetDrawNameTag", args = {true},  label = "SetDrawNameTag(true)" },
 
-    { group = "Mode -- the client's option has several states, not just on/off" },
+    -- THE PROMISING ONE. A first run reported "NPC names hidden, player names still visible"
+    -- somewhere in this group, which is exactly the wanted behaviour -- but three calls were
+    -- made before three observations, so which value did it was lost. Swept further here, and
+    -- observations now name their call.
+    { group = "Mode -- one of these hid NPC names and kept players. Find which." },
     { fn = "SetNameTagMode", args = {0}, label = "SetNameTagMode(0)" },
     { fn = "SetNameTagMode", args = {1}, label = "SetNameTagMode(1)" },
     { fn = "SetNameTagMode", args = {2}, label = "SetNameTagMode(2)" },
     { fn = "SetNameTagMode", args = {3}, label = "SetNameTagMode(3)" },
+    { fn = "SetNameTagMode", args = {4}, label = "SetNameTagMode(4)" },
+    { fn = "SetNameTagMode", args = {5}, label = "SetNameTagMode(5)" },
 
     -- THE ONE THAT MATTERS for "hide NPC names, keep player names". api.Nametag proves the
     -- client tracks nametags per CATEGORY: it has separate colour commands for friendly,
@@ -99,6 +105,12 @@ end
 -- capped at MAX_LOG so it fits the pane; this one is not, because the point of the file is
 -- having the whole sequence afterwards.
 local transcript = {}
+
+-- The call an observation belongs to. Stamping "OBSERVED: x" on its own only pairs correctly
+-- if the tester alternates strictly call/observe -- the first run batched three calls then
+-- three observations, and the transcript could not say which caused what. Naming the call
+-- inside the observation makes the pairing impossible to lose.
+local lastCall = "(nothing yet)"
 
 -- Chat scrolls away and cannot be diffed, and this probe's output is a sequence you want to
 -- compare against what you saw on screen. Written after every call as well as on demand, so
@@ -143,6 +155,7 @@ local function invoke(entry)
     -- Called with the object as self, matching how the engine's own objects are invoked
     -- (X2Unit:UnitInfo(unit) etc). If a method turns out to be a plain function this is the
     -- first thing to try changing.
+    lastCall = entry.label
     local ok, result = pcall(function() return fn(obj, unpack(entry.args)) end)
     if ok then
         record(entry.label .. "  ->  OK, returned " .. describe(result))
@@ -203,17 +216,17 @@ function NametagProbe.Open(ctx)
     -- stamp the observation against the call immediately above it.
     UiHelpers.FlatButton(wnd, "power_ranger_nametag_saw_npc", "^ hid NPC names only", 442, 54, 160, 20,
         colors.active or {0.12, 0.28, 0.15, 0.95}, function()
-            record("    ^^ OBSERVED: NPC names hidden, player names still visible")
+            record("    ^^ [" .. lastCall .. "] OBSERVED: NPC names hidden, player names still visible")
             writeDump()
         end, colors)
     UiHelpers.FlatButton(wnd, "power_ranger_nametag_saw_all", "^ hid everything", 442, 76, 160, 20,
         colors.button or {0.14, 0.14, 0.16, 0.95}, function()
-            record("    ^^ OBSERVED: all nametags hidden")
+            record("    ^^ [" .. lastCall .. "] OBSERVED: all nametags hidden")
             writeDump()
         end, colors)
     UiHelpers.FlatButton(wnd, "power_ranger_nametag_saw_none", "^ no visible change", 442, 98, 160, 20,
         colors.button or {0.14, 0.14, 0.16, 0.95}, function()
-            record("    ^^ OBSERVED: no change")
+            record("    ^^ [" .. lastCall .. "] OBSERVED: no change")
             writeDump()
         end, colors)
 
