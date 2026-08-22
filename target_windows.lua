@@ -130,8 +130,16 @@ function TargetWindows.CreateModelOverlay(ctx)
 
     local rangeCanvas = api.Interface:CreateEmptyWindow("PowerRangerModelRange", "UIParent")
     rangeCanvas:SetExtent(86, config.fontSize + 6)
+    -- Click-through needs BOTH calls. Clickable(false) stops hit-testing; EnablePick(false)
+    -- stops the widget being chosen as a mouse target. With only the first, the widget still
+    -- takes the pick and the click never reaches the world behind it -- which is why the
+    -- range readout stayed solid after the rest of the overhead block was fixed.
+    -- The child labels need it too: a click lands on whatever is on top, not on the canvas.
     if rangeCanvas.Clickable then rangeCanvas:Clickable(false) end
+    if rangeCanvas.EnablePick then rangeCanvas:EnablePick(false) end
     local rangeLabel = label(rangeCanvas, "targetRange", "", 0, 0, 86, config.fontSize + 6, config.fontSize, colors.gold, ALIGN.CENTER)
+    if rangeLabel.Clickable then rangeLabel:Clickable(false) end
+    if rangeLabel.EnablePick then rangeLabel:EnablePick(false) end
     applyReadableTextStyle(rangeLabel, true)
     rangeLabel:Show(false)
     rangeCanvas:Show(false)
@@ -139,7 +147,10 @@ function TargetWindows.CreateModelOverlay(ctx)
     local hpCanvas = api.Interface:CreateEmptyWindow("PowerRangerModelHpPercent", "UIParent")
     hpCanvas:SetExtent(110, config.fontSize + 12)
     if hpCanvas.Clickable then hpCanvas:Clickable(false) end
+    if hpCanvas.EnablePick then hpCanvas:EnablePick(false) end
     local hpLabel = label(hpCanvas, "targetHpPercent", "", 0, 0, 110, config.fontSize + 12, config.fontSize + 8, colors.white, ALIGN.CENTER)
+    if hpLabel.Clickable then hpLabel:Clickable(false) end
+    if hpLabel.EnablePick then hpLabel:EnablePick(false) end
     applyReadableTextStyle(hpLabel, true)
     hpLabel:Show(false)
     hpCanvas:Show(false)
@@ -147,15 +158,19 @@ function TargetWindows.CreateModelOverlay(ctx)
     local ownersMarkCanvas = api.Interface:CreateEmptyWindow("PowerRangerModelOwnersMark", "UIParent")
     ownersMarkCanvas:SetExtent(46, 46)
     if ownersMarkCanvas.Clickable then ownersMarkCanvas:Clickable(false) end
+    if ownersMarkCanvas.EnablePick then ownersMarkCanvas:EnablePick(false) end
     local ownersMarkIcon = CreateItemIconButton("power_ranger_model_owners_mark_icon", ownersMarkCanvas)
     ownersMarkIcon:SetExtent(38, 38)
     ownersMarkIcon:AddAnchor("TOP", ownersMarkCanvas, 0, 0)
     ownersMarkIcon:Clickable(false)
+    if ownersMarkIcon.EnablePick then ownersMarkIcon:EnablePick(false) end
     F_SLOT.ApplySlotSkin(ownersMarkIcon, ownersMarkIcon.back, SLOT_STYLE.DEFAULT)
     ownersMarkIcon:Show(false)
     local ownersMarkTime = label(ownersMarkCanvas, "power_ranger_model_owners_mark_time", "", 0, 0, 46, 46, 13, colors.white, ALIGN.CENTER)
     ownersMarkTime:RemoveAllAnchors()
     ownersMarkTime:AddAnchor("CENTER", ownersMarkIcon, 0, 0)
+    if ownersMarkTime.Clickable then ownersMarkTime:Clickable(false) end
+    if ownersMarkTime.EnablePick then ownersMarkTime:EnablePick(false) end
     applyReadableTextStyle(ownersMarkTime, true)
     ownersMarkTime:Show(false)
     ownersMarkCanvas:Show(false)
