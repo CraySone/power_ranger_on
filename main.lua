@@ -10,6 +10,16 @@ local power_ranger_on = {
     version = "1.7.3"
 }
 
+-- Hand the version to the module that displays it, rather than have it keep a second copy.
+--
+-- The copy existed because target_overlay cannot require THIS file to read the version:
+-- main.lua is run by the addon loader, and require'ing it as a module would load and execute
+-- it a second time. BetterBars hit an every-login settings reset that way.
+--
+-- Passing it down avoids both problems -- no second execution, and no literal to keep in
+-- sync. main.lua's top-level runs once when the addon loads, well before Load() calls init().
+TargetOverlay.addonVersion = power_ranger_on.version
+
 local active = false
 local updateFrame = nil
 local lastUpdateErrorLog = 0
